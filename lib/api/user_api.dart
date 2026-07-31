@@ -1,0 +1,582 @@
+import 'dart:io';
+import 'dart:math';
+
+import 'package:chat_messenger/api/auth_api.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' hide Filter;
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
+import 'package:chat_messenger/api/chat_api.dart';
+import 'package:chat_messenger/config/app_config.dart';
+import 'package:chat_messenger/models/group.dart';
+import 'package:get/get.dart';
+import 'package:chat_messenger/config/theme_config.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
+import 'package:chat_messenger/helpers/app_helper.dart';
+import 'package:chat_messenger/helpers/dialog_helper.dart';
+import 'package:chat_messenger/models/user.dart';
+import 'package:chat_messenger/api/official_team_api.dart';
+
+import '../tabs/groups/controllers/group_controller.dart';
+
+abstract class UserApi {
+  //
+  // UserApi - CRUD Operations
+  //
+
+  // Firebase instances
+  static final _firestore = FirebaseFirestore.instance;
+  static final _realtime = FirebaseDatabase.instance;
+  static final _firebaseMsg = FirebaseMessaging.instance;
+
+  static Future<dynamic> createAccount({
+    File? photoFile,
+    required String fullname,
+   // required String username,
+    required String number,
+  }) async {
+    try {
+      final firebaseUser = AuthController.instance.firebaseUser!;
+
+      // Get Firebase User Info:
+      final String userId = firebaseUser.uid;
+      final String email = firebaseUser.email ?? '';
+      final String deviceToken = await _firebaseMsg.getToken() ?? '';
+
+      // Upload profile photo
+      String photoUrl = '';
+
+      // Check file
+      if (photoFile != null) {
+        photoUrl = await AppHelper.uploadFile(
+          file: photoFile,
+          userId: userId,
+        );
+      }
+
+      String generateRandomId() {
+  final random = Random();
+  int min = 1000000;     // 7 digits
+  int max = 99999999;    // 8 digits
+  return (min + random.nextInt(max - min)).toString();
+}
+
+      // Set profile info
+      final User user = User(
+        userId: userId,
+        photoUrl: photoUrl,
+        fullname: fullname,
+       // username: username,
+        email: email,
+        bio: 'default_bio'.trParams({'appName': AppConfig.appName}),
+        deviceToken: deviceToken,
+        loginProvider: AuthController.instance.provider,
+        lastActive: DateTime.now(),
+        isOnline: true,
+        number: number,
+        level: '1',
+        searchId: generateRandomId()
+      );
+
+      // Save data
+      await _firestore.collection('Users').doc(userId).set(user.toMap());
+
+      // Send Welcome Message from Official Team
+      await OfficialTeamApi.sendWelcomeMessage(user);
+
+      // Subscribe for Push Notifications
+      _firebaseMsg.subscribeToTopic('NOTIFY_USERS');
+      return true;
+    } catch (e) {
+      return e;
+    }
+  }
+
+  static Future<dynamic> updateAccount({
+    File? photoFile,
+    List<File>? newBackgroundFiles,
+    List<String>? retainedBackgroundUrls,
+    required String fullname,
+    required String bio,
+    required String gender,
+    required String birthday,
+    required String country,
+  }) async {
+    try {
+      // Get current user
+      final User currentUser = AuthController.instance.currentUser;
+
+      // Update photo
+      String photoUrl = currentUser.photoUrl;
+
+      // Check file
+      if (photoFile != null) {
+        photoUrl = await AppHelper.uploadFile(
+          file: photoFile,
+          userId: currentUser.userId,
+        );
+      }
+
+      // Update backgrounds
+      List<String> backgroundUrls = retainedBackgroundUrls != null ? List.from(retainedBackgroundUrls) : [];
+      
+      if (newBackgroundFiles != null && newBackgroundFiles.isNotEmpty) {
+        for (int i = 0; i < newBackgroundFiles.length; i++) {
+          String newUrl = await AppHelper.uploadFile(
+            file: newBackgroundFiles[i],
+            userId: '${currentUser.userId}_bg_${DateTime.now().millisecondsSinceEpoch}_$i',
+          );
+          backgroundUrls.add(newUrl);
+        }
+      }
+
+      String firstBackgroundUrl = backgroundUrls.isNotEmpty ? backgroundUrls.first : currentUser.homePageBackground;
+
+      // Save data
+      await _firestore.collection('Users').doc(currentUser.userId).update({
+        'photoUrl': photoUrl,
+        'fullname': fullname,
+        'bio': bio,
+        'gender': gender,
+        'birthday': birthday,
+        'country': country,
+        'homePageBackground': firstBackgroundUrl,
+        'homePageBackgrounds': backgroundUrls,
+      }).timeout(const Duration(seconds: 15));
+
+      return true;
+    } catch (e) {
+      return e;
+    }
+  }
+
+  static Future<User?> getUser(String userId) async {
+    if (userId == 'official_team') {
+      try {
+        final doc = await _firestore.collection('official_channels').doc('official_team').get();
+        if (doc.exists) {
+          final data = doc.data()!;
+          return User(
+            userId: 'official_team',
+            fullname: data['name'] ?? 'imChat Team',
+            photoUrl: data['logo'] ?? '',
+            bio: data['description'] ?? 'Official Notification Channel',
+            isVerified: data['isVerified'] ?? true,
+            userType: 'admin',
+            level: 'Max',
+          );
+        }
+      } catch (e) {
+        debugPrint('Error getting official team: $e');
+      }
+      return User(
+        userId: 'official_team',
+        fullname: 'imChat Team',
+        bio: 'Official Notification Channel',
+        userType: 'admin',
+      );
+    }
+
+    if (userId.startsWith('official_channel_')) {
+      try {
+        final doc = await _firestore.collection('official_channels').doc(userId).get();
+        if (doc.exists) {
+          final data = doc.data()!;
+          return User(
+            userId: userId,
+            fullname: data['name'] ?? 'Official Channel',
+            photoUrl: data['logo'] ?? '',
+            bio: data['description'] ?? 'Official Notification Channel',
+            isVerified: data['isVerified'] ?? true,
+            userType: 'channel',
+            level: 'Max',
+          );
+        }
+      } catch (e) {
+        debugPrint('Error getting official channel details for user: $e');
+      }
+      return User(
+        userId: userId,
+        fullname: 'Official Channel',
+        photoUrl: '',
+        bio: 'Official Notification Channel',
+        isVerified: true,
+        userType: 'channel',
+        level: 'Max',
+      );
+    }
+
+    final doc = await _firestore.collection('Users').doc(userId).get();
+    if (doc.exists) {
+      try {
+        final data = doc.data()!;
+        data['userId'] = doc.id;
+        return User.fromMap(data);
+      } catch (e) {
+        debugPrint('Error parsing user data: $e');
+        // Return a minimal fallback user to prevent login loops
+        return User(
+          userId: userId,
+          fullname: doc.data()?['fullname'] ?? doc.data()?['name'] ?? 'User',
+          number: doc.data()?['number'] ?? '',
+          loginProvider: LoginProvider.email,
+        );
+      }
+    }
+    return null;
+  }
+
+  static Stream<User> getUserUpdates(String userId) {
+    if (userId == 'official_team') {
+      return _firestore
+          .collection('official_channels')
+          .doc('official_team')
+          .snapshots()
+          .map((doc) {
+            if (doc.exists) {
+              final data = doc.data() ?? {};
+              return User(
+                userId: 'official_team',
+                fullname: data['name'] ?? 'imChat Team',
+                photoUrl: data['logo'] ?? '',
+                bio: data['description'] ?? 'Official Notification Channel',
+                isVerified: data['isVerified'] ?? true,
+                userType: 'admin',
+                level: 'Max',
+              );
+            } else {
+              return User(
+                userId: 'official_team',
+                fullname: 'imChat Team',
+                photoUrl: '',
+                bio: 'Official Notification Channel',
+                isVerified: true,
+                userType: 'admin',
+                level: 'Max',
+              );
+            }
+          });
+    }
+
+    if (userId.startsWith('official_channel_')) {
+      return _firestore
+          .collection('official_channels')
+          .doc(userId)
+          .snapshots()
+          .map((doc) {
+            final data = doc.data() ?? {};
+            return User(
+              userId: userId,
+              fullname: data['name'] ?? 'Official Channel',
+              photoUrl: data['logo'] ?? '',
+              bio: data['description'] ?? 'Official Notification Channel',
+              isVerified: data['isVerified'] ?? true,
+              userType: 'channel',
+              level: 'Max',
+            );
+          });
+    }
+
+    return _firestore
+        .collection('Users')
+        .doc(userId)
+        .snapshots()
+        .map((event) {
+          if (event.exists && event.data() != null) {
+            final data = event.data()!;
+            data['userId'] = event.id;
+            return User.fromMap(data);
+          } else {
+            return User(userId: userId);
+          }
+        });
+  }
+
+  // Check username availability in database
+  static Future<bool> checkUsername({
+    required String fullname,
+    bool showMsg = true,
+  }) async {
+    final query = await _firestore
+        .collection('Users')
+        .where('fullname', isEqualTo: fullname)
+        .limit(1)
+        .get();
+    final bool result = query.docs.isEmpty;
+
+    if (result) {
+      if (showMsg) {
+        DialogHelper.showSnackbarMessage(
+            SnackMsgType.success, "username_success".tr);
+      }
+      return true;
+    }
+    if (showMsg) {
+      DialogHelper.showSnackbarMessage(SnackMsgType.error, "username_taken".tr);
+    }
+    return false;
+  }
+
+  // Update user data
+  static Future<void> updateUserData({
+    required String userId,
+    required Map<String, dynamic> data,
+    bool isSet = false,
+  }) async {
+    if (isSet) {
+      await _firestore
+          .collection('Users')
+          .doc(userId)
+          .set(data, SetOptions(merge: true));
+    } else {
+      await _firestore.collection('Users').doc(userId).update(data);
+    }
+  }
+
+  static Future<void> updateDiamonds(String userId, int amount) async {
+    await _firestore.collection('Users').doc(userId).update({
+      'diamonds': FieldValue.increment(amount),
+    });
+  }
+
+  static Future<void> updateUserInfo(User user) async {
+    final firebaseUser = AuthController.instance.firebaseUser!;
+
+    // Get device token
+    final String deviceToken = await _firebaseMsg.getToken() ?? '';
+
+    var data = {
+      'deviceToken': deviceToken,
+      'lastActive': DateTime.now().millisecondsSinceEpoch,
+      'isOnline': true,
+    };
+
+    if (user.createdAt == null) {
+      final DateTime? creationTime = firebaseUser.metadata.creationTime;
+      // Update creation date
+      data['createdAt'] = creationTime == null
+          ? FieldValue.serverTimestamp()
+          : Timestamp.fromDate(creationTime);
+    }
+
+    // Save data
+    await updateUserData(
+      userId: user.userId,
+      data: data,
+      isSet: true,
+    );
+    // Subscribe for Push Notifications
+    _firebaseMsg.subscribeToTopic('NOTIFY_USERS');
+  }
+
+  // Delete all the files upload by user
+  static Future<void> deleteUserStorageFiles() async {
+    try {
+      final User currentUser = AuthController.instance.currentUser;
+
+      final ListResult listResult = await FirebaseStorage.instance
+          .ref('uploads/users/${currentUser.userId}')
+          .listAll();
+      final List<Future<void>> references =
+          listResult.items.map((e) => e.delete()).toList();
+      // Check result
+      if (references.isNotEmpty) {
+        await Future.wait(references);
+        debugPrint('_deleteUserStorageFiles() -> success');
+      } else {
+        debugPrint('_deleteUserStorageFiles() -> no files');
+      }
+    } catch (e) {
+      debugPrint('_deleteUserStorageFiles() -> error: $e');
+    }
+  }
+
+  static Future<void> deleteUserAccount() async {
+    try {
+      // Get current user model
+      final User currentUer = AuthController.instance.currentUser;
+
+      DialogHelper.showProcessingDialog(
+        title: 'deleting_profile_account'.tr,
+        barrierDismissible: false,
+      );
+
+      // Delete all user-uploaded files
+      AppHelper.deleteStorageFiles('uploads/${currentUer.userId}');
+
+      // Get User Groups
+      final List<Group> userGroups = GroupController.instance.groups
+          .where((group) => group.createdBy == currentUer.userId)
+          .toList();
+
+      // Delete user's groups
+      final groupFutures = userGroups
+          .map((e) => _firestore.collection('Groups').doc(e.groupId).delete());
+      if (groupFutures.isNotEmpty) {
+        await Future.wait(groupFutures);
+      }
+
+      // Delete profile account data
+      await _firestore.collection('Users').doc(currentUer.userId).delete();
+
+      // Close previous dialog
+      DialogHelper.closeDialog();
+
+      // Show confirm dialog
+      DialogHelper.showAlertDialog(
+        icon: const Icon(Icons.check_circle, color: primaryColor),
+        title: Text('success'.tr),
+        content: Text(
+          'profile_account_successfully_deleted'.tr,
+          style: const TextStyle(fontSize: 16),
+        ),
+        actionText: 'sign_out'.tr.toUpperCase(),
+        action: () => AuthApi.signOut(),
+        showCancelButton: false,
+        barrierDismissible: false,
+      );
+    } catch (e) {
+      DialogHelper.closeDialog();
+      DialogHelper.showSnackbarMessage(SnackMsgType.error,
+          "failed_to_delete_user_account".trParams({'error': e.toString()}));
+    }
+  }
+
+  ///
+  /// <-- User Presense features -->
+  ///
+
+  static Map<String, dynamic> _isUserOnline(bool value) {
+    var data = {
+      'isOnline': value,
+      'lastActive': Timestamp.now().millisecondsSinceEpoch,
+    };
+    if (!value) {
+      data['isTyping'] = false;
+      data['isRecording'] = false;
+    }
+    return data;
+  }
+
+  // Update User Presence in Realtime Database.
+  static Future<void> updateUserPresenceInRealtimeDb() async {
+    final User currentUer = AuthController.instance.currentUser;
+
+    // Get Realtime database reference
+    final DatabaseReference connectedRef = _realtime.ref('.info/connected');
+    // Listen to updates
+    connectedRef.onValue.listen((event) async {
+      final isConnected = event.snapshot.value as bool? ?? false;
+      if (isConnected) {
+        _realtime.ref().child(currentUer.userId).update(_isUserOnline(true));
+      } else {
+        _realtime
+            .ref()
+            .child(currentUer.userId)
+            .onDisconnect()
+            .update(_isUserOnline(false));
+      }
+    });
+  }
+
+  // Update User presence
+  static Future<void> updateUserPresence(bool isOnline) async {
+    try {
+      final User currentUer = AuthController.instance.currentUser;
+
+      await updateUserData(
+        userId: currentUer.userId,
+        data: _isUserOnline(isOnline),
+        isSet: true,
+      );
+      debugPrint('updateUserPresence() -> success');
+    } catch (e) {
+      debugPrint('updateUserPresence() -> error: $e');
+    }
+  }
+
+  /// Update User typing status
+  static Future<void> updateUserTypingStatus(
+    bool isTyping,
+    String receiverId,
+  ) async {
+    try {
+      final User currentUer = AuthController.instance.currentUser;
+
+      await updateUserData(
+        userId: currentUer.userId,
+        data: {
+          'isTyping': isTyping,
+          'typingTo': receiverId,
+          'isRecording': false,
+        },
+        isSet: true,
+      );
+      // Also update chat node typing status
+      await ChatApi.updateChatTypingStatus(isTyping, receiverId);
+      debugPrint('updateUserTypingStatus() -> success');
+    } catch (e) {
+      debugPrint('updateUserTypingStatus() -> error: $e');
+    }
+  }
+
+  /// Update User recording status
+  static Future<void> updateUserRecordingStatus(
+    bool isRecording,
+    String receiverId,
+  ) async {
+    try {
+      final User currentUer = AuthController.instance.currentUser;
+
+      await updateUserData(
+        userId: currentUer.userId,
+        data: {
+          'isRecording': isRecording,
+          'recordingTo': receiverId,
+          'isTyping': false
+        },
+        isSet: true,
+      );
+      // Also update chat node recording status
+      await ChatApi.updateChatRecordingStatus(isRecording, receiverId);
+      debugPrint('updateUserRecordingStatus() -> success');
+    } catch (e) {
+      debugPrint('updateUserRecordingStatus() -> error: $e');
+    }
+  }
+
+  /// Close User typing or recording status
+  static Future<void> closeTypingOrRecordingStatus() async {
+    try {
+      final User currentUer = AuthController.instance.currentUser;
+
+      await updateUserData(
+        userId: currentUer.userId,
+        data: {'isTyping': false, 'isRecording': false},
+        isSet: true,
+      );
+      debugPrint('closeTypingOrRecordingStatus() -> success');
+    } catch (e) {
+      debugPrint('closeTypingOrRecordingStatus() -> error: $e');
+    }
+  }
+
+  static Future<void> muteGroup(String groupId, bool isMuted) async {
+    try {
+      final User currentUer = AuthController.instance.currentUser;
+
+      await UserApi.updateUserData(
+        userId: currentUer.userId,
+        data: {
+          'mutedGroups': isMuted
+              ? FieldValue.arrayRemove([groupId])
+              : FieldValue.arrayUnion([groupId])
+        },
+      );
+      debugPrint('muteGroup() -> success');
+    } catch (e) {
+      debugPrint('muteGroup() -> error: $e');
+    }
+  }
+}

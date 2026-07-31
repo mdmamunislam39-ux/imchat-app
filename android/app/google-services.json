@@ -1,0 +1,99 @@
+{
+  "project_info": {
+    "project_number": "518076067996",
+    "firebase_url": "https://imchat-84519-default-rtdb.firebaseio.com",
+    "project_id": "imchat-84519",
+    "storage_bucket": "imchat-84519.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:518076067996:android:4e8f33f8ae2988d8a3fd59",
+        "android_client_info": {
+          "package_name": "com.imchat"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "518076067996-018q7v7ivu0cmleo9mspvp7tjgoig22n.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.imchat",
+            "certificate_hash": "98f4ad24a02fa2d9a559717e7aa340b37743672c"
+          }
+        },
+        {
+          "client_id": "518076067996-td5b22e7dpfvjqjpipn7kn90idokum2u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.imchat",
+            "certificate_hash": "067f6a48a26f9fae5d2de725c2d425e73558d7b8"
+          }
+        },
+        {
+          "client_id": "518076067996-48s6rn0q2qe4197hp9a5f9fvb1kibrd3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_GmpX9ttJ6LNxA964U7agaRKbRQVgIeQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "518076067996-48s6rn0q2qe4197hp9a5f9fvb1kibrd3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "518076067996-pgi9pj3e7dkh8csbp4fak0f642qlseut.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.imchat"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:518076067996:android:f47bfd4e58dfce51a3fd59",
+        "android_client_info": {
+          "package_name": "com.imchatapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "518076067996-48s6rn0q2qe4197hp9a5f9fvb1kibrd3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_GmpX9ttJ6LNxA964U7agaRKbRQVgIeQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "518076067996-48s6rn0q2qe4197hp9a5f9fvb1kibrd3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "518076067996-pgi9pj3e7dkh8csbp4fak0f642qlseut.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.imchat"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

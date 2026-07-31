@@ -1,0 +1,126 @@
+// Gradle plugins are now managed by the plugins block in settings.gradle
+// This follows the latest Gradle and AGP conventions (AGP 8.11.1+)
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://plugins.gradle.org/m2/' }
+        // maven { url 'https://download.agora.io/repository/maven' }
+    }
+
+    // Exclude Agora FOREGROUND_SERVICE_MEDIA_PROJECTION permission  
+    configurations.all {
+      exclude group:"io.agora.rtc", module:"full-screen-sharing"
+      resolutionStrategy.eachDependency { details ->
+          if (details.requested.group == 'org.jetbrains.kotlin' && details.requested.name.startsWith('kotlin-stdlib')) {
+              details.useVersion '2.0.0'
+          }
+      }
+    }
+    
+    // Fix for Agora RTC Engine CMake issues
+    gradle.projectsEvaluated {
+        tasks.withType(com.android.build.gradle.internal.tasks.LibraryAarJarsTask).configureEach {
+            it.doFirst {
+                if (it.hasProperty("typedefRecipe") && !it.typedefRecipe.get().asFile.exists()) {
+                    it.typedefRecipe.set(null)
+                }
+            }
+        }
+    }
+}
+
+rootProject.buildDir = '../build'
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(':app')
+}
+
+subprojects {
+    // Ensure Java compile options are set for app and library modules
+    project.plugins.withId('com.android.application') {
+        def androidExt = project.extensions.findByName('android')
+        if (androidExt != null) {
+            androidExt.compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+        }
+    }
+
+    project.plugins.withId('com.android.library') {
+        def androidExt = project.extensions.findByName('android')
+        if (androidExt != null) {
+            androidExt.compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+        }
+    }
+
+    // Configure kotlinOptions only when Kotlin plugin is applied
+    project.plugins.withId('kotlin-android') {
+        def androidExt = project.extensions.findByName('android')
+        if (androidExt != null) {
+            androidExt.kotlinOptions {
+                jvmTarget = '17'
+            }
+        }
+    }
+
+    // Provide compileSdk to library modules that do not specify it
+    def applyCompileSdk = {
+        if (project.plugins.hasPlugin('com.android.library') || project.plugins.hasPlugin('com.android.application')) {
+            try {
+                def androidExt = project.extensions.findByName('android')
+                if (androidExt != null && !androidExt.hasProperty('compileSdk')) {
+                    androidExt.compileSdk = 36
+                }
+            } catch (ignored) {
+                // Some projects may not expose the android extension at this time; ignore safely
+            }
+        }
+    }
+
+    if (!project.state.executed) {
+        project.afterEvaluate { applyCompileSdk() }
+    } else {
+        applyCompileSdk()
+    }
+
+    // Provide namespace to library modules that do not specify it (AGP 8.0+ requirement)
+    def applyNamespace = {
+        if (project.plugins.hasPlugin('com.android.library') || project.plugins.hasPlugin('com.android.application')) {
+            try {
+                def androidExt = project.extensions.findByName('android')
+                if (androidExt != null && androidExt.namespace == null) {
+                    def parsedGroup = project.group?.toString()
+                    if (parsedGroup == null || parsedGroup.isEmpty()) {
+                        parsedGroup = "com.example.${project.name.replaceAll('[^a-zA-Z0-9_]', '_')}"
+                    }
+                    androidExt.namespace = parsedGroup
+                }
+            } catch (ignored) {
+            }
+        }
+    }
+
+    if (!project.state.executed) {
+        project.afterEvaluate { applyNamespace() }
+    } else {
+        applyNamespace()
+    }
+
+    // Suppress obsolete source/target options warnings and other notes
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs.addAll(['-Xlint:-options', '-Xlint:-deprecation', '-Xlint:-unchecked'])
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
+

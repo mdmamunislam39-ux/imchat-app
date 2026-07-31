@@ -1,0 +1,62 @@
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": []
+    }
+    
+  ],
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "imchat-84519",
+          "appId": "1:518076067996:android:4e8f33f8ae2988d8a3fd59",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "imchat-84519",
+          "appId": "1:518076067996:ios:922434d04be0323ca3fd59",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "imchat-84519",
+          "configurations": {
+            "android": "1:518076067996:android:4e8f33f8ae2988d8a3fd59",
+            "ios": "1:518076067996:ios:922434d04be0323ca3fd59"
+          }
+        }
+      }
+    }
+  },
+  "database": {
+    "rules": "     "
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
