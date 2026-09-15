@@ -1,6 +1,8 @@
 import 'package:chat_messenger/models/message.dart';
+import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/helpers/date_helper.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
 class ReadTimeStatus extends StatelessWidget {
   const ReadTimeStatus({
@@ -8,22 +10,29 @@ class ReadTimeStatus extends StatelessWidget {
     required this.message,
     required this.isGroup,
     this.isInline = false,
+    this.receiver,
+    this.isReceiverOnline,
   });
 
   final Message message;
   final bool isGroup;
   final bool isInline;
+  final User? receiver;
+  final RxBool? isReceiverOnline;
 
   static bool isCallMessage(String text) {
     final lower = text.toLowerCase();
     return lower == 'video call' ||
         lower == 'voice call' ||
         lower == 'audio call' ||
+        lower.startsWith('call|') ||
         lower.startsWith('video call|') ||
         lower.startsWith('voice call|') ||
         lower.startsWith('audio call|') ||
         lower.startsWith('📹') ||
-        lower.startsWith('🎤');
+        lower.startsWith('🎤') ||
+        lower.contains('missed a voice call') ||
+        lower.contains('missed a video call');
   }
 
   @override
@@ -62,13 +71,39 @@ class ReadTimeStatus extends StatelessWidget {
         const SizedBox(width: 3),
         // Read status
         if (message.isSender && !isGroup)
-          Icon(
-            message.sentAt == null 
-                ? Icons.access_time_rounded 
-                : (message.isRead ? Icons.done_all : Icons.check),
-            size: isCall ? 13 : 16, 
-            color: iconColor,
-          ),
+          Obx(() {
+            final bool online = isReceiverOnline?.value ?? false;
+
+            if (message.sentAt == null) {
+              return Icon(
+                Icons.access_time_rounded,
+                size: isCall ? 13 : 16,
+                color: iconColor,
+              );
+            }
+
+            if (message.isRead) {
+              return Container(
+                width: isCall ? 11 : 14,
+                height: isCall ? 11 : 14,
+                margin: const EdgeInsets.only(left: 3, right: 1),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.blue,
+                    width: 1.5,
+                  ),
+                ),
+              );
+            } else {
+              final bool showDoubleTick = online || message.isDelivered;
+              return Icon(
+                showDoubleTick ? Icons.done_all : Icons.check,
+                size: isCall ? 13 : 16,
+                color: iconColor,
+              );
+            }
+          }),
         // For group message
         if (isGroup && message.isSender)
           Icon(

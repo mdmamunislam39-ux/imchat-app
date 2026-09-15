@@ -81,6 +81,27 @@ class OfficialTeamApi {
   /// Broadcast an official message to ALL users in the database
   static Future<void> broadcastOfficialMessage(String messageText) async {
     try {
+      final String msgId = AppHelper.generateID;
+
+      // 1. Save to centralized official_broadcasts collection so EVERY user sees it instantly
+      await _firestore.collection('official_broadcasts').doc(msgId).set({
+        'msgId': msgId,
+        'senderId': officialTeamId,
+        'type': 'text',
+        'textMsg': messageText,
+        'sentAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. Centralized Audit Log
+      await _firestore.collection('official_notification_logs').doc(msgId).set({
+        'msgId': msgId,
+        'senderId': officialTeamId,
+        'receiverId': 'Broadcast',
+        'textMsg': messageText,
+        'sentAt': FieldValue.serverTimestamp(),
+      });
+
+      // 3. Push and individual copy for active users
       final usersSnapshot = await _firestore.collection('Users').get();
       for (var doc in usersSnapshot.docs) {
         final userId = doc.id;
@@ -298,6 +319,158 @@ class OfficialTeamApi {
       debugPrint('sendHostInvitationMessage() -> success');
     } catch (e) {
       debugPrint('sendHostInvitationMessage() -> error: $e');
+    }
+  }
+
+  /// Trigger: When a user sends a relationship/intimacy invitation
+  static Future<void> sendRelationshipInvitationMessage({
+    required String receiverId,
+    required String receiverDeviceToken,
+    required String senderName,
+    required String invitationId,
+    required String relationshipType,
+  }) async {
+    try {
+      final String msgId = AppHelper.generateID;
+
+      final Map<String, dynamic> msgMap = {
+        'msgId': msgId,
+        'senderId': officialTeamId,
+        'type': 'relationshipInvitation',
+        'textMsg': '', // empty — handled by the custom card widget
+        'fileUrl': '',
+        'gifUrl': '',
+        'location': null,
+        'roomShare': null,
+        'invitationId': invitationId,
+        'invitationAgencyName': senderName, // reuse existing field for sender name
+        'invitationAgencyId': relationshipType, // reuse existing field for type
+        'videoThumbnail': '',
+        'isRead': false,
+        'isRecAudio': false,
+        'isForwarded': false,
+        'sentAt': FieldValue.serverTimestamp(),
+        'replyMessage': null,
+        'groupUpdate': null,
+      };
+
+      // Save to receiver's chat with official_team
+      await _firestore
+          .collection('Users/$receiverId/Chats/$officialTeamId/Messages')
+          .doc(msgId)
+          .set(msgMap);
+
+      // Save to official_notifications subcollection
+      await _firestore
+          .collection('Users/$receiverId/official_notifications')
+          .doc(msgId)
+          .set(msgMap);
+
+      // Update the Chat Node for receiver
+      await _firestore
+          .collection('Users/$receiverId/Chats')
+          .doc(officialTeamId)
+          .set({
+        'senderId': officialTeamId,
+        'msgType': 'relationshipInvitation',
+        'lastMsg': '❤️ Relationship request from $senderName',
+        'msgId': msgId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // Audit log
+      await _firestore.collection('official_notification_logs').doc(msgId).set({
+        'msgId': msgId,
+        'senderId': officialTeamId,
+        'receiverId': receiverId,
+        'textMsg': 'Relationship request from $senderName',
+        'sentAt': FieldValue.serverTimestamp(),
+      });
+
+      // Push notification
+      String targetToken = receiverDeviceToken;
+      if (targetToken.isEmpty) {
+        final userDoc = await _firestore.collection('Users').doc(receiverId).get();
+        if (userDoc.exists) {
+          targetToken = userDoc.data()?['deviceToken'] ?? '';
+        }
+      }
+
+      if (targetToken.isNotEmpty) {
+        PushNotificationService.sendNotification(
+          type: NotificationType.message,
+          title: 'imChat Official Team',
+          body: '❤️ You have received a $relationshipType request from $senderName!',
+          deviceToken: targetToken,
+        );
+      }
+
+      debugPrint('sendRelationshipInvitationMessage() -> success');
+    } catch (e) {
+      debugPrint('sendRelationshipInvitationMessage() -> error: $e');
+    }
+  }
+
+  /// Trigger: When a user receives a follow / friend request
+  static Future<void> sendFollowNotification({
+    required String receiverId,
+    required String senderName,
+  }) async {
+    try {
+      final String msgId = AppHelper.generateID;
+
+      final Map<String, dynamic> msgMap = {
+        'msgId': msgId,
+        'senderId': officialTeamId,
+        'type': 'systemNotification',
+        'textMsg': '👤 $senderName started following you!',
+        'fileUrl': '',
+        'gifUrl': '',
+        'location': null,
+        'roomShare': null,
+        'videoThumbnail': '',
+        'isRead': false,
+        'isRecAudio': false,
+        'isForwarded': false,
+        'sentAt': FieldValue.serverTimestamp(),
+        'replyMessage': null,
+        'groupUpdate': null,
+      };
+
+      await _firestore
+          .collection('Users/$receiverId/Chats/$officialTeamId/Messages')
+          .doc(msgId)
+          .set(msgMap);
+
+      await _firestore
+          .collection('Users/$receiverId/official_notifications')
+          .doc(msgId)
+          .set(msgMap);
+
+      await _firestore
+          .collection('Users/$receiverId/Chats')
+          .doc(officialTeamId)
+          .set({
+        'senderId': officialTeamId,
+        'msgType': 'systemNotification',
+        'lastMsg': '👤 $senderName started following you!',
+        'msgId': msgId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      final userDoc = await _firestore.collection('Users').doc(receiverId).get();
+      final targetToken = userDoc.data()?['deviceToken'] ?? '';
+
+      if (targetToken.isNotEmpty) {
+        PushNotificationService.sendNotification(
+          type: NotificationType.message,
+          title: 'imChat',
+          body: '👤 $senderName started following you!',
+          deviceToken: targetToken,
+        );
+      }
+    } catch (e) {
+      debugPrint('sendFollowNotification() -> error: $e');
     }
   }
 

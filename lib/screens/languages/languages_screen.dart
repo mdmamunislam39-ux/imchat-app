@@ -59,7 +59,7 @@ class _LanguagesScreenState extends State<LanguagesScreen> {
                     bottom: BorderSide(color: greyColor, width: 0.5),
                   ),
                   leading: Image.asset(
-                    'assets/flags/${entry.key}.png',
+                    'assets/flags/${entry.key}.webp',
                     width: 32,
                     fit: BoxFit.cover,
                     errorBuilder: (_, e, __) =>

@@ -70,13 +70,21 @@ class LudoBoardPainter extends CustomPainter {
 
         Paint cellColor = whitePaint;
         if (isVertical) {
-          if (c == 1 && r > 0 && r < 5) cellColor = primaryPaint;
-          else if (!isBottomOrRight && c == 2 && r == 1) cellColor = primaryPaint;
-          else if (isBottomOrRight && c == 0 && r == 4) cellColor = primaryPaint;
+          if (c == 1 && r > 0 && r < 5) {
+            cellColor = primaryPaint;
+          } else if (!isBottomOrRight && c == 2 && r == 1) {
+            cellColor = primaryPaint;
+          } else if (isBottomOrRight && c == 0 && r == 4) {
+            cellColor = primaryPaint;
+          }
         } else {
-          if (r == 1 && c > 0 && c < 5) cellColor = primaryPaint;
-          else if (!isBottomOrRight && r == 0 && c == 1) cellColor = primaryPaint;
-          else if (isBottomOrRight && r == 2 && c == 4) cellColor = primaryPaint;
+          if (r == 1 && c > 0 && c < 5) {
+            cellColor = primaryPaint;
+          } else if (!isBottomOrRight && r == 0 && c == 1) {
+            cellColor = primaryPaint;
+          } else if (isBottomOrRight && r == 2 && c == 4) {
+            cellColor = primaryPaint;
+          }
         }
 
         canvas.drawRect(cellRect, cellColor);
@@ -139,15 +147,29 @@ class LudoBoardWidget extends StatelessWidget {
             ),
             child: Stack(
               children: [
-                // Base Board
-                CustomPaint(
-                  size: Size.square(boardSize),
-                  painter: LudoBoardPainter(),
+                // Base Board Image Asset with Fallback to CustomPaint
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Image.asset(
+                      'assets/images/ludo_board.jpg',
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return CustomPaint(
+                          size: Size.square(boardSize),
+                          painter: LudoBoardPainter(),
+                        );
+                      },
+                    ),
+                  ),
                 ),
 
                 // Tokens Overlay
                 Obx(() {
-                  final tokens = controller.gameState.value.tokens;
+                  final state = controller.gameState.value;
+                  final tokens = state.tokens;
+                  final isMyTurnToMove = state.players[state.currentTurn] == currentUserId;
+
                   return Stack(
                     children: tokens.map((token) {
                       Offset pos = LudoPath.getPosition(token.color, token.position);
@@ -177,34 +199,71 @@ class LudoBoardWidget extends StatelessWidget {
                         offsetY = (mySpotIndex > 1 ? 1 : -1) * (cellSize * 0.15);
                       }
 
+                      final isTokenTurn = isMyTurnToMove && state.currentTurn == token.color;
+
                       return AnimatedPositioned(
                         duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOutBack,
                         left: (pos.dx * cellSize) + (cellSize * 0.1) + offsetX,
                         top: (pos.dy * cellSize) + (cellSize * 0.1) + offsetY,
                         width: cellSize * 0.8,
                         height: cellSize * 0.8,
                         child: GestureDetector(
                           onTap: () {
-                            if (controller.gameState.value.currentTurn == token.color &&
-                                controller.gameState.value.players[token.color] == currentUserId) {
+                            if (isTokenTurn) {
                               controller.moveToken(currentUserId, token);
                             }
                           },
                           child: Container(
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: _getColor(token.color),
+                              gradient: RadialGradient(
+                                colors: [
+                                  _getLightColor(token.color),
+                                  _getColor(token.color),
+                                  _getDarkColor(token.color),
+                                ],
+                                stops: const [0.2, 0.7, 1.0],
+                                center: const Alignment(-0.3, -0.3),
+                              ),
                               border: Border.all(
-                                color: Colors.white,
-                                width: 2,
+                                color: isTokenTurn ? Colors.white : Colors.amber.shade200,
+                                width: isTokenTurn ? 2.5 : 1.5,
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.5),
-                                  blurRadius: 2,
-                                  offset: const Offset(1, 1),
+                                  color: isTokenTurn 
+                                      ? Colors.yellowAccent.withValues(alpha: 0.8)
+                                      : Colors.black.withValues(alpha: 0.4),
+                                  blurRadius: isTokenTurn ? 6 : 3,
+                                  spreadRadius: isTokenTurn ? 2 : 0,
+                                  offset: const Offset(1, 2),
                                 )
                               ],
+                            ),
+                            child: Center(
+                              child: Container(
+                                width: cellSize * 0.35,
+                                height: cellSize * 0.35,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white.withValues(alpha: 0.85),
+                                  border: Border.all(
+                                    color: _getDarkColor(token.color),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Container(
+                                    width: cellSize * 0.15,
+                                    height: cellSize * 0.15,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: _getDarkColor(token.color),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -222,11 +281,31 @@ class LudoBoardWidget extends StatelessWidget {
 
   Color _getColor(LudoColor color) {
     switch (color) {
-      case LudoColor.red: return const Color(0xFFF44336);
-      case LudoColor.green: return const Color(0xFF4CAF50);
-      case LudoColor.yellow: return const Color(0xFFFFEB3B);
-      case LudoColor.blue: return const Color(0xFF2196F3);
+      case LudoColor.red: return const Color(0xFFE53935);
+      case LudoColor.green: return const Color(0xFF43A047);
+      case LudoColor.yellow: return const Color(0xFFFDD835);
+      case LudoColor.blue: return const Color(0xFF1E88E5);
       default: return Colors.grey;
+    }
+  }
+
+  Color _getLightColor(LudoColor color) {
+    switch (color) {
+      case LudoColor.red: return const Color(0xFFFF8A80);
+      case LudoColor.green: return const Color(0xFFA5D6A7);
+      case LudoColor.yellow: return const Color(0xFFFFF59D);
+      case LudoColor.blue: return const Color(0xFF90CAF9);
+      default: return Colors.white;
+    }
+  }
+
+  Color _getDarkColor(LudoColor color) {
+    switch (color) {
+      case LudoColor.red: return const Color(0xFFB71C1C);
+      case LudoColor.green: return const Color(0xFF1B5E20);
+      case LudoColor.yellow: return const Color(0xFFF57F17);
+      case LudoColor.blue: return const Color(0xFF0D47A1);
+      default: return Colors.black;
     }
   }
 }

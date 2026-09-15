@@ -14,6 +14,9 @@ import 'package:chat_messenger/AdminPane/screens/admin_room_id_customization_scr
 import 'package:chat_messenger/AdminPane/screens/admin_greedy_game_screen.dart';
 import 'package:chat_messenger/AdminPane/screens/admin_audio_rooms_screen.dart';
 import 'package:chat_messenger/AdminPane/screens/admin_invitation_reward_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_payment_management_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_recharge_requests_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_agora_settings_screen.dart';
 
 class RoleDashboardScreen extends StatefulWidget {
   final User currentUser;
@@ -111,6 +114,15 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 _buildAdminPaneCard('Full Management Features (Admin Pane)', Icons.admin_panel_settings, Colors.purpleAccent),
                 _buildCardBase('Invitation Reward Setting', Icons.card_giftcard, Colors.pinkAccent, () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminInvitationRewardScreen()));
+                }),
+                _buildCardBase('Payment Management', Icons.payments_rounded, const Color(0xFF00B074), () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPaymentManagementScreen()));
+                }),
+                _buildCardBase('Recharge Requests', Icons.receipt_long_rounded, Colors.tealAccent, () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminRechargeRequestsScreen()));
+                }),
+                _buildCardBase('Agora RTC Settings', Icons.cell_tower_rounded, Colors.purpleAccent, () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminAgoraSettingsScreen()));
                 }),
                 ...roleService.superAdminPermissions.entries
                     .where((entry) => entry.value == true)

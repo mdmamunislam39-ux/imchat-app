@@ -126,18 +126,20 @@ class CreateGroupScreen extends StatelessWidget {
         ),
       ),
       bottomNavigationBar: Obx(
-        () => Padding(
-          padding: const EdgeInsets.fromLTRB(16, 3, 16, 16),
-          child: DefaultButton(
-            height: 45,
-            isLoading: controller.isLoading.value,
-            width: double.maxFinite,
-            text: isBroadcast
-                ? 'create_broadcast'.tr.toUpperCase()
-                : 'create_group'.tr.toUpperCase(),
-            onPress: controller.members.isEmpty
-                ? null
-                : () => controller.createGroup(isBroadcast),
+        () => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 3, 16, 16),
+            child: DefaultButton(
+              height: 45,
+              isLoading: controller.isLoading.value,
+              width: double.maxFinite,
+              text: isBroadcast
+                  ? 'create_broadcast'.tr.toUpperCase()
+                  : 'create_group'.tr.toUpperCase(),
+              onPress: controller.members.isEmpty
+                  ? null
+                  : () => controller.createGroup(isBroadcast),
+            ),
           ),
         ),
       ),

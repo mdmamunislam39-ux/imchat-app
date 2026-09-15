@@ -8,7 +8,7 @@ class DynamicDiamondIcon extends StatelessWidget {
     super.key,
     this.width = 16,
     this.height = 16,
-    this.fallbackIcon = 'assets/images/diamond_icon.png', // Assuming diamond_icon.png is the standard asset
+    this.fallbackIcon = 'assets/images/diamond_icon.webp', // Assuming diamond_icon.png is the standard asset
     this.color,
     this.fit = BoxFit.contain,
     this.errorBuilder,
@@ -23,6 +23,9 @@ class DynamicDiamondIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!Get.isRegistered<AppThemeService>()) {
+      return _buildFallback();
+    }
     return Obx(() {
       final themeService = Get.find<AppThemeService>();
       if (themeService.diamondIconUrl.value.isNotEmpty) {

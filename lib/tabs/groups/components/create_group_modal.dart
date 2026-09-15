@@ -16,9 +16,10 @@ class CreateGroupModal extends StatelessWidget {
           topRight: Radius.circular(defaultRadius),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
@@ -60,6 +61,7 @@ class CreateGroupModal extends StatelessWidget {
           const SizedBox(height: 16),
         ],
       ),
-    );
+    ),
+  );
   }
 }

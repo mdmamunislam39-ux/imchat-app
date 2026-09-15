@@ -55,11 +55,12 @@ class AppBarTools extends StatelessWidget implements PreferredSizeWidget {
 
     // <-- Build Group AppBar -->
     if (isGroup) {
-      debugPrint('${group!.participants.length}');
-      debugPrint('${group!.participants[0].fullname}');
-      debugPrint('${group!.participants[0].userId}');
-      debugPrint('${group!.participants[1].fullname}');
-      debugPrint('${group!.participants[1].userId}');
+      debugPrint(group!.participants[0].fullname);
+      debugPrint(group!.participants[0].userId);
+      if (group!.participants.length > 1) {
+        debugPrint(group!.participants[1].fullname);
+        debugPrint(group!.participants[1].userId);
+      }
       // Vars
       final bool isBroadcast = group!.isBroadcast;
 
@@ -123,7 +124,12 @@ class AppBarTools extends StatelessWidget implements PreferredSizeWidget {
                   }
                   return IconButton(
                     onPressed: () => CallHelper.makeGroupCall(
-                        isVideo: false, recipients: group!.recipients),
+                      isVideo: false,
+                      recipients: group!.recipients,
+                      groupName: group?.name,
+                      groupPhotoUrl: group?.photoUrl,
+                      group: group,
+                    ),
                     icon: const Icon(IconlyLight.call, color: Colors.white),
                   );
                 }),
@@ -138,7 +144,12 @@ class AppBarTools extends StatelessWidget implements PreferredSizeWidget {
                   }
                   return IconButton(
                     onPressed: () => CallHelper.makeGroupCall(
-                        isVideo: true, recipients: group!.recipients),
+                      isVideo: true,
+                      recipients: group!.recipients,
+                      groupName: group?.name,
+                      groupPhotoUrl: group?.photoUrl,
+                      group: group,
+                    ),
                     icon: const Icon(IconlyLight.video,
                         size: 32, color: Colors.white),
                   );
@@ -316,8 +327,12 @@ class AppBarTools extends StatelessWidget implements PreferredSizeWidget {
                       // Get updated user
                       final User receiver = snapshot.data ?? user!;
 
-                      // Update controller
-                      messageController.isReceiverOnline = receiver.isOnline;
+                      // Update controller safely after build frame
+                      if (messageController.isReceiverOnline.value != receiver.isOnline) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          messageController.isReceiverOnline.value = receiver.isOnline;
+                        });
+                      }
 
                       // Get typing status
                       final isTypingToMe = receiver.isTyping &&

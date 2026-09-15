@@ -7,7 +7,7 @@ class GlobalSettingsService extends GetxService {
 
   // Reactive variables for real-time UI updates
   final RxString agoraAppId = 'c74eafbb98784225bae6be9b7e7f6225'.obs;
-  final RxString agoraCertificate = 'eb4c5875fba74804b9d348882d7365f0'.obs;
+  final RxString agoraCertificate = ''.obs;
   final RxBool isVoiceRoomEnabled = true.obs;
   final RxBool isAudioCallEnabled = true.obs;
   final RxBool isVideoCallEnabled = true.obs;
@@ -82,8 +82,24 @@ class GlobalSettingsService extends GetxService {
   }
 
   void _parseData(Map<String, dynamic> data) {
-    // Agora App ID and Certificate are hardcoded and should not be overridden by Firebase
-    // to prevent connectivity issues caused by mismatched or stale credentials.
+    // Dynamically update Agora credentials in real-time from Firebase Admin Panel
+    if (data.containsKey('agoraAppId') && data['agoraAppId'] != null) {
+      final val = data['agoraAppId'].toString().trim();
+      if (val.isNotEmpty) {
+        agoraAppId.value = val;
+      }
+    }
+    if (data.containsKey('agoraAppCertificate') && data['agoraAppCertificate'] != null) {
+      final val = data['agoraAppCertificate'].toString().trim();
+      if (val.isNotEmpty) {
+        agoraCertificate.value = val;
+      }
+    } else if (data.containsKey('agoraCertificate') && data['agoraCertificate'] != null) {
+      final val = data['agoraCertificate'].toString().trim();
+      if (val.isNotEmpty) {
+        agoraCertificate.value = val;
+      }
+    }
     if (data.containsKey('isVoiceRoomEnabled')) {
       isVoiceRoomEnabled.value = data['isVoiceRoomEnabled'] ?? true;
     }

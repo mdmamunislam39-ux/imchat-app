@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/api/group_api.dart';
+import 'package:chat_messenger/api/official_team_api.dart';
 import 'package:chat_messenger/helpers/app_helper.dart';
 import 'package:chat_messenger/helpers/dialog_helper.dart';
 import 'package:chat_messenger/models/group.dart';
@@ -36,41 +39,58 @@ abstract class MessageApi {
     required Message message,
     required User receiver,
   }) async {
-    try {
-      // Get current user instance
-      final User currentUser = AuthController.instance.currentUser;
+    final User currentUser = AuthController.instance.currentUser;
 
-      // Save message for current user
+    // 1. Save message for current user (Sender)
+    try {
       await _getCollectionRef(userId1: currentUser.userId, userId2: receiver.userId)
           .doc(message.msgId)
           .set(message.toMap(isGroup: false))
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 10));
+      debugPrint('saveMessage() -> sender success');
+    } catch (e) {
+      debugPrint('saveMessage() -> sender error: $e');
+    }
 
-      // Save message for another user
+    // 2. Save message for another user (Receiver)
+    try {
       await _getCollectionRef(userId1: receiver.userId, userId2: currentUser.userId)
           .doc(message.msgId)
           .set(message.toMap(isGroup: false))
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 10));
+      debugPrint('saveMessage() -> receiver success');
+    } catch (e) {
+      debugPrint('saveMessage() -> receiver error: $e');
+    }
 
-      // Save the last chat
-      ChatApi.saveChat(
+    // 3. Save the last chat node for both users
+    try {
+      await ChatApi.saveChat(
         userId1: currentUser.userId,
         userId2: receiver.userId,
         message: message,
       );
-
-      // Send push notification to recevier
-      PushNotificationService.sendNotification(
-        type: NotificationType.message,
-        title: currentUser.fullname,
-        body: PushNotificationService.getMessageType(message),
-        deviceToken: receiver.deviceToken,
-      );
-
-      // Debug
-      debugPrint('saveMessage() -> success');
+      debugPrint('saveChat() -> success');
     } catch (e) {
-      debugPrint('saveMessage() -> error: $e');
+      debugPrint('saveChat() -> error: $e');
+    }
+
+    // 4. Send push notification to receiver
+    try {
+      if (receiver.deviceToken.isNotEmpty) {
+        PushNotificationService.sendNotification(
+          type: NotificationType.message,
+          title: currentUser.fullname,
+          body: PushNotificationService.getMessageType(message),
+          deviceToken: receiver.deviceToken,
+          call: {
+            'messageId': message.msgId,
+            'senderId': currentUser.userId,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('sendNotification() -> error: $e');
     }
   }
 
@@ -229,6 +249,55 @@ abstract class MessageApi {
     }
   }
 
+  // Save call log message (canceled, rejected, missed, completed) for both users
+  static Future<void> sendCallLogMessage({
+    required bool isVideo,
+    required User receiver,
+    required String status,
+    required int duration,
+  }) async {
+    try {
+      final User currentUser = AuthController.instance.currentUser;
+      final String callType = isVideo ? 'video' : 'audio';
+      final String payload = 'call|$callType|$status|$duration';
+
+      final Message message = Message(
+        msgId: AppHelper.generateID,
+        senderId: currentUser.userId,
+        type: MessageType.text,
+        textMsg: payload,
+      );
+
+      // Save to sender and receiver chat messages and update recent chats
+      await MessageApi.sendMessage(
+        message: message,
+        receiver: receiver,
+      );
+
+      // If missed or canceled by caller before answer, notify receiver
+      if (status == 'missed' || status == 'canceled') {
+        final String notifBody = isVideo
+            ? 'you_missed_a_video_call'.tr
+            : 'you_missed_a_voice_call'.tr;
+
+        PushNotificationService.sendNotification(
+          type: NotificationType.message,
+          title: currentUser.fullname,
+          body: notifBody,
+          deviceToken: receiver.deviceToken,
+          call: {
+            'messageId': message.msgId,
+            'senderId': currentUser.userId,
+          },
+        );
+      }
+
+      debugPrint('sendCallLogMessage() -> success (status: $status, duration: $duration)');
+    } catch (e) {
+      debugPrint('sendCallLogMessage() -> error: $e');
+    }
+  }
+
   // Save missed call message for receiver
   static Future<void> sendMissedCallMessage({
     required bool isVideo,
@@ -276,6 +345,10 @@ abstract class MessageApi {
           title: currentUser.fullname,
           body: body,
           deviceToken: receiver.deviceToken,
+          call: {
+            'messageId': message.msgId,
+            'senderId': currentUser.userId,
+          },
         ),
       ]);
 
@@ -293,17 +366,152 @@ abstract class MessageApi {
     final String userId = user.userId;
 
     if (userId == 'official_team') {
-      return _firestore
-          .collection('Users/${currentUser.userId}/official_notifications')
-          .orderBy('sentAt', descending: true)
-          .limit(100)
-          .snapshots()
-          .map((event) {
-        return event.docs.map((doc) {
-          return Message.fromMap(
-              data: doc.data(), docRef: doc.reference, isGroup: false);
-        }).toList();
-      });
+      late StreamController<List<Message>> streamCtrl;
+      StreamSubscription? subNotifs;
+      StreamSubscription? subChats;
+      StreamSubscription? subBroadcasts;
+
+      final Map<String, Message> notifMap = {};
+      final Map<String, Message> chatMap = {};
+      final Map<String, Message> broadcastMap = {};
+      bool hasEmitted = false;
+
+      void emitMerged() {
+        if (streamCtrl.isClosed) return;
+        final all = <String, Message>{};
+        all.addAll(broadcastMap);
+        all.addAll(chatMap);
+        all.addAll(notifMap);
+
+        final list = all.values.toList();
+        list.sort((a, b) {
+          final tA = a.sentAt;
+          final tB = b.sentAt;
+          if (tA == null && tB == null) return 0;
+          if (tA == null) return 1;
+          if (tB == null) return -1;
+          return tB.compareTo(tA);
+        });
+
+        if (list.isEmpty) {
+          final defaultMsg = Message(
+            msgId: 'welcome_${currentUser.userId}',
+            senderId: 'official_team',
+            type: MessageType.text,
+            textMsg: '🎉 Welcome ${currentUser.fullname}! Enjoy your experience in our imChat app. Here you will receive all official notices and updates.',
+            sentAt: DateTime.now(),
+            isRead: true,
+          );
+          streamCtrl.add([defaultMsg]);
+          if (!hasEmitted) {
+            OfficialTeamApi.sendWelcomeMessage(currentUser);
+          }
+        } else {
+          streamCtrl.add(list);
+        }
+        hasEmitted = true;
+      }
+
+      streamCtrl = StreamController<List<Message>>(
+        onListen: () {
+          // 1. official_notifications subcollection
+          subNotifs = _firestore
+              .collection('Users/${currentUser.userId}/official_notifications')
+              .limit(100)
+              .snapshots()
+              .listen((snapshot) {
+            notifMap.clear();
+            for (var doc in snapshot.docs) {
+              try {
+                final msg = Message.fromMap(
+                  data: doc.data(),
+                  docRef: doc.reference,
+                  isGroup: false,
+                );
+                final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
+                notifMap[id] = msg;
+              } catch (e) {
+                debugPrint('Error parsing official_notification doc ${doc.id}: $e');
+              }
+            }
+            emitMerged();
+          }, onError: (e) {
+            debugPrint('Error in official_notifications stream: $e');
+            emitMerged();
+          });
+
+          // 2. Chats/official_team/Messages subcollection
+          subChats = _firestore
+              .collection('Users/${currentUser.userId}/Chats/official_team/Messages')
+              .limit(100)
+              .snapshots()
+              .listen((snapshot) {
+            chatMap.clear();
+            for (var doc in snapshot.docs) {
+              try {
+                final msg = Message.fromMap(
+                  data: doc.data(),
+                  docRef: doc.reference,
+                  isGroup: false,
+                );
+                final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
+                chatMap[id] = msg;
+              } catch (e) {
+                debugPrint('Error parsing official chat doc ${doc.id}: $e');
+              }
+            }
+            emitMerged();
+          }, onError: (e) {
+            debugPrint('Error in official chat stream: $e');
+            emitMerged();
+          });
+
+          // 3. Central official_broadcasts collection
+          subBroadcasts = _firestore
+              .collection('official_broadcasts')
+              .limit(50)
+              .snapshots()
+              .listen((snapshot) {
+            broadcastMap.clear();
+            for (var doc in snapshot.docs) {
+              try {
+                final data = doc.data();
+                DateTime? sentAt;
+                if (data['sentAt'] is Timestamp) {
+                  sentAt = (data['sentAt'] as Timestamp).toDate();
+                } else if (data['sentAt'] is DateTime) {
+                  sentAt = data['sentAt'] as DateTime;
+                } else if (data['sentAt'] is String) {
+                  sentAt = DateTime.tryParse(data['sentAt']);
+                }
+                final msg = Message(
+                  msgId: doc.id,
+                  senderId: 'official_team',
+                  type: Message.getMsgType(data['type'] ?? 'text'),
+                  textMsg: data['textMsg'] ?? '',
+                  fileUrl: data['fileUrl'] ?? '',
+                  sentAt: sentAt ?? DateTime.now(),
+                  isRead: true,
+                );
+                broadcastMap[doc.id] = msg;
+              } catch (e) {
+                debugPrint('Error parsing official_broadcast doc ${doc.id}: $e');
+              }
+            }
+            emitMerged();
+          }, onError: (e) {
+            debugPrint('Error in official_broadcasts stream: $e');
+            emitMerged();
+          });
+        },
+        onCancel: () {
+          subNotifs?.cancel();
+          subChats?.cancel();
+          subBroadcasts?.cancel();
+        },
+      );
+
+      return streamCtrl.stream;
     }
 
     if (user.userType == 'channel') {
@@ -691,6 +899,10 @@ abstract class MessageApi {
           title: currentUser.fullname,
           body: isVideo ? 'Video call' : 'Audio call',
           deviceToken: receiver.deviceToken,
+          call: {
+            'messageId': message.msgId,
+            'senderId': currentUser.userId,
+          },
         ),
       ]);
 

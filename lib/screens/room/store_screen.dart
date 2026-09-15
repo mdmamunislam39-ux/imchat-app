@@ -8,6 +8,7 @@ import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
+import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
 
 /// Store screen for purchasing items with diamonds
 class StoreScreen extends StatefulWidget {
@@ -55,13 +56,24 @@ class _StoreScreenState extends State<StoreScreen> {
     return Obx(() {
       final user = AuthController.instance.currentUser;
       return DefaultTabController(
-        length: 5,
+        length: 7,
         child: Scaffold(
+          backgroundColor: const Color(0xFFF6F7FB),
           appBar: AppBar(
-            title: const Text('Store'),
+            title: const Text('Mall'),
+            centerTitle: true,
             backgroundColor: Colors.white,
             elevation: 0,
-            leading: const BackButton(color: Colors.black),
+            leading: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.grey.withValues(alpha: 0.1),
+                ),
+                child: const BackButton(color: Colors.black),
+              ),
+            ),
             iconTheme: const IconThemeData(color: Colors.black),
             titleTextStyle: const TextStyle(
                 color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold),
@@ -76,7 +88,7 @@ class _StoreScreenState extends State<StoreScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.diamond, color: Colors.pink, size: 16),
+                    const DynamicDiamondIcon(width: 16, height: 16),
                     const SizedBox(width: 4),
                     Text(
                       '${user.diamonds}',
@@ -89,17 +101,23 @@ class _StoreScreenState extends State<StoreScreen> {
                 ),
               ),
             ],
-            bottom: const TabBar(
-              labelColor: Colors.pink,
-              unselectedLabelColor: Colors.grey,
-              indicatorColor: Colors.pink,
+            bottom: TabBar(
+              labelColor: Colors.black,
+              unselectedLabelColor: Colors.grey[400],
+              indicatorColor: Colors.black,
+              indicatorWeight: 3,
+              indicatorSize: TabBarIndicatorSize.label,
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 16),
               isScrollable: true,
-              tabs: [
+              tabs: const [
                 Tab(text: 'Frames'),
-                Tab(text: 'Entry Effects'),
+                Tab(text: 'Entry'),
                 Tab(text: 'Profile Skins'),
                 Tab(text: 'Room Themes'),
                 Tab(text: 'Mic Refills'),
+                Tab(text: 'Short Profiles'),
+                Tab(text: 'Room Entries'),
               ],
             ),
           ),
@@ -135,6 +153,20 @@ class _StoreScreenState extends State<StoreScreen> {
               ),
               _StoreTab(
                 type: 'micRefill',
+                currentUser: user,
+                walletService: widget.walletService,
+                storeService: widget.storeService,
+                onPurchaseSuccess: _refreshUserData,
+              ),
+              _StoreTab(
+                type: 'shortProfileTheme',
+                currentUser: user,
+                walletService: widget.walletService,
+                storeService: widget.storeService,
+                onPurchaseSuccess: _refreshUserData,
+              ),
+              _StoreTab(
+                type: 'roomEntry',
                 currentUser: user,
                 walletService: widget.walletService,
                 storeService: widget.storeService,
@@ -192,6 +224,8 @@ class _StoreTabState extends State<_StoreTab> {
             widget.currentUser.customization?.selectedBackgroundThemeId ||
         oldWidget.currentUser.customization?.selectedMicRefillId !=
             widget.currentUser.customization?.selectedMicRefillId ||
+        oldWidget.currentUser.customization?.selectedShortProfileThemeId !=
+            widget.currentUser.customization?.selectedShortProfileThemeId ||
         oldWidget.currentUser != widget.currentUser) {
       setState(() {});
     }
@@ -202,216 +236,353 @@ class _StoreTabState extends State<_StoreTab> {
     final description = item['description'] as String? ?? '';
     final fileUrl = (item['fileUrl'] ?? item['thumbnailUrl'] ?? item['imageUrl'] ?? item['image'] ?? '') as String;
 
+    // Parse validity prices if available
+    final Map<String, dynamic>? validityPrices = item['validityPrices'] != null
+        ? Map<String, dynamic>.from(item['validityPrices'])
+        : null;
+
+    final int defaultPrice = (item['diamondPrice'] as num?)?.toInt() ?? 0;
+    final int defaultDays = item['expirationDuration'] is int ? item['expirationDuration'] : 7;
+
+    // Standard validity options
+    final List<int> validityOptions = [3, 7, 15, 30];
+    
+    // Initial selected days
+    int selectedDays = defaultDays > 0 && validityOptions.contains(defaultDays)
+        ? defaultDays
+        : 7;
+
+    int getPriceForDays(int days) {
+      if (validityPrices != null && validityPrices.containsKey(days.toString())) {
+        final val = validityPrices[days.toString()];
+        if (val is num) return val.round();
+      }
+      if (defaultDays > 0 && defaultPrice > 0) {
+        return ((defaultPrice / defaultDays) * days).round();
+      }
+      return defaultPrice;
+    }
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.70,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF2C2D35), Color(0xFF15161A)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black54,
-              blurRadius: 20,
-              offset: Offset(0, -5),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 50,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(10),
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final int currentPrice = getPriceForDays(selectedDays);
+          final String formattedPrice = currentPrice.toString().replaceAllMapped(
+                RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+                (Match m) => '${m[1]},',
+              );
+
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.78,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF2C2D35), Color(0xFF15161A)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              name,
-              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 0.5),
-            ),
-            if (description.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  description,
-                  style: const TextStyle(color: Colors.white60, fontSize: 13),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black54,
+                  blurRadius: 20,
+                  offset: Offset(0, -5),
                 ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            Text(
-              item['expirationDuration'] != null ? 'Validity: ${item['expirationDuration']} Days' : 'Permanent',
-              style: const TextStyle(color: Colors.pinkAccent, fontSize: 13, fontWeight: FontWeight.bold),
+              ],
             ),
-            const SizedBox(height: 20),
-            Expanded(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.black38,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white10),
+            child: Column(
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 50,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  name,
+                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      description,
+                      style: const TextStyle(color: Colors.white60, fontSize: 13),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Positioned.fill(
-                          child: Opacity(
-                            opacity: 0.08,
-                            child: CustomPaint(
-                              painter: GridPainter(),
-                            ),
-                          ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Expanded(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Container(
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.black38,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white10),
                         ),
-                        if (type == 'avatarFrame' || type == 'frame')
-                          Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              Container(
-                                width: 70,
-                                height: 70,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFA42D),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 2),
-                                ),
-                                child: CachedCircleAvatar(
-                                  imageUrl: widget.currentUser.photoUrl,
-                                  radius: 35,
-                                  isOnline: widget.currentUser.isOnline,
+                        clipBehavior: Clip.antiAlias,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Positioned.fill(
+                              child: Opacity(
+                                opacity: 0.08,
+                                child: CustomPaint(
+                                  painter: GridPainter(),
                                 ),
                               ),
-                              SizedBox(
-                                width: 105,
-                                height: 105,
-                                child: UniversalAssetWidget(
-                                  url: fileUrl,
-                                  fit: BoxFit.cover,
-                                  isAlphaVideo: true,
-                                ),
-                              ),
-                            ],
-                          )
-                        else if (type == 'backgroundTheme' || type == 'profileSkin' || type == 'roomTheme')
-                          Container(
-                            width: double.infinity,
-                            height: double.infinity,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(20),
                             ),
-                            clipBehavior: Clip.antiAlias,
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
+                            if (type == 'avatarFrame' || type == 'frame' || type == 'micRefill')
+                              Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Container(
+                                    width: 70,
+                                    height: 70,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFA42D),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                    ),
+                                    child: CachedCircleAvatar(
+                                      imageUrl: widget.currentUser.photoUrl,
+                                      radius: 35,
+                                      isOnline: widget.currentUser.isOnline,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: type == 'micRefill' ? 190 : 105,
+                                    height: type == 'micRefill' ? 190 : 105,
+                                    child: UniversalAssetWidget(
+                                      key: ValueKey(fileUrl),
+                                      url: fileUrl,
+                                      fit: BoxFit.contain,
+                                      isAlphaVideo: false,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            else if (type == 'backgroundTheme' || type == 'profileSkin' || type == 'roomTheme' || type == 'shortProfileTheme')
+                              Container(
+                                width: double.infinity,
+                                height: double.infinity,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Stack(
+                                  children: [
+                                    Positioned.fill(
+                                      child: UniversalAssetWidget(
+                                        url: fileUrl,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                    Container(color: Colors.black45),
+                                    Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          if (type == 'roomTheme')
+                                            const Icon(Icons.mic, size: 40, color: Colors.white)
+                                          else
+                                            CircleAvatar(
+                                              radius: 35,
+                                              backgroundColor: Colors.white24,
+                                              child: Icon(type == 'shortProfileTheme' ? Icons.portrait : Icons.person, size: 40, color: Colors.white),
+                                            ),
+                                          const SizedBox(height: 10),
+                                          Text(
+                                            type == 'roomTheme' ? 'Simulated Voice Room Background' : type == 'shortProfileTheme' ? 'Simulated Short Profile Theme' : 'Simulated Profile Page Skin',
+                                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              SizedBox.expand(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
                                   child: UniversalAssetWidget(
                                     url: fileUrl,
-                                    fit: BoxFit.cover,
+                                    fit: BoxFit.contain,
+                                    isAlphaVideo: true,
                                   ),
                                 ),
-                                Container(color: Colors.black45),
-                                Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      if (type == 'roomTheme')
-                                        const Icon(Icons.mic, size: 40, color: Colors.white)
-                                      else
-                                        CircleAvatar(
-                                          radius: 35,
-                                          backgroundColor: Colors.white24,
-                                          child: const Icon(Icons.person, size: 40, color: Colors.white),
-                                        ),
-                                      const SizedBox(height: 10),
-                                      Text(
-                                        type == 'roomTheme' ? 'Simulated Voice Room Background' : 'Simulated Profile Page Skin',
-                                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)
-                                      ),
-                                    ],
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // ─── Select Validity Section (Matching Screenshot) ───
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Select Validity',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: validityOptions.map((days) {
+                            final bool isSelected = selectedDays == days;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 10.0),
+                              child: InkWell(
+                                onTap: () {
+                                  setSheetState(() {
+                                    selectedDays = days;
+                                  });
+                                },
+                                borderRadius: BorderRadius.circular(24),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 180),
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFF1D61F2)
+                                        : Colors.white.withAlpha(18),
+                                    borderRadius: BorderRadius.circular(24),
+                                    border: isSelected
+                                        ? Border.all(color: Colors.blueAccent)
+                                        : Border.all(color: Colors.white12),
+                                  ),
+                                  child: Text(
+                                    '$days days',
+                                    style: TextStyle(
+                                      color: isSelected ? Colors.white : Colors.white70,
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // ─── Price Display Box (Matching Screenshot) ───
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withAlpha(12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Price',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                const DynamicDiamondIcon(width: 22, height: 22),
+                                const SizedBox(width: 8),
+                                Text(
+                                  formattedPrice,
+                                  style: const TextStyle(
+                                    color: Color(0xFFF59E0B),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ],
                             ),
-                          )
-                        else
-                          SizedBox.expand(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: UniversalAssetWidget(
-                                url: fileUrl,
-                                fit: BoxFit.contain,
-                                isAlphaVideo: true,
-                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _purchaseItem(item, selectedPrice: currentPrice, selectedValidityDays: selectedDays);
+                            },
+                            icon: const Icon(Icons.shopping_cart, size: 18),
+                            label: const Text('Purchase', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.pinkAccent,
+                              foregroundColor: Colors.white,
+                              elevation: 4,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
                           ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _showGiftDialog(item, selectedPrice: currentPrice, selectedValidityDays: selectedDays);
+                            },
+                            icon: const Icon(Icons.card_giftcard, size: 18),
+                            label: const Text('Send to Friend', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.purpleAccent,
+                              foregroundColor: Colors.white,
+                              elevation: 4,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
-            const SizedBox(height: 20),
-            Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _purchaseItem(item);
-                      },
-                      icon: const Icon(Icons.shopping_cart, size: 18),
-                      label: const Text('Purchase', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.pinkAccent,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showGiftDialog(item);
-                      },
-                      icon: const Icon(Icons.card_giftcard, size: 18),
-                      label: const Text('Send to Friend', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.purpleAccent,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -527,14 +698,14 @@ class _StoreTabState extends State<_StoreTab> {
     }
   }
 
-  Future<void> _purchaseItem(Map<String, dynamic> item) async {
+  Future<void> _purchaseItem(Map<String, dynamic> item, {int? selectedPrice, int? selectedValidityDays}) async {
     try {
       final itemId = item['id'] as String;
       final itemName = item['name'] as String;
 
       // Determine currency and cost
       final diamondPrice = (item['diamondPrice'] as num?)?.toInt() ?? 0;
-      final int cost = diamondPrice;
+      final int cost = selectedPrice ?? diamondPrice;
 
       final currentBalance = widget.currentUser.diamonds;
 
@@ -578,7 +749,8 @@ class _StoreTabState extends State<_StoreTab> {
           userId: widget.currentUser.userId,
           storeItemId: itemId,
           cost: cost,
-          description: 'Purchased $itemName',
+          description: 'Purchased $itemName (${selectedValidityDays ?? item['expirationDuration'] ?? 0} days)',
+          validityDays: selectedValidityDays,
         );
 
         // Update local ownership state immediately
@@ -609,79 +781,271 @@ class _StoreTabState extends State<_StoreTab> {
     }
   }
 
-  void _showGiftDialog(Map<String, dynamic> item) {
+  void _showGiftDialog(Map<String, dynamic> item, {int? selectedPrice, int? selectedValidityDays}) {
     final TextEditingController searchIdController = TextEditingController();
+    Map<String, dynamic>? foundUser;
+    String? foundUserId;
+    bool isSearching = false;
+    String searchError = '';
+
+    final itemName = item['name'] as String? ?? 'Item';
+    final diamondPrice = (item['diamondPrice'] as num?)?.toInt() ?? 0;
 
     showDialog(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Send Gift to Friend'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Enter the Search ID of the friend you want to gift "${item['name']}" to.'),
-              const SizedBox(height: 16),
-              TextField(
-                controller: searchIdController,
-                decoration: InputDecoration(
-                  labelText: 'Friend\'s Search ID',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  prefixIcon: const Icon(Icons.search),
-                ),
-                keyboardType: TextInputType.number,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final searchId = searchIdController.text.trim();
-                if (searchId.isNotEmpty) {
-                  Navigator.pop(context);
-                  _giftItemToFriend(item, searchId);
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> performSearch() async {
+              final searchId = searchIdController.text.trim();
+              if (searchId.isEmpty) return;
+
+              setDialogState(() {
+                isSearching = true;
+                searchError = '';
+                foundUser = null;
+                foundUserId = null;
+              });
+
+              try {
+                // 1. Search by searchId (String)
+                var querySnapshot = await FirebaseFirestore.instance
+                    .collection('Users')
+                    .where('searchId', isEqualTo: searchId)
+                    .limit(1)
+                    .get();
+
+                // 2. Search by searchId (int) if empty
+                if (querySnapshot.docs.isEmpty) {
+                  final numInput = int.tryParse(searchId);
+                  if (numInput != null) {
+                    querySnapshot = await FirebaseFirestore.instance
+                        .collection('Users')
+                        .where('searchId', isEqualTo: numInput)
+                        .limit(1)
+                        .get();
+                  }
                 }
-              },
-              child: const Text('Search & Send'),
-            ),
-          ],
+
+                // 3. Search by doc ID if empty
+                if (querySnapshot.docs.isEmpty) {
+                  final doc = await FirebaseFirestore.instance
+                      .collection('Users')
+                      .doc(searchId)
+                      .get();
+                  if (doc.exists) {
+                    setDialogState(() {
+                      foundUser = doc.data();
+                      foundUserId = doc.id;
+                      isSearching = false;
+                    });
+                    return;
+                  }
+                }
+
+                if (querySnapshot.docs.isNotEmpty) {
+                  final doc = querySnapshot.docs.first;
+                  setDialogState(() {
+                    foundUser = doc.data();
+                    foundUserId = doc.id;
+                    isSearching = false;
+                  });
+                } else {
+                  setDialogState(() {
+                    isSearching = false;
+                    searchError = 'No user found with Search ID "$searchId"';
+                  });
+                }
+              } catch (e) {
+                setDialogState(() {
+                  isSearching = false;
+                  searchError = 'Search error: $e';
+                });
+              }
+            }
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
+                children: [
+                  const Icon(Icons.card_giftcard, color: Colors.purpleAccent),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Send Gift to Friend',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Enter the Search ID of the friend you want to gift "$itemName" ($diamondPrice 💎) to.',
+                      style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: searchIdController,
+                      keyboardType: TextInputType.text,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (_) => performSearch(),
+                      decoration: InputDecoration(
+                        labelText: 'Friend\'s Search ID',
+                        hintText: 'Enter ID (e.g. 123456)',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        prefixIcon: const Icon(Icons.search, color: Colors.purpleAccent),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.arrow_forward, color: Colors.purpleAccent),
+                          onPressed: performSearch,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    if (isSearching)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: CircularProgressIndicator(),
+                        ),
+                      ),
+
+                    if (searchError.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          searchError,
+                          style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+
+                    if (foundUser != null) ...[
+                      const Text(
+                        'Recipient Profile:',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.purple.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            CachedCircleAvatar(
+                              imageUrl: (foundUser!['photoUrl'] ?? foundUser!['userPhoto'] ?? foundUser!['avatar'] ?? '') as String,
+                              radius: 22,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    (foundUser!['fullname'] ?? foundUser!['username'] ?? foundUser!['name'] ?? 'User') as String,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'ID: ${foundUser!['searchId'] ?? foundUserId ?? ''}',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.check_circle, color: Colors.green, size: 22),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                ),
+                if (foundUser == null)
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2196F3),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                    onPressed: performSearch,
+                    child: const Text(
+                      'Search User',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  )
+                else
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF2A6D),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      _giftItemToUserDoc(
+                        item,
+                        foundUserId!,
+                        (foundUser!['fullname'] ?? foundUser!['username'] ?? 'User') as String,
+                        selectedPrice: selectedPrice,
+                        selectedValidityDays: selectedValidityDays,
+                      );
+                    },
+                    icon: const Icon(Icons.send_rounded, size: 16, color: Colors.white),
+                    label: Text(
+                      'Send Gift ($diamondPrice 💎)',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ),
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  Future<void> _giftItemToFriend(Map<String, dynamic> item, String searchId) async {
+  Future<void> _giftItemToUserDoc(Map<String, dynamic> item, String receiverId, String receiverName, {int? selectedPrice, int? selectedValidityDays}) async {
     try {
-      // Find user by searchId
-      final querySnapshot = await FirebaseFirestore.instance
-          .collection('Users')
-          .where('searchId', isEqualTo: searchId)
-          .limit(1)
-          .get();
+      final itemId = item['id'] as String;
+      final itemName = item['name'] as String;
+      final diamondPrice = (item['diamondPrice'] as num?)?.toInt() ?? 0;
+      final cost = selectedPrice ?? diamondPrice;
 
-      if (querySnapshot.docs.isEmpty) {
+      final currentBalance = widget.currentUser.diamonds;
+      if (currentBalance < cost) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User not found with this Search ID'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Insufficient diamonds. You need $cost diamonds to gift this item.'),
+            backgroundColor: Colors.red,
+          ),
         );
         return;
       }
 
-      final receiverDoc = querySnapshot.docs.first;
-      final receiverId = receiverDoc.id;
-      final receiverName = receiverDoc.data()['fullname'] ?? 'Unknown User';
-
-      final itemId = item['id'] as String;
-      final itemName = item['name'] as String;
-      final diamondPrice = (item['diamondPrice'] as num?)?.toInt() ?? 0;
-      final cost = diamondPrice;
-
-      // Confirm dialog
-      if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -689,7 +1053,14 @@ class _StoreTabState extends State<_StoreTab> {
           content: Text('Are you sure you want to spend $cost diamonds to send "$itemName" to $receiverName?'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirm')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purpleAccent,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirm', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
       );
@@ -703,10 +1074,10 @@ class _StoreTabState extends State<_StoreTab> {
           receiverId: receiverId,
           storeItemId: itemId,
           cost: cost,
-          description: 'Gifted $itemName to $receiverName',
+          description: 'Gifted $itemName to $receiverName (${selectedValidityDays ?? item['expirationDuration'] ?? 0} days)',
+          validityDays: selectedValidityDays,
         );
 
-        // Refresh sender balance
         widget.onPurchaseSuccess();
 
         if (!mounted) return;
@@ -757,13 +1128,15 @@ class _StoreTabState extends State<_StoreTab> {
       );
     }
 
+    final bottomPadding = MediaQuery.of(context).padding.bottom + 80;
+
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.only(left: 12, right: 12, top: 12, bottom: bottomPadding),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
-        childAspectRatio: 0.70, // Slightly taller for equip buttons
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.72,
       ),
       itemCount: _items.length,
       itemBuilder: (context, index) {
@@ -774,18 +1147,8 @@ class _StoreTabState extends State<_StoreTab> {
   }
 
   Widget _buildStoreItemCard(Map<String, dynamic> item) {
-    debugPrint('🖼️ Item data: $item'); // Debug print to check keys
-
     final itemId = item['id'] as String;
-    final name = item['name'] as String? ?? 'Unknown Item';
-    final description = item['description'] as String? ?? '';
-
-    // Price Logic
     final int price = (item['diamondPrice'] as num?)?.toInt() ?? 0;
-
-    // Always show as diamonds (PINK/DIAMOND ICON)
-    const Color priceColor = Colors.pink;
-    const IconData priceIcon = Icons.diamond;
 
     // Check ownership and equipment
     final bool isOwned = _ownedItemIds.contains(itemId);
@@ -812,6 +1175,12 @@ class _StoreTabState extends State<_StoreTab> {
         case 'micRefill':
           currentEquippedId = customization.selectedMicRefillId;
           break;
+        case 'shortProfileTheme':
+          currentEquippedId = customization.selectedShortProfileThemeId;
+          break;
+        case 'roomEntry':
+          currentEquippedId = customization.selectedRoomEntryId;
+          break;
       }
     }
 
@@ -829,153 +1198,239 @@ class _StoreTabState extends State<_StoreTab> {
       imageUrl = null;
     }
 
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                if (imageUrl != null && imageUrl.isNotEmpty) {
-                  _showLivePreview(context, item, widget.type);
-                }
-              },
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(12)),
-                  color: Colors.grey[200],
-                ),
-                child: imageUrl != null && imageUrl.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius:
-                            const BorderRadius.vertical(top: Radius.circular(12)),
-                        child: imageUrl.toLowerCase().endsWith('.svg')
-                            ? SvgPicture.network(
-                                imageUrl,
-                                fit: BoxFit.cover,
-                                placeholderBuilder: (context) => const Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                              )
-                            : UniversalAssetWidget(
-                                url: imageUrl,
-                                fit: BoxFit.cover,
-                                isAlphaVideo: true,
-                              ),
-                      )
-                    : const Icon(Icons.image, size: 48, color: Colors.grey),
-              ),
-            ),
+    final durationText = item['expirationDuration'] != null
+        ? '${item['expirationDuration']} Days'
+        : '15 Days';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  description,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (item['expirationDuration'] != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      'Validity: ${item['expirationDuration']} Days',
-                      style: const TextStyle(fontSize: 10, color: Colors.pinkAccent, fontWeight: FontWeight.bold),
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      child: Column(
+        children: [
+          // Top Row: Validity & Test Wear
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Left: Clock icon + Validity text
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF4D6D).withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.access_time_filled_rounded,
+                      size: 11,
+                      color: Color(0xFFFF4D6D),
                     ),
                   ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  const SizedBox(width: 4),
+                  Text(
+                    durationText,
+                    style: const TextStyle(
+                      color: Color(0xFFFF4D6D),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              // Right: Test wear button (Opens preview)
+              GestureDetector(
+                onTap: () {
+                  _showLivePreview(context, item, widget.type);
+                },
+                child: Row(
                   children: [
-                    if (!isOwned)
-                      Row(
-                        children: [
-                          Icon(priceIcon, size: 14, color: priceColor),
-                          const SizedBox(width: 2),
-                          Text(
-                            '$price',
-                            style: TextStyle(
-                                color: priceColor, fontWeight: FontWeight.bold),
-                          ),
-                        ],
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF9C27B0),
+                        shape: BoxShape.circle,
                       ),
-                    SizedBox(
-                      height: 30,
-                      child: isOwned
-                          ? widget.type == 'roomTheme'
-                              ? OutlinedButton(
-                                  onPressed: null,
-                                  style: OutlinedButton.styleFrom(
-                                    side: const BorderSide(color: Colors.grey),
-                                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(15),
-                                    ),
-                                  ),
-                                  child: const Text('Equip in Room',
-                                      style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                )
-                              : isEquipped
-                                  ? OutlinedButton(
-                                      onPressed: () => _unequipItem(item),
-                                      style: OutlinedButton.styleFrom(
-                                        side: const BorderSide(color: Colors.grey),
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 12),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(15),
-                                        ),
-                                      ),
-                                      child: const Text('Unequip',
-                                          style: TextStyle(
-                                              fontSize: 12, color: Colors.grey)),
-                                    )
-                                  : ElevatedButton(
-                                      onPressed: () => _equipItem(item),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.blue,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 12),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(15),
-                                        ),
-                                      ),
-                                      child: const Text('Equip',
-                                          style: TextStyle(
-                                              fontSize: 12, color: Colors.white)),
-                                    )
-                          : ElevatedButton(
-                              onPressed: () => _purchaseItem(item),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: priceColor,
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 12),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(15),
-                                ),
-                              ),
-                              child: const Text('Purchase',
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.white)),
-                            ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Text(
+                      'Test wear',
+                      style: TextStyle(
+                        color: Color(0xFF9C27B0),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ],
                 ),
+              ),
+            ],
+          ),
+
+          // Center Area: Asset Preview Image
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                _showLivePreview(context, item, widget.type);
+              },
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: imageUrl != null && imageUrl.isNotEmpty
+                      ? (imageUrl.toLowerCase().endsWith('.svg')
+                          ? SvgPicture.network(
+                              imageUrl,
+                              fit: BoxFit.contain,
+                              placeholderBuilder: (context) => const Center(
+                                child: SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            )
+                          : (widget.type == 'micRefill'
+                              ? Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFFA42D).withValues(alpha: 0.85),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.mic, color: Colors.white, size: 22),
+                                    ),
+                                    SizedBox(
+                                      width: 80,
+                                      height: 80,
+                                      child: UniversalAssetWidget(
+                                        url: imageUrl,
+                                        fit: BoxFit.contain,
+                                        isAlphaVideo: true,
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : UniversalAssetWidget(
+                                  url: imageUrl,
+                                  fit: BoxFit.contain,
+                                  isAlphaVideo: true,
+                                )))
+                      : const Icon(Icons.image, size: 48, color: Colors.grey),
+                ),
+              ),
+            ),
+          ),
+
+          // Price Row: Diamond Icon + Price
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const DynamicDiamondIcon(width: 18, height: 18),
+                const SizedBox(width: 4),
+                Text(
+                  '$price',
+                  style: const TextStyle(
+                    color: Color(0xFF1E1E1E),
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
+          ),
+
+          // Bottom Row: Dual Gradient Action Buttons (Buy & Send)
+          Row(
+            children: [
+              // Left Pill Button: Buy / Equip / Unequip
+              Expanded(
+                child: Container(
+                  height: 30,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFF2A6D), Color(0xFFFF5E8A)],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(15),
+                      onTap: () {
+                        if (!isOwned) {
+                          _purchaseItem(item);
+                        } else if (isEquipped) {
+                          _unequipItem(item);
+                        } else {
+                          _equipItem(item);
+                        }
+                      },
+                      child: Center(
+                        child: Text(
+                          isOwned
+                              ? (isEquipped ? 'Unequip' : 'Equip')
+                              : 'Buy',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Right Pill Button: Send (Gifting)
+              Expanded(
+                child: Container(
+                  height: 30,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF8E44AD), Color(0xFFA569BD)],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(15),
+                      onTap: () => _showGiftDialog(item),
+                      child: const Center(
+                        child: Text(
+                          'Send',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

@@ -196,31 +196,62 @@ class StoryCard extends StatelessWidget {
 
     switch (story.type) {
       case StoryType.text:
-        final StoryText storyText = story.texts.last;
-
-        child = Container(
-          alignment: Alignment.center,
-          padding: const EdgeInsets.all(defaultPadding / 2),
-          color: storyText.bgColor,
-          child: Text(
-            storyText.text,
-            style: Theme.of(context)
-                .textTheme
-                .bodyLarge!
-                .copyWith(color: Colors.white),
-            textAlign: TextAlign.center,
-          ),
-        );
+        if (story.texts.isNotEmpty) {
+          final StoryText storyText = story.texts.last;
+          child = Container(
+            alignment: Alignment.center,
+            padding: const EdgeInsets.all(defaultPadding / 2),
+            color: storyText.bgColor,
+            child: Text(
+              storyText.text,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyLarge!
+                  .copyWith(color: Colors.white),
+              textAlign: TextAlign.center,
+            ),
+          );
+        } else if (story.images.isNotEmpty) {
+          child = CachedCardImage(story.images.last.imageUrl);
+        } else if (story.videos.isNotEmpty) {
+          child = CachedCardImage(story.videos.last.thumbnailUrl);
+        } else {
+          child = Container(color: primaryColor);
+        }
         break;
 
       case StoryType.image:
-        final StoryImage storyImage = story.images.last;
-        child = CachedCardImage(storyImage.imageUrl);
+        if (story.images.isNotEmpty) {
+          final StoryImage storyImage = story.images.last;
+          child = CachedCardImage(storyImage.imageUrl);
+        } else if (story.texts.isNotEmpty) {
+          final StoryText storyText = story.texts.last;
+          child = Container(
+            alignment: Alignment.center,
+            padding: const EdgeInsets.all(defaultPadding / 2),
+            color: storyText.bgColor,
+            child: Text(
+              storyText.text,
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+              textAlign: TextAlign.center,
+            ),
+          );
+        } else if (story.videos.isNotEmpty) {
+          child = CachedCardImage(story.videos.last.thumbnailUrl);
+        } else {
+          child = Container(color: primaryColor);
+        }
         break;
 
       case StoryType.video:
-        final StoryVideo storyVideo = story.videos.last;
-        child = CachedCardImage(storyVideo.thumbnailUrl);
+        if (story.videos.isNotEmpty) {
+          final StoryVideo storyVideo = story.videos.last;
+          child = CachedCardImage(storyVideo.thumbnailUrl);
+        } else if (story.images.isNotEmpty) {
+          child = CachedCardImage(story.images.last.imageUrl);
+        } else {
+          child = Container(color: primaryColor);
+        }
         break;
     }
 
@@ -266,7 +297,9 @@ class StoryCard extends StatelessWidget {
                 child: SizedBox(
                   width: 150,
                   child: Text(
-                   story.user!.userId==currentUer.userId?'My Story': story.user!.fullname,
+                   (story.user?.userId == currentUer.userId || story.userId == currentUer.userId)
+                       ? 'My Story'
+                       : (story.user?.fullname ?? 'Story'),
                     style: Theme.of(context)
                         .textTheme
                         .titleSmall!

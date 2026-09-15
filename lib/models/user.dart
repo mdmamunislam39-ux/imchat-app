@@ -65,11 +65,18 @@ class User {
   // Punishments
   List<UserPunishment> punishments;
 
-  // SVIP tracking
+  // SVIP tracking (Strictly Seller Page Recharge Only)
   int monthlyRechargeAmount;
+  int eligibleSellerRechargeAmount;
+  int totalEligibleSellerRechargeAmount;
   String lastRechargeMonth;
   int activeSvipLevel;
   String svipValidUntilMonth;
+
+  // VIP tracking
+  int activeVipLevel;
+  String vipValidUntilMonth;
+  DateTime? vipValidUntil;
 
   // Real-time Ban Enforcement
   UserBanStatus? banStatus;
@@ -125,9 +132,14 @@ class User {
     this.activityStats,
     this.punishments = const [],
     this.monthlyRechargeAmount = 0,
+    this.eligibleSellerRechargeAmount = 0,
+    this.totalEligibleSellerRechargeAmount = 0,
     this.lastRechargeMonth = '',
     this.activeSvipLevel = 0,
     this.svipValidUntilMonth = '',
+    this.activeVipLevel = 0,
+    this.vipValidUntilMonth = '',
+    this.vipValidUntil,
     this.banStatus,
   });
 
@@ -205,10 +217,19 @@ class User {
       punishments: data['punishments'] != null 
           ? (data['punishments'] as List).map((p) => UserPunishment.fromMap(Map<String, dynamic>.from(p))).toList()
           : [],
-      monthlyRechargeAmount: data['monthlyRechargeAmount'] ?? 0,
+      monthlyRechargeAmount: (data['monthlyRechargeAmount'] as num?)?.toInt() ?? 0,
+      eligibleSellerRechargeAmount: (data['eligibleSellerRechargeAmount'] as num?)?.toInt() ?? 0,
+      totalEligibleSellerRechargeAmount: (data['totalEligibleSellerRechargeAmount'] as num?)?.toInt() ?? 0,
       lastRechargeMonth: data['lastRechargeMonth'] ?? '',
-      activeSvipLevel: data['activeSvipLevel'] ?? 0,
+      activeSvipLevel: (data['activeSvipLevel'] as num?)?.toInt() ?? 0,
       svipValidUntilMonth: data['svipValidUntilMonth'] ?? '',
+      activeVipLevel: data['activeVipLevel'] ?? 0,
+      vipValidUntilMonth: data['vipValidUntilMonth'] ?? '',
+      vipValidUntil: data['vipValidUntil'] != null 
+          ? (data['vipValidUntil'] is Timestamp 
+              ? (data['vipValidUntil'] as Timestamp).toDate() 
+              : DateTime.tryParse(data['vipValidUntil'].toString())) 
+          : null,
       banStatus: data['banStatus'] != null ? UserBanStatus.fromMap(Map<String, dynamic>.from(data['banStatus'])) : null,
     );
   }
@@ -261,9 +282,14 @@ class User {
       'activityStats': activityStats?.toMap(),
       'punishments': punishments.map((p) => p.toMap()).toList(),
       'monthlyRechargeAmount': monthlyRechargeAmount,
+      'eligibleSellerRechargeAmount': eligibleSellerRechargeAmount,
+      'totalEligibleSellerRechargeAmount': totalEligibleSellerRechargeAmount,
       'lastRechargeMonth': lastRechargeMonth,
       'activeSvipLevel': activeSvipLevel,
       'svipValidUntilMonth': svipValidUntilMonth,
+      'activeVipLevel': activeVipLevel,
+      'vipValidUntilMonth': vipValidUntilMonth,
+      'vipValidUntil': vipValidUntil != null ? Timestamp.fromDate(vipValidUntil!) : null,
       'banStatus': banStatus?.toMap(),
     };
   }
@@ -273,17 +299,21 @@ class UserBanStatus {
   DateTime? loginBanEndTime;
   DateTime? micBanEndTime;
   DateTime? chatBanEndTime;
+  DateTime? postBanEndTime;
   bool isLoginBanPermanent;
   bool isMicBanPermanent;
   bool isChatBanPermanent;
+  bool isPostBanPermanent;
 
   UserBanStatus({
     this.loginBanEndTime,
     this.micBanEndTime,
     this.chatBanEndTime,
+    this.postBanEndTime,
     this.isLoginBanPermanent = false,
     this.isMicBanPermanent = false,
     this.isChatBanPermanent = false,
+    this.isPostBanPermanent = false,
   });
 
   factory UserBanStatus.fromMap(Map<String, dynamic> data) {
@@ -291,9 +321,11 @@ class UserBanStatus {
       loginBanEndTime: data['loginBanEndTime'] is Timestamp ? (data['loginBanEndTime'] as Timestamp).toDate() : null,
       micBanEndTime: data['micBanEndTime'] is Timestamp ? (data['micBanEndTime'] as Timestamp).toDate() : null,
       chatBanEndTime: data['chatBanEndTime'] is Timestamp ? (data['chatBanEndTime'] as Timestamp).toDate() : null,
+      postBanEndTime: data['postBanEndTime'] is Timestamp ? (data['postBanEndTime'] as Timestamp).toDate() : null,
       isLoginBanPermanent: data['isLoginBanPermanent'] ?? false,
       isMicBanPermanent: data['isMicBanPermanent'] ?? false,
       isChatBanPermanent: data['isChatBanPermanent'] ?? false,
+      isPostBanPermanent: data['isPostBanPermanent'] ?? false,
     );
   }
 
@@ -302,9 +334,11 @@ class UserBanStatus {
       'loginBanEndTime': loginBanEndTime != null ? Timestamp.fromDate(loginBanEndTime!) : null,
       'micBanEndTime': micBanEndTime != null ? Timestamp.fromDate(micBanEndTime!) : null,
       'chatBanEndTime': chatBanEndTime != null ? Timestamp.fromDate(chatBanEndTime!) : null,
+      'postBanEndTime': postBanEndTime != null ? Timestamp.fromDate(postBanEndTime!) : null,
       'isLoginBanPermanent': isLoginBanPermanent,
       'isMicBanPermanent': isMicBanPermanent,
       'isChatBanPermanent': isChatBanPermanent,
+      'isPostBanPermanent': isPostBanPermanent,
     };
   }
 }
@@ -353,8 +387,11 @@ class UserCustomization {
   String? selectedBackgroundThemeId;
   String? selectedRoomThemeId;
   String? selectedNameplateId;
+  List<String> selectedNameplateIds;
   String? selectedMicRefillId;
   String? selectedRoomProfileBackgroundId;
+  String? selectedShortProfileThemeId;
+  String? selectedRoomEntryId;
   List<String> ownedBadges;
   List<String> ownedFrames;
   List<String> ownedEntryEffects;
@@ -362,6 +399,8 @@ class UserCustomization {
   List<String> ownedNameplates;
   List<String> ownedMicRefills;
   List<String> ownedRoomProfileBackgrounds;
+  List<String> ownedShortProfileThemes;
+  List<String> ownedRoomEntries;
 
   UserCustomization({
     this.selectedBadgeId,
@@ -370,8 +409,11 @@ class UserCustomization {
     this.selectedBackgroundThemeId,
     this.selectedRoomThemeId,
     this.selectedNameplateId,
+    this.selectedNameplateIds = const [],
     this.selectedMicRefillId,
     this.selectedRoomProfileBackgroundId,
+    this.selectedShortProfileThemeId,
+    this.selectedRoomEntryId,
     this.ownedBadges = const [],
     this.ownedFrames = const [],
     this.ownedEntryEffects = const [],
@@ -379,25 +421,44 @@ class UserCustomization {
     this.ownedNameplates = const [],
     this.ownedMicRefills = const [],
     this.ownedRoomProfileBackgrounds = const [],
-  });
+    this.ownedShortProfileThemes = const [],
+    this.ownedRoomEntries = const [],
+  }) {
+    if (selectedNameplateIds.isEmpty && selectedNameplateId != null && selectedNameplateId!.isNotEmpty) {
+      selectedNameplateIds = [selectedNameplateId!];
+    }
+  }
 
   factory UserCustomization.fromMap(Map<String, dynamic> data) {
+    final nameplateId = data['selectedNameplateId'] as String?;
+    List<String> nameplateIds = [];
+    if (data['selectedNameplateIds'] != null) {
+      nameplateIds = (data['selectedNameplateIds'] as List?)?.whereType<String>().toList() ?? [];
+    } else if (nameplateId != null && nameplateId.isNotEmpty) {
+      nameplateIds = [nameplateId];
+    }
+
     return UserCustomization(
-      selectedBadgeId: data['selectedBadgeId'],
-      selectedFrameId: data['selectedFrameId'],
-      selectedEntryEffectId: data['selectedEntryEffectId'],
-      selectedBackgroundThemeId: data['selectedBackgroundThemeId'],
-      selectedRoomThemeId: data['selectedRoomThemeId'],
-      selectedNameplateId: data['selectedNameplateId'],
-      selectedMicRefillId: data['selectedMicRefillId'],
-      selectedRoomProfileBackgroundId: data['selectedRoomProfileBackgroundId'],
-      ownedBadges: List<String>.from(data['ownedBadges'] ?? []),
-      ownedFrames: List<String>.from(data['ownedFrames'] ?? []),
-      ownedEntryEffects: List<String>.from(data['ownedEntryEffects'] ?? []),
-      ownedBackgroundThemes: List<String>.from(data['ownedBackgroundThemes'] ?? []),
-      ownedNameplates: List<String>.from(data['ownedNameplates'] ?? []),
-      ownedMicRefills: List<String>.from(data['ownedMicRefills'] ?? []),
-      ownedRoomProfileBackgrounds: List<String>.from(data['ownedRoomProfileBackgrounds'] ?? []),
+      selectedBadgeId: data['selectedBadgeId'] as String?,
+      selectedFrameId: data['selectedFrameId'] as String?,
+      selectedEntryEffectId: data['selectedEntryEffectId'] as String?,
+      selectedBackgroundThemeId: data['selectedBackgroundThemeId'] as String?,
+      selectedRoomThemeId: data['selectedRoomThemeId'] as String?,
+      selectedNameplateId: nameplateId ?? (nameplateIds.isNotEmpty ? nameplateIds.first : null),
+      selectedNameplateIds: nameplateIds,
+      selectedMicRefillId: data['selectedMicRefillId'] as String?,
+      selectedRoomProfileBackgroundId: data['selectedRoomProfileBackgroundId'] as String?,
+      selectedShortProfileThemeId: data['selectedShortProfileThemeId'] as String?,
+      selectedRoomEntryId: data['selectedRoomEntryId'] as String?,
+      ownedBadges: (data['ownedBadges'] as List?)?.whereType<String>().toList() ?? [],
+      ownedFrames: (data['ownedFrames'] as List?)?.whereType<String>().toList() ?? [],
+      ownedEntryEffects: (data['ownedEntryEffects'] as List?)?.whereType<String>().toList() ?? [],
+      ownedBackgroundThemes: (data['ownedBackgroundThemes'] as List?)?.whereType<String>().toList() ?? [],
+      ownedNameplates: (data['ownedNameplates'] as List?)?.whereType<String>().toList() ?? [],
+      ownedMicRefills: (data['ownedMicRefills'] as List?)?.whereType<String>().toList() ?? [],
+      ownedRoomProfileBackgrounds: (data['ownedRoomProfileBackgrounds'] as List?)?.whereType<String>().toList() ?? [],
+      ownedShortProfileThemes: (data['ownedShortProfileThemes'] as List?)?.whereType<String>().toList() ?? [],
+      ownedRoomEntries: (data['ownedRoomEntries'] as List?)?.whereType<String>().toList() ?? [],
     );
   }
 
@@ -408,9 +469,12 @@ class UserCustomization {
       'selectedEntryEffectId': selectedEntryEffectId,
       'selectedBackgroundThemeId': selectedBackgroundThemeId,
       'selectedRoomThemeId': selectedRoomThemeId,
-      'selectedNameplateId': selectedNameplateId,
+      'selectedNameplateId': selectedNameplateId ?? (selectedNameplateIds.isNotEmpty ? selectedNameplateIds.first : null),
+      'selectedNameplateIds': selectedNameplateIds,
       'selectedMicRefillId': selectedMicRefillId,
       'selectedRoomProfileBackgroundId': selectedRoomProfileBackgroundId,
+      'selectedShortProfileThemeId': selectedShortProfileThemeId,
+      'selectedRoomEntryId': selectedRoomEntryId,
       'ownedBadges': ownedBadges,
       'ownedFrames': ownedFrames,
       'ownedEntryEffects': ownedEntryEffects,
@@ -418,6 +482,8 @@ class UserCustomization {
       'ownedNameplates': ownedNameplates,
       'ownedMicRefills': ownedMicRefills,
       'ownedRoomProfileBackgrounds': ownedRoomProfileBackgrounds,
+      'ownedShortProfileThemes': ownedShortProfileThemes,
+      'ownedRoomEntries': ownedRoomEntries,
     };
   }
 }

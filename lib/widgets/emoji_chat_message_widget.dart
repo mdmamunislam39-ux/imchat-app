@@ -260,12 +260,23 @@ class EmojiChatMessageWidget extends StatelessWidget {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: message.emojiItem!.emojiUrl.startsWith('local_dice:')
+              child: (message.emojiItem!.emojiUrl.startsWith('local_dice:') || message.emojiItem!.emojiUrl == 'local_dice_action')
                   ? StaticDiceWidget(
-                      number: int.parse(message.emojiItem!.emojiUrl.split(':')[1]),
+                      number: message.emojiItem!.emojiUrl.contains(':')
+                          ? (int.tryParse(message.emojiItem!.emojiUrl.split(':')[1]) ?? 6)
+                          : 6,
                       size: 48,
+                      diceStyle: 'classic',
                     )
-                  : CachedNetworkImage(
+                  : (message.emojiItem!.emojiUrl.startsWith('local_blue_dice:') || message.emojiItem!.emojiUrl == 'local_blue_dice_action')
+                      ? StaticDiceWidget(
+                          number: message.emojiItem!.emojiUrl.contains(':')
+                              ? (int.tryParse(message.emojiItem!.emojiUrl.split(':')[1]) ?? 6)
+                              : 6,
+                          size: 48,
+                          diceStyle: 'blue',
+                        )
+                      : CachedNetworkImage(
                       imageUrl: message.emojiItem!.emojiUrl,
                       fit: BoxFit.contain,
                       placeholder: (context, url) => Container(
@@ -363,12 +374,23 @@ class EmojiChatMessageWidget extends StatelessWidget {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: message.emojiItem!.emojiUrl.startsWith('local_dice:')
+                    child: (message.emojiItem!.emojiUrl.startsWith('local_dice:') || message.emojiItem!.emojiUrl == 'local_dice_action')
                         ? StaticDiceWidget(
-                            number: int.parse(message.emojiItem!.emojiUrl.split(':')[1]),
+                            number: message.emojiItem!.emojiUrl.contains(':')
+                                ? (int.tryParse(message.emojiItem!.emojiUrl.split(':')[1]) ?? 6)
+                                : 6,
                             size: 32,
+                            diceStyle: 'classic',
                           )
-                        : CachedNetworkImage(
+                        : (message.emojiItem!.emojiUrl.startsWith('local_blue_dice:') || message.emojiItem!.emojiUrl == 'local_blue_dice_action')
+                            ? StaticDiceWidget(
+                                number: message.emojiItem!.emojiUrl.contains(':')
+                                    ? (int.tryParse(message.emojiItem!.emojiUrl.split(':')[1]) ?? 6)
+                                    : 6,
+                                size: 32,
+                                diceStyle: 'blue',
+                              )
+                            : CachedNetworkImage(
                             imageUrl: message.emojiItem!.emojiUrl,
                             fit: BoxFit.contain,
                             placeholder: (context, url) => Container(

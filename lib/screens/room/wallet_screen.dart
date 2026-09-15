@@ -33,6 +33,10 @@ import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/services/role_service.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
+import 'package:chat_messenger/services/online_recharge_service.dart';
+import 'package:chat_messenger/models/recharge_models.dart';
+import 'package:chat_messenger/screens/room/recharge_selection_screen.dart';
+import 'package:chat_messenger/screens/room/recharge_and_gift_record_screen.dart';
 
 // মূল ওয়ালেট স্ক্রিন
 class UserWalletScreen extends StatefulWidget {
@@ -65,9 +69,53 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     _loadUserData();
   }
 
-  Future<String?>? _vip1BadgeFuture;
+  Future<String?>? _vipBadgeFuture;
+  Future<String?>? _svipBadgeFuture;
 
-  Future<String?> _fetchVip1BadgeUrl() async {
+  Future<String?> _fetchVipBadgeUrl() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('config')
+          .doc('vip_levels')
+          .collection('levels')
+          .get();
+      if (snapshot.docs.isNotEmpty) {
+        final levels = snapshot.docs.map((doc) {
+          final d = doc.data();
+          d['id'] = doc.id;
+          return d;
+        }).toList();
+
+        levels.sort((a, b) {
+          final aNum =
+              int.tryParse(
+                (a['id'] as String).replaceAll(RegExp(r'[^0-9]'), ''),
+              ) ??
+              0;
+          final bNum =
+              int.tryParse(
+                (b['id'] as String).replaceAll(RegExp(r'[^0-9]'), ''),
+              ) ??
+              0;
+          return aNum.compareTo(bNum);
+        });
+
+        final data = levels.first;
+        if (data['badgeMediaUrl'] != null &&
+            data['badgeMediaUrl'].toString().isNotEmpty) {
+          return data['badgeMediaUrl'].toString();
+        } else if (data['badgeUrl'] != null &&
+            data['badgeUrl'].toString().isNotEmpty) {
+          return data['badgeUrl'].toString();
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to load VIP badge: $e');
+    }
+    return null;
+  }
+
+  Future<String?> _fetchSvipBadgeUrl() async {
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('config')
@@ -75,23 +123,37 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           .collection('levels')
           .get();
       if (snapshot.docs.isNotEmpty) {
-        final levels = snapshot.docs.map((doc) => doc.data()).toList();
-        
+        final levels = snapshot.docs.map((doc) {
+          final d = doc.data();
+          d['id'] = doc.id;
+          return d;
+        }).toList();
+
         levels.sort((a, b) {
-          final aReq = int.tryParse(a['requiredRechargeAmount']?.toString() ?? '0') ?? 0;
-          final bReq = int.tryParse(b['requiredRechargeAmount']?.toString() ?? '0') ?? 0;
-          return aReq.compareTo(bReq);
+          final aNum =
+              int.tryParse(
+                (a['id'] as String).replaceAll(RegExp(r'[^0-9]'), ''),
+              ) ??
+              0;
+          final bNum =
+              int.tryParse(
+                (b['id'] as String).replaceAll(RegExp(r'[^0-9]'), ''),
+              ) ??
+              0;
+          return aNum.compareTo(bNum);
         });
-        
+
         final data = levels.first;
-        if (data['badgeMediaUrl'] != null && data['badgeMediaUrl'].toString().isNotEmpty) {
+        if (data['badgeMediaUrl'] != null &&
+            data['badgeMediaUrl'].toString().isNotEmpty) {
           return data['badgeMediaUrl'].toString();
-        } else if (data['badgeUrl'] != null && data['badgeUrl'].toString().isNotEmpty) {
+        } else if (data['badgeUrl'] != null &&
+            data['badgeUrl'].toString().isNotEmpty) {
           return data['badgeUrl'].toString();
         }
       }
     } catch (e) {
-      debugPrint('Failed to load VIP 1 badge: $e');
+      debugPrint('Failed to load SVIP badge: $e');
     }
     return null;
   }
@@ -109,65 +171,75 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
         .collection('Users')
         .doc(widget.currentUser.userId)
         .snapshots()
-        .listen((userSnapshot) {
-      if (mounted) {
-        if (userSnapshot.exists && userSnapshot.data() != null) {
-          final data = userSnapshot.data()!;
-          final updatedUser = User.fromMap(data);
-          
-          final oldFrameId = _currentUser?.customization?.selectedFrameId;
-          
-          setState(() {
-            _currentUser = updatedUser;
-            _isLoading = false;
-          });
+        .listen(
+          (userSnapshot) {
+            if (mounted) {
+              if (userSnapshot.exists && userSnapshot.data() != null) {
+                final data = userSnapshot.data()!;
+                final updatedUser = User.fromMap(data);
 
-          // Reload equipped frame if it has changed
-          if (updatedUser.customization?.selectedFrameId != oldFrameId) {
-            _loadFrame();
-          }
+                final oldFrameId = _currentUser?.customization?.selectedFrameId;
 
-          // Parse role fields from Users document
-          if (data.containsKey('role')) {
-            final role = data['role'] ?? 'user';
-            final roleActive = data['roleActive'] ?? true;
-            final dashboardAccess = data['dashboardAccess'] ?? true;
+                setState(() {
+                  _currentUser = updatedUser;
+                  _isLoading = false;
+                });
 
-            setState(() {
-              if (roleActive && dashboardAccess) {
-                _userRole = role;
-              } else {
-                _userRole = 'user';
+                // Reload equipped frame if it has changed
+                if (updatedUser.customization?.selectedFrameId != oldFrameId) {
+                  _loadFrame();
+                }
+
+                // Parse role fields from Users document
+                if (data.containsKey('role')) {
+                  final role = data['role'] ?? 'user';
+                  final roleActive = data['roleActive'] ?? true;
+                  final dashboardAccess = data['dashboardAccess'] ?? true;
+
+                  setState(() {
+                    if (roleActive && dashboardAccess) {
+                      _userRole = role;
+                    } else {
+                      _userRole = 'user';
+                    }
+                  });
+                  debugPrint(
+                    '🔑 Realtime role updated from Users document: $_userRole',
+                  );
+                  return;
+                }
               }
-            });
-            debugPrint('🔑 Realtime role updated from Users document: $_userRole');
-            return;
-          }
-        }
 
-        // Fallback: Listen to user_roles/{userId} for roles
-        FirebaseFirestore.instance
-            .collection('user_roles')
-            .doc(widget.currentUser.userId)
-            .get()
-            .then((roleSnapshot) {
-          if (mounted && roleSnapshot.exists && roleSnapshot.data() != null) {
-            final data = roleSnapshot.data()!;
-            final isActive = data['isActive'] ?? data['roleActive'] ?? true;
-            setState(() {
-              if (isActive) {
-                _userRole = data['role'] ?? 'user';
-              } else {
-                _userRole = 'user';
-              }
-            });
-            debugPrint('🔑 Realtime role updated from user_roles document: $_userRole');
-          }
-        });
-      }
-    }, onError: (error) {
-      debugPrint('Error listening to user document: $error');
-    });
+              // Fallback: Listen to user_roles/{userId} for roles
+              FirebaseFirestore.instance
+                  .collection('user_roles')
+                  .doc(widget.currentUser.userId)
+                  .get()
+                  .then((roleSnapshot) {
+                    if (mounted &&
+                        roleSnapshot.exists &&
+                        roleSnapshot.data() != null) {
+                      final data = roleSnapshot.data()!;
+                      final isActive =
+                          data['isActive'] ?? data['roleActive'] ?? true;
+                      setState(() {
+                        if (isActive) {
+                          _userRole = data['role'] ?? 'user';
+                        } else {
+                          _userRole = 'user';
+                        }
+                      });
+                      debugPrint(
+                        '🔑 Realtime role updated from user_roles document: $_userRole',
+                      );
+                    }
+                  });
+            }
+          },
+          onError: (error) {
+            debugPrint('Error listening to user document: $error');
+          },
+        );
   }
 
   // Load user data from Firebase
@@ -181,8 +253,9 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       debugPrint('💰 Loading user wallet data...');
 
       // Get user wallet data
-      final userData =
-          await _walletService.getUserWallet(widget.currentUser.userId);
+      final userData = await _walletService.getUserWallet(
+        widget.currentUser.userId,
+      );
 
       if (userData != null) {
         setState(() {
@@ -217,11 +290,13 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     final user = _currentUser ?? widget.currentUser;
     if (user.customization?.selectedFrameId != null) {
       try {
-        final frameDetails = await _storeService
-            .getStoreItemDetails(user.customization!.selectedFrameId!);
+        final frameDetails = await _storeService.getStoreItemDetails(
+          user.customization!.selectedFrameId!,
+        );
         if (frameDetails != null) {
           setState(() {
-            _currentFrameUrl = frameDetails['fileUrl'] ??
+            _currentFrameUrl =
+                frameDetails['fileUrl'] ??
                 frameDetails['thumbnailUrl'] ??
                 frameDetails['imageUrl'] ??
                 frameDetails['image'];
@@ -250,9 +325,10 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
         MaterialPageRoute(
           builder: (context) => DiamondRechargePage(
             userId: _currentUser?.userId ?? widget.currentUser.userId,
-            diamondBalance: _currentUser?.diamonds ?? widget.currentUser.diamonds,
+            diamondBalance:
+                _currentUser?.diamonds ?? widget.currentUser.diamonds,
             walletService: _walletService,
-              ),
+          ),
         ),
       );
 
@@ -260,10 +336,12 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context)
             ..removeCurrentSnackBar()
-            ..showSnackBar(SnackBar(
-              content: Text('$result diamonds added successfully!'),
-              backgroundColor: Colors.green,
-            ));
+            ..showSnackBar(
+              SnackBar(
+                content: Text('$result diamonds added successfully!'),
+                backgroundColor: Colors.green,
+              ),
+            );
         }
       }
     } catch (e) {
@@ -271,10 +349,9 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context)
           ..removeCurrentSnackBar()
-          ..showSnackBar(SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ));
+          ..showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          );
       }
     }
   }
@@ -302,10 +379,9 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context)
           ..removeCurrentSnackBar()
-          ..showSnackBar(SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ));
+          ..showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          );
       }
     }
   }
@@ -348,17 +424,30 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           await _navigateToMyItemsScreen();
           break;
         case 'Game Wall':
-          GameWallBottomSheet.show(context);
+          GameWallBottomSheet.show(context, isInAudioRoom: false);
           break;
         case 'Admin Dashboard':
         case 'BD Dashboard':
-          await Navigator.push(context, MaterialPageRoute(builder: (_) => RoleDashboardScreen(currentUser: _currentUser ?? widget.currentUser)));
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => RoleDashboardScreen(
+                currentUser: _currentUser ?? widget.currentUser,
+              ),
+            ),
+          );
           break;
         case 'Invite':
-          await Navigator.push(context, MaterialPageRoute(builder: (_) => const InviteScreen()));
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const InviteScreen()),
+          );
           break;
         case 'Help':
-          await Navigator.push(context, MaterialPageRoute(builder: (_) => const FeedbackScreen()));
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+          );
           break;
         default:
           ScaffoldMessenger.of(context)
@@ -416,9 +505,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       final user = _currentUser ?? widget.currentUser;
       await Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => LevelScreen(currentUser: user),
-        ),
+        MaterialPageRoute(builder: (context) => LevelScreen(currentUser: user)),
       );
 
       // Refresh user data after returning from level screen
@@ -443,9 +530,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       final user = _currentUser ?? widget.currentUser;
       await Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => BadgeScreen(currentUser: user),
-        ),
+        MaterialPageRoute(builder: (context) => BadgeScreen(currentUser: user)),
       );
 
       // Refresh user data after returning from badge screen
@@ -609,27 +694,30 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+
     if (_isLoading) {
       return Scaffold(
-        backgroundColor: Colors.white.withValues(alpha: 0.9),
-        body: const Center(
-          child: CircularProgressIndicator(),
-        ),
+        backgroundColor: isDarkMode ? Colors.black : Colors.white.withValues(alpha: 0.9),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_errorMessage.isNotEmpty) {
       return Scaffold(
-        backgroundColor: Colors.white.withValues(alpha: 0.9),
+        backgroundColor: isDarkMode ? Colors.black : Colors.white.withValues(alpha: 0.9),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
               const SizedBox(height: 16),
               Text(
                 _errorMessage,
-                style: const TextStyle(fontSize: 16),
+                style: TextStyle(
+                  fontSize: 16,
+                  color: isDarkMode ? Colors.white : Colors.black87,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -646,7 +734,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     final user = _currentUser ?? widget.currentUser;
 
     return Scaffold(
-      backgroundColor: Colors.white.withValues(alpha: 0.9),
+      backgroundColor: isDarkMode ? Colors.black : const Color(0xFFF5F5F7),
       body: RefreshIndicator(
         onRefresh: _refreshUserData,
         child: CustomScrollView(
@@ -654,9 +742,16 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
             SliverAppBar(
               pinned: true,
               expandedHeight: 220.0,
-              backgroundColor: Colors.white,
+              backgroundColor: isDarkMode ? const Color(0xFF18181C) : Colors.white,
+              elevation: 0,
+              iconTheme: IconThemeData(
+                color: isDarkMode ? Colors.white : Colors.black,
+              ),
+              systemOverlayStyle: isDarkMode
+                  ? SystemUiOverlayStyle.light
+                  : SystemUiOverlayStyle.dark,
               flexibleSpace: FlexibleSpaceBar(
-                background: _buildProfileHeader(user),
+                background: _buildProfileHeader(user, isDarkMode),
               ),
             ),
             SliverToBoxAdapter(
@@ -664,13 +759,14 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const SizedBox(height: 10),
-                  _buildSvipBanner(),
+                  _buildVipAndSvipSection(),
                   const SizedBox(height: 10),
-                  _buildMyAccountSection(),
+                  _buildMyAccountSection(isDarkMode),
                   const SizedBox(height: 10),
-                  _buildMainMenu2(),
+                  _buildMainMenu2(isDarkMode),
                   const SizedBox(height: 20),
-                  _buildMainMenu()
+                  _buildMainMenu(isDarkMode),
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
@@ -684,6 +780,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     required String label,
     required Stream<QuerySnapshot> stream,
     required VoidCallback? onTap,
+    required bool isDarkMode,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -695,16 +792,19 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
             children: [
               Text(
                 count.toString(),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Colors.black,
+                  color: isDarkMode ? Colors.white : Colors.black,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
                 label,
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                style: TextStyle(
+                  color: isDarkMode ? Colors.white60 : Colors.grey,
+                  fontSize: 12,
+                ),
               ),
             ],
           );
@@ -714,7 +814,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
   }
 
   // প্রোফাইলের উপরের অংশ
-  Widget _buildProfileHeader(User user) {
+  Widget _buildProfileHeader(User user, bool isDarkMode) {
     final bool isMe = user.userId == AuthController.instance.currentUser.userId;
 
     return SafeArea(
@@ -727,12 +827,15 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
               behavior: HitTestBehavior.opaque,
               onTap: () {
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => ProfilePageForRoom(
-                            userID: user.userId,
-                            userName: user.fullname,
-                            userImage: user.photoUrl)));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProfilePageForRoom(
+                      userID: user.userId,
+                      userName: user.fullname,
+                      userImage: user.photoUrl,
+                    ),
+                  ),
+                );
               },
               child: Row(
                 children: [
@@ -751,15 +854,18 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                     children: [
                       Text(
                         user.fullname.formattedUsername,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 20,
-                            color: Colors.black),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 20,
+                          color: isDarkMode ? Colors.white : Colors.black,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       GestureDetector(
                         onTap: () async {
-                          await Clipboard.setData(ClipboardData(text: user.searchId));
+                          await Clipboard.setData(
+                            ClipboardData(text: user.searchId),
+                          );
                           if (!mounted) return;
                           final overlay = Overlay.of(context);
                           final entry = OverlayEntry(
@@ -771,19 +877,31 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                                 child: Material(
                                   color: Colors.transparent,
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                      vertical: 10,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.75),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.75,
+                                      ),
                                       borderRadius: BorderRadius.circular(20),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16),
+                                        const Icon(
+                                          Icons.check_circle,
+                                          color: Colors.greenAccent,
+                                          size: 16,
+                                        ),
                                         const SizedBox(width: 8),
                                         Text(
                                           'ID ${user.searchId} copied!',
-                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 13,
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -801,10 +919,17 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                           children: [
                             Text(
                               'ID : ${user.searchId}',
-                              style: const TextStyle(color: Colors.grey, fontSize: 14),
+                              style: TextStyle(
+                                color: isDarkMode ? Colors.white70 : Colors.grey,
+                                fontSize: 14,
+                              ),
                             ),
                             const SizedBox(width: 4),
-                            const Icon(Icons.copy_rounded, size: 13, color: Colors.grey),
+                            Icon(
+                              Icons.copy_rounded,
+                              size: 13,
+                              color: isDarkMode ? Colors.white70 : Colors.grey,
+                            ),
                           ],
                         ),
                       ),
@@ -813,7 +938,10 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                     ],
                   ),
                   const Spacer(),
-                  const Icon(Icons.arrow_forward_ios, color: Colors.grey),
+                  Icon(
+                    Icons.arrow_forward_ios,
+                    color: isDarkMode ? Colors.white54 : Colors.grey,
+                  ),
                 ],
               ),
             ),
@@ -823,27 +951,32 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
               children: [
                 _buildRealTimeProfileStat(
                   label: 'Friends',
-                  stream: FirebaseFirestore.instance.collection('Users/${user.userId}/Contacts').snapshots(),
+                  stream: FirebaseFirestore.instance
+                      .collection('Users/${user.userId}/Contacts')
+                      .snapshots(),
                   onTap: isMe
                       ? () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => SocialUsersListPage(
-                                userId: user.userId,
-                                listType: 'Friends',
-                              ),
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => SocialUsersListPage(
+                              userId: user.userId,
+                              listType: 'Friends',
                             ),
-                          )
+                          ),
+                        )
                       : null,
+                  isDarkMode: isDarkMode,
                 ),
                 Container(
                   height: 30,
                   width: 1,
-                  color: Colors.grey.shade300,
+                  color: isDarkMode ? Colors.white24 : Colors.grey.shade300,
                 ),
                 _buildRealTimeProfileStat(
                   label: 'Following',
-                  stream: FirebaseFirestore.instance.collection('Users/${user.userId}/following').snapshots(),
+                  stream: FirebaseFirestore.instance
+                      .collection('Users/${user.userId}/following')
+                      .snapshots(),
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -853,15 +986,18 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                       ),
                     ),
                   ),
+                  isDarkMode: isDarkMode,
                 ),
                 Container(
                   height: 30,
                   width: 1,
-                  color: Colors.grey.shade300,
+                  color: isDarkMode ? Colors.white24 : Colors.grey.shade300,
                 ),
                 _buildRealTimeProfileStat(
                   label: 'Followers',
-                  stream: FirebaseFirestore.instance.collection('Users/${user.userId}/followers').snapshots(),
+                  stream: FirebaseFirestore.instance
+                      .collection('Users/${user.userId}/followers')
+                      .snapshots(),
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -871,26 +1007,30 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                       ),
                     ),
                   ),
+                  isDarkMode: isDarkMode,
                 ),
                 Container(
                   height: 30,
                   width: 1,
-                  color: Colors.grey.shade300,
+                  color: isDarkMode ? Colors.white24 : Colors.grey.shade300,
                 ),
                 _buildRealTimeProfileStat(
                   label: 'Visitor',
-                  stream: FirebaseFirestore.instance.collection('Users/${user.userId}/visitors').snapshots(),
+                  stream: FirebaseFirestore.instance
+                      .collection('Users/${user.userId}/visitors')
+                      .snapshots(),
                   onTap: isMe
                       ? () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => SocialUsersListPage(
-                                userId: user.userId,
-                                listType: 'Visitor',
-                              ),
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => SocialUsersListPage(
+                              userId: user.userId,
+                              listType: 'Visitor',
                             ),
-                          )
+                          ),
+                        )
                       : null,
+                  isDarkMode: isDarkMode,
                 ),
               ],
             ),
@@ -908,12 +1048,18 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
         if (user.sendingLevel != null && user.receivingLevel != null)
           const SizedBox(width: 8),
         if (user.receivingLevel != null)
-          _buildSingleLevelBadge('receiving_config', user.receivingLevel!.level),
-        if (user.customization?.selectedNameplateId != null && user.customization!.selectedNameplateId!.isNotEmpty)
+          _buildSingleLevelBadge(
+            'receiving_config',
+            user.receivingLevel!.level,
+          ),
+        if (user.customization?.selectedNameplateId != null &&
+            user.customization!.selectedNameplateId!.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(left: 8.0),
             child: FutureBuilder<String?>(
-              future: NameplateHelper.getNameplateUrl(user.customization!.selectedNameplateId),
+              future: NameplateHelper.getNameplateUrl(
+                user.customization!.selectedNameplateId,
+              ),
               builder: (context, snapshot) {
                 if (snapshot.hasData && snapshot.data!.isNotEmpty) {
                   return CachedNetworkImage(
@@ -932,12 +1078,17 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
 
   Widget _buildSingleLevelBadge(String configDoc, int levelNumber) {
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('level_configurations').doc(configDoc).snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('level_configurations')
+          .doc(configDoc)
+          .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData || !snapshot.data!.exists) return const SizedBox(height: 18);
+        if (!snapshot.hasData || !snapshot.data!.exists)
+          return const SizedBox(height: 18);
         final data = snapshot.data!.data() as Map<String, dynamic>?;
-        if (data == null || data['levels'] == null) return const SizedBox(height: 18);
-        
+        if (data == null || data['levels'] == null)
+          return const SizedBox(height: 18);
+
         final levels = List<Map<String, dynamic>>.from(data['levels']);
         String? imageUrl;
         for (final lvl in levels) {
@@ -946,9 +1097,10 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
             break;
           }
         }
-        
-        if (imageUrl == null || imageUrl.isEmpty) return const SizedBox(height: 18);
-        
+
+        if (imageUrl == null || imageUrl.isEmpty)
+          return const SizedBox(height: 18);
+
         return CachedNetworkImage(
           imageUrl: imageUrl,
           height: 18,
@@ -958,99 +1110,156 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     );
   }
 
+  // VIP এবং SVIP সেকশন (পাশাপাশি কার্ড)
+  Widget _buildVipAndSvipSection() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          // VIP কার্ড
+          Expanded(
+            child: _buildMembershipCard(
+              title: 'imChat VIP',
+              subtitle: 'Privileges',
+              isSvip: false,
+              badgeFuture: _vipBadgeFuture ??= _fetchVipBadgeUrl(),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF281145), Color(0xFF130623)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderColor: const Color(0xFFFFD700).withValues(alpha: 0.55),
+            ),
+          ),
+          const SizedBox(width: 10),
+          // SVIP কার্ড
+          Expanded(
+            child: _buildMembershipCard(
+              title: 'imChat SVIP',
+              subtitle: '15 Privileges',
+              isSvip: true,
+              badgeFuture: _svipBadgeFuture ??= _fetchSvipBadgeUrl(),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF421035), Color(0xFF1B0520)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderColor: const Color(0xFFFF9500).withValues(alpha: 0.65),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-
-  // SVIP ব্যানার
-  Widget _buildSvipBanner() {
+  Widget _buildMembershipCard({
+    required String title,
+    required String subtitle,
+    required bool isSvip,
+    required Future<String?> badgeFuture,
+    required Gradient gradient,
+    required Color borderColor,
+  }) {
     return GestureDetector(
       onTap: () {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => SvipScreen(currentUser: _currentUser ?? widget.currentUser),
+            builder: (context) => SvipScreen(
+              currentUser: _currentUser ?? widget.currentUser,
+              isSvip: isSvip,
+            ),
           ),
         ).then((_) {
-          // Refresh user data if they claimed something
           _refreshUserData();
         });
       },
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF3B1A54), Color(0xFF180A2B)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.6), width: 1.2),
+          gradient: gradient,
+          border: Border.all(color: borderColor, width: 1.2),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFFFFD700).withValues(alpha: 0.2),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
+              color: borderColor.withValues(alpha: 0.18),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
             ),
           ],
         ),
         child: Row(
           children: [
-            const Text(
-              'imChat VIP',
-              style: TextStyle(
-                color: Color(0xFFFFD700),
-                fontWeight: FontWeight.w900,
-                fontSize: 18,
-                fontStyle: FontStyle.italic,
-                letterSpacing: 1.2,
-                shadows: [
-                  Shadow(
-                    color: Colors.black54,
-                    offset: Offset(1, 1),
-                    blurRadius: 2,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFFFD700),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 0.8,
+                      shadows: [
+                        Shadow(
+                          color: Colors.black54,
+                          offset: Offset(1, 1),
+                          blurRadius: 2,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 10),
-            Text(
-              '|',
-              style: TextStyle(color: const Color(0xFFFFD700).withValues(alpha: 0.5), fontSize: 16),
-            ),
-            const SizedBox(width: 10),
-            const Text(
-              'Total of 15 privileges',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const Spacer(),
+            const SizedBox(width: 4),
             FutureBuilder<String?>(
-              future: _vip1BadgeFuture ??= _fetchVip1BadgeUrl(),
+              future: badgeFuture,
               builder: (context, snapshot) {
-                if (snapshot.hasData && snapshot.data!.isNotEmpty) {
-                  return Transform.translate(
-                    offset: const Offset(-5, 0),
-                    child: SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: Transform.scale(
-                        scale: 4.0,
-                        child: UniversalAssetWidget(
-                          url: snapshot.data!,
-                          fit: BoxFit.contain,
-                        ),
+                if (snapshot.hasData &&
+                    snapshot.data != null &&
+                    snapshot.data!.isNotEmpty) {
+                  return SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: Transform.scale(
+                      scale: 2.2,
+                      child: UniversalAssetWidget(
+                        url: snapshot.data!,
+                        fit: BoxFit.contain,
                       ),
                     ),
                   );
                 }
-                return const Icon(Icons.shield, color: Color(0xFFFFD700), size: 24);
+                return Icon(
+                  isSvip ? Icons.workspace_premium : Icons.shield,
+                  color: const Color(0xFFFFD700),
+                  size: 24,
+                );
               },
             ),
-            const SizedBox(width: 4),
-            const Icon(Icons.arrow_forward_ios, color: Color(0xFFFFD700), size: 16),
+            const SizedBox(width: 2),
+            const Icon(
+              Icons.arrow_forward_ios,
+              color: Color(0xFFFFD700),
+              size: 12,
+            ),
           ],
         ),
       ),
@@ -1058,7 +1267,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
   }
 
   // "My Account" section with real data
-  Widget _buildMyAccountSection() {
+  Widget _buildMyAccountSection(bool isDarkMode) {
     final user = _currentUser ?? widget.currentUser;
     final diamonds = user.diamonds;
     final totalDiamonds = user.totalDiamonds;
@@ -1073,23 +1282,29 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.symmetric(vertical: 20.0),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isDarkMode ? const Color(0xFF1E1E24) : Colors.white,
         borderRadius: BorderRadius.circular(12),
+        border: isDarkMode ? Border.all(color: Colors.white10) : null,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           // Diamonds section - Spendable balance (labeled as Diamonds per request)
           _buildBalanceItem(
-            iconWidget: const Center(child: DynamicDiamondIcon(width: 35, height: 35)),
+            iconWidget: const Center(
+              child: DynamicDiamondIcon(width: 35, height: 35),
+            ),
             textColor: Colors.pink,
             label: 'Diamonds',
             balance: diamonds,
             onTap: _navigateToDiamondRechargePage,
+            isDarkMode: isDarkMode,
           ),
-          const SizedBox(
+          SizedBox(
             height: 50,
-            child: VerticalDivider(color: Colors.grey),
+            child: VerticalDivider(
+              color: isDarkMode ? Colors.white24 : Colors.grey.shade300,
+            ),
           ),
           // Beans section - Earned balance (labeled as Beans)
           _buildBalanceItem(
@@ -1098,6 +1313,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
             label: 'Beans',
             balance: beans,
             onTap: _navigateToBeanManagementPage,
+            isDarkMode: isDarkMode,
           ),
         ],
       ),
@@ -1111,36 +1327,30 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     required String label,
     required int balance,
     required VoidCallback onTap,
+    required bool isDarkMode,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Row(
         children: [
-          SizedBox(
-            height: 55,
-            width: 55,
-            child: iconWidget,
-          ),
-          SizedBox(
-            width: 5,
-          ),
+          SizedBox(height: 55, width: 55, child: iconWidget),
+          const SizedBox(width: 5),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 balance.toString(),
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                  color: isDarkMode ? Colors.white : Colors.black87,
+                ),
               ),
               const SizedBox(height: 4),
               Row(
                 children: [
                   Text(label, style: TextStyle(color: textColor, fontSize: 12)),
-                  Icon(
-                    Icons.arrow_forward_ios,
-                    size: 12,
-                    color: textColor,
-                  )
+                  Icon(Icons.arrow_forward_ios, size: 12, color: textColor),
                 ],
               ),
             ],
@@ -1151,103 +1361,124 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
   }
 
   // প্রধান মেন্যু
-  Widget _buildMainMenu() {
+  Widget _buildMainMenu(bool isDarkMode) {
     return Obx(() {
       final roleService = RoleService.instance;
-      
+
       final menuItems = [
         {
           'icon': Icons.diamond,
           'title': 'Diamondseller',
-          'color': Colors.amberAccent
+          'color': Colors.amberAccent,
         },
         {'icon': Icons.person_add, 'title': 'Invite', 'color': Colors.yellow},
         {
           'icon': Icons.wifi_off,
           'title': 'Offline Seller',
-          'color': Colors.lightBlue
+          'color': Colors.lightBlue,
         },
         {'icon': Icons.settings, 'title': 'Setting', 'color': Colors.lightBlue},
         {'icon': Icons.help_outline, 'title': 'Help', 'color': Colors.yellow},
         {
           'icon': Icons.info,
           'title': 'About',
-          'color': const Color.fromARGB(255, 158, 171, 158)
+          'color': const Color.fromARGB(255, 158, 171, 158),
         },
       ];
 
-      debugPrint('🔍 [WalletScreen] Role: ${roleService.userRole.value}, SuperAdmin: ${roleService.isSuperAdmin.value}, isBD: ${roleService.isBD}');
-      if (roleService.userRole.value == AppRoles.admin || roleService.isSuperAdmin.value) {
-        menuItems.insert(0, {'icon': Icons.admin_panel_settings, 'title': 'Admin Dashboard', 'color': Colors.purple});
+      debugPrint(
+        '🔍 [WalletScreen] Role: ${roleService.userRole.value}, SuperAdmin: ${roleService.isSuperAdmin.value}, isBD: ${roleService.isBD}',
+      );
+      if (roleService.userRole.value == AppRoles.admin ||
+          roleService.isSuperAdmin.value) {
+        menuItems.insert(0, {
+          'icon': Icons.admin_panel_settings,
+          'title': 'Admin Dashboard',
+          'color': Colors.purple,
+        });
       } else if (roleService.isBD) {
-        menuItems.insert(0, {'icon': Icons.business_center, 'title': 'BD Dashboard', 'color': Colors.orange});
+        menuItems.insert(0, {
+          'icon': Icons.business_center,
+          'title': 'BD Dashboard',
+          'color': Colors.orange,
+        });
       }
 
       return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
-      padding: const EdgeInsets.all(8.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: GridView.builder(
-        shrinkWrap: true,
-        padding: EdgeInsets.all(8),
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 4,
-          crossAxisSpacing: 10,
-          // mainAxisSpacing: 20,
+        margin: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.all(8.0),
+        decoration: BoxDecoration(
+          color: isDarkMode ? const Color(0xFF1E1E24) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: isDarkMode ? Border.all(color: Colors.white10) : null,
         ),
-        itemCount: menuItems.length,
-        itemBuilder: (context, index) {
-          final item = menuItems[index];
-          return GestureDetector(
-            onTap: () => _handleMenuClick(item['title'] as String),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(item['icon'] as IconData,
-                    color: item['color'] as Color, size: 30),
-                const SizedBox(height: 8),
-                Text(
-                  item['title'] as String,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+        child: GridView.builder(
+          shrinkWrap: true,
+          padding: const EdgeInsets.all(8),
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 4,
+            crossAxisSpacing: 10,
+            // mainAxisSpacing: 20,
+          ),
+          itemCount: menuItems.length,
+          itemBuilder: (context, index) {
+            final item = menuItems[index];
+            return GestureDetector(
+              onTap: () => _handleMenuClick(item['title'] as String),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    item['icon'] as IconData,
+                    color: item['color'] as Color,
+                    size: 30,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    item['title'] as String,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDarkMode ? Colors.white : Colors.black87,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       );
     });
   }
 
-  Widget _buildMainMenu2() {
+  Widget _buildMainMenu2(bool isDarkMode) {
     return Obx(() {
       final roleService = RoleService.instance;
-      final checkRole = roleService.isAgency; // Evaluated unconditionally to register GetX dependency
+      final checkRole = roleService
+          .isAgency; // Evaluated unconditionally to register GetX dependency
       final user = _currentUser ?? widget.currentUser;
       final isAgency = user.isAgency || checkRole;
 
       final menuItems = [
-        {'icon': 'assets/images/my_level.png', 'title': 'My Level'},
-        {'icon': 'assets/images/store.png', 'title': 'Store'},
-        {'icon': 'assets/images/bedge.png', 'title': 'Badge'},
-        {'icon': 'assets/images/store.png', 'title': 'My Items'},
-        {'icon': 'assets/images/family.png', 'title': 'Family'},
+        {'icon': 'assets/images/my_level.webp', 'title': 'My Level'},
+        {'icon': 'assets/images/store.webp', 'title': 'Store'},
+        {'icon': 'assets/images/bedge.webp', 'title': 'Badge'},
+        {'icon': 'assets/images/store.webp', 'title': 'My Items'},
+        {'icon': 'assets/images/family.webp', 'title': 'Family'},
         if (isAgency)
-          {'icon': 'assets/images/agency.png', 'title': 'Agency Manager'},
-        {'icon': 'assets/images/diamond_icon.png', 'title': 'Task Earnings'},
-        {'icon': 'assets/images/game_icon.png', 'title': 'Game Wall'},
+          {'icon': 'assets/images/agency.webp', 'title': 'Agency Manager'},
+        {'icon': 'assets/images/diamond_icon.webp', 'title': 'Task Earnings'},
+        {'icon': 'assets/images/game_icon.webp', 'title': 'Game Wall'},
       ];
 
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isDarkMode ? const Color(0xFF1E1E24) : Colors.white,
           borderRadius: BorderRadius.circular(12),
+          border: isDarkMode ? Border.all(color: Colors.white10) : null,
         ),
         child: GridView.builder(
           shrinkWrap: true,
@@ -1268,19 +1499,31 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  item['icon']! == 'assets/images/diamond_icon.png'
+                  item['icon']! == 'assets/images/diamond_icon.webp' ||
+                          item['icon']! == 'assets/images/diamond_icon.png' ||
+                          item['title'] == 'Task Earnings'
                       ? const DynamicDiamondIcon(height: 48, width: 48)
                       : Image.asset(
                           item['icon']!,
                           fit: BoxFit.contain,
                           height: 48,
                           width: 48,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Icon(
+                                Icons.image_not_supported,
+                                size: 40,
+                                color: Colors.grey,
+                              ),
                         ),
                   const SizedBox(height: 4),
                   Text(
                     item['title'] as String,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 11),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDarkMode ? Colors.white : Colors.black87,
+                      fontWeight: FontWeight.w500,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1292,7 +1535,165 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       );
     });
   }
+}
 
+// Live // Countdown Widget for Weekly Recharge Event
+class WeeklyRechargeCountdownWidget extends StatefulWidget {
+  final DateTime? endDate;
+
+  const WeeklyRechargeCountdownWidget({super.key, this.endDate});
+
+  @override
+  State<WeeklyRechargeCountdownWidget> createState() =>
+      _WeeklyRechargeCountdownWidgetState();
+}
+
+class _WeeklyRechargeCountdownWidgetState
+    extends State<WeeklyRechargeCountdownWidget> {
+  late Timer _timer;
+  late Duration _remaining;
+
+  @override
+  void initState() {
+    super.initState();
+    _calculateRemaining();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() {
+          _calculateRemaining();
+        });
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant WeeklyRechargeCountdownWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.endDate != widget.endDate) {
+      _calculateRemaining();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  void _calculateRemaining() {
+    final now = DateTime.now();
+    final target = widget.endDate ?? _getNextSundayEnd(now);
+    if (target.isBefore(now)) {
+      _remaining = Duration.zero;
+    } else {
+      _remaining = target.difference(now);
+    }
+  }
+
+  DateTime _getNextSundayEnd(DateTime now) {
+    final daysUntilSunday = 7 - now.weekday;
+    return DateTime(now.year, now.month, now.day + daysUntilSunday, 23, 59, 59);
+  }
+
+  Widget _buildTimePill(String value, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.white24, width: 0.8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              color: Color(0xFFFFD700),
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(width: 2),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white70, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final days = _remaining.inDays;
+    final hours = _remaining.inHours % 24;
+    final minutes = _remaining.inMinutes % 60;
+    final seconds = _remaining.inSeconds % 60;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.timer_outlined, color: Color(0xFFFFD700), size: 16),
+              SizedBox(width: 6),
+              Text(
+                'Event Ends In:',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              if (days > 0) ...[
+                _buildTimePill(days.toString().padLeft(2, '0'), 'd'),
+                const SizedBox(width: 4),
+              ],
+              _buildTimePill(hours.toString().padLeft(2, '0'), 'h'),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  ':',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              _buildTimePill(minutes.toString().padLeft(2, '0'), 'm'),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  ':',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              _buildTimePill(seconds.toString().padLeft(2, '0'), 's'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // Diamond recharge page with Firebase integration
@@ -1300,12 +1701,14 @@ class DiamondRechargePage extends StatefulWidget {
   final int diamondBalance;
   final WalletService walletService;
   final String userId;
+  final User? currentUser;
 
   const DiamondRechargePage({
     super.key,
     required this.diamondBalance,
     required this.walletService,
     required this.userId,
+    this.currentUser,
   });
 
   @override
@@ -1314,24 +1717,20 @@ class DiamondRechargePage extends StatefulWidget {
 
 class _DiamondRechargePageState extends State<DiamondRechargePage> {
   late int _currentDiamondBalance;
-  int _selectedDiamondAmount =
-      0; // To keep track of the selected amount for the button
+  int _selectedDiamondAmount = 0;
+  List<RechargePackageModel> _streamedPackages = [];
 
-  final List<Map<String, dynamic>> diamondPackages = [
-    {'diamonds': 5000, 'bdt': 150},
-    {'diamonds': 25000, 'bdt': 700},
-    {'diamonds': 50000, 'bdt': 1400},
-    {'diamonds': 90000, 'bdt': 2500},
+  final List<Map<String, dynamic>> fallbackPackages = [
+    {'diamonds': 5000, 'bdt': 150, 'bonus': 0},
+    {'diamonds': 25000, 'bdt': 700, 'bonus': 0},
+    {'diamonds': 50000, 'bdt': 1400, 'bonus': 0},
+    {'diamonds': 90000, 'bdt': 2500, 'bonus': 0},
   ];
 
   @override
   void initState() {
     super.initState();
     _currentDiamondBalance = widget.diamondBalance;
-    if (diamondPackages.isNotEmpty) {
-      _selectedDiamondAmount =
-          diamondPackages[0]['bdt']; // Set default selected amount
-    }
   }
 
   void _handleRecharge(BuildContext context) async {
@@ -1345,19 +1744,641 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
     }
 
     try {
-      final selectedPackage = diamondPackages
-          .firstWhere((pkg) => pkg['bdt'] == _selectedDiamondAmount);
-      final diamondsToAdd = selectedPackage['diamonds'] as int;
+      int bonusToAdd = 0;
+      num bdtPrice = 0;
+      final matchedPkg = _streamedPackages
+          .where((p) => p.diamondAmount == _selectedDiamondAmount)
+          .firstOrNull;
+      if (matchedPkg != null) {
+        bonusToAdd = matchedPkg.bonusDiamonds;
+        bdtPrice = matchedPkg.bdtPrice;
+      }
+
+      final userToPass =
+          widget.currentUser ??
+          User(
+            userId: widget.userId,
+            fullname: 'User',
+            photoUrl: '',
+            searchId: widget.userId,
+          );
 
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => SellerListScreen(requestedAmount: diamondsToAdd),
+          builder: (context) => RechargeSelectionScreen(
+            currentUser: userToPass,
+            preselectedDiamonds: _selectedDiamondAmount,
+            preselectedBdt: bdtPrice > 0 ? bdtPrice : null,
+            preselectedBonusDiamonds: bonusToAdd,
+          ),
         ),
       );
     } catch (e) {
-      debugPrint('❌ Error routing to seller list: $e');
+      debugPrint('❌ Error routing to recharge: $e');
     }
+  }
+
+  void _showWeeklyRechargeBenefitsModal(BuildContext context) {
+    final effectiveUserId = widget.currentUser?.userId.isNotEmpty == true
+        ? widget.currentUser!.userId
+        : widget.userId;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (bottomCtx) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.78,
+          decoration: const BoxDecoration(
+            color: Color(0xFF181024),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black54,
+                blurRadius: 20,
+                offset: Offset(0, -4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Header Drag Handle
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+
+              // Title & Close Button
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF8E24AA), Color(0xFFD81B60)],
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.card_giftcard_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Weekly Recharge Benefits',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              'সাপ্তাহিক রিচার্জ বোনাস রিওয়ার্ডস',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                      onPressed: () => Navigator.pop(bottomCtx),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              const SizedBox(height: 6),
+
+              // Live Real-Time Reverse Countdown Timer
+              StreamBuilder<List<WeeklyRechargeBenefitModel>>(
+                stream: OnlineRechargeService.instance
+                    .getWeeklyBenefitsStream(),
+                builder: (context, snap) {
+                  final firstActive = snap.data?.firstOrNull;
+                  return WeeklyRechargeCountdownWidget(
+                    endDate: firstActive?.endDate,
+                  );
+                },
+              ),
+
+              // User Weekly Recharge Progress Card with Real-time Dynamic Diamond Icon
+              StreamBuilder<int>(
+                stream: OnlineRechargeService.instance
+                    .getUserWeeklyRechargeStream(effectiveUserId),
+                builder: (context, userRechargeSnap) {
+                  final weeklyRecharge = userRechargeSnap.data ?? 0;
+
+                  return Container(
+                    margin: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          const Color(0xFF8E24AA).withValues(alpha: 0.25),
+                          const Color(0xFFD81B60).withValues(alpha: 0.18),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: const Color(0xFF8E24AA).withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'This Week Recharged',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                const DynamicDiamondIcon(width: 20, height: 20),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '$weeklyRecharge',
+                                  style: const TextStyle(
+                                    color: Color(0xFFFFD700),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Text(
+                                  'Diamonds',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Recharge diamonds this week to reach targets and unlock exclusive rewards below.',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.65),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+
+              // Live Benefits List
+              Expanded(
+                child: StreamBuilder<List<WeeklyRechargeBenefitModel>>(
+                  stream: OnlineRechargeService.instance
+                      .getWeeklyBenefitsStream(),
+                  builder: (context, benefitsSnap) {
+                    if (benefitsSnap.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFFD81B60),
+                        ),
+                      );
+                    }
+
+                    final benefits = benefitsSnap.data ?? [];
+                    if (benefits.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.card_giftcard_outlined,
+                              size: 48,
+                              color: Colors.white.withValues(alpha: 0.3),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'No weekly benefits active at the moment.',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return StreamBuilder<Set<String>>(
+                      stream: OnlineRechargeService.instance
+                          .getClaimedBenefitIdsStream(effectiveUserId),
+                      builder: (context, claimsSnap) {
+                        final claimedIds = claimsSnap.data ?? {};
+
+                        return StreamBuilder<int>(
+                          stream: OnlineRechargeService.instance
+                              .getUserWeeklyRechargeStream(effectiveUserId),
+                          builder: (context, rechargeSnap) {
+                            final userRecharged = rechargeSnap.data ?? 0;
+
+                            return ListView.separated(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              itemCount: benefits.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 12),
+                              itemBuilder: (context, index) {
+                                final benefit = benefits[index];
+                                final isClaimed = claimedIds.contains(
+                                  benefit.id,
+                                );
+                                final isReached =
+                                    userRecharged >= benefit.targetDiamonds;
+                                final canClaim = isReached && !isClaimed;
+
+                                return Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF231638),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: canClaim
+                                          ? const Color(
+                                              0xFFFFD700,
+                                            ).withValues(alpha: 0.7)
+                                          : isClaimed
+                                          ? const Color(
+                                              0xFF10B981,
+                                            ).withValues(alpha: 0.4)
+                                          : Colors.white12,
+                                      width: canClaim ? 1.5 : 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      // Item Thumbnail
+                                      Container(
+                                        width: 60,
+                                        height: 60,
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF140A20),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white12,
+                                          ),
+                                        ),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          child: benefit.itemIcon.isNotEmpty
+                                              ? CachedNetworkImage(
+                                                  imageUrl: benefit.itemIcon,
+                                                  fit: BoxFit.contain,
+                                                  placeholder: (_, __) =>
+                                                      const Center(
+                                                        child: SizedBox(
+                                                          width: 16,
+                                                          height: 16,
+                                                          child:
+                                                              CircularProgressIndicator(
+                                                                strokeWidth: 2,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                  errorWidget: (_, __, ___) =>
+                                                      const Icon(
+                                                        Icons.auto_awesome,
+                                                        color: Color(
+                                                          0xFFFFD700,
+                                                        ),
+                                                        size: 28,
+                                                      ),
+                                                )
+                                              : const Icon(
+                                                  Icons.auto_awesome,
+                                                  color: Color(0xFFFFD700),
+                                                  size: 28,
+                                                ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+
+                                      // Item Info & Target
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              benefit.itemName.isNotEmpty
+                                                  ? benefit.itemName
+                                                  : 'Reward Item',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Row(
+                                              children: [
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 2,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(
+                                                      0xFF10B981,
+                                                    ).withValues(alpha: 0.2),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          6,
+                                                        ),
+                                                  ),
+                                                  child: Text(
+                                                    '${benefit.validityDays} Days Validity',
+                                                    style: const TextStyle(
+                                                      color: Color(0xFF34D399),
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (benefit.bonusDiamonds >
+                                                    0) ...[
+                                                  const SizedBox(width: 6),
+                                                  Container(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 6,
+                                                          vertical: 2,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      gradient:
+                                                          const LinearGradient(
+                                                            colors: [
+                                                              Color(0xFFEC4899),
+                                                              Color(0xFF8B5CF6),
+                                                            ],
+                                                          ),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            6,
+                                                          ),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        const DynamicDiamondIcon(
+                                                          width: 10,
+                                                          height: 10,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 3,
+                                                        ),
+                                                        Text(
+                                                          '+${benefit.bonusDiamonds} Bonus',
+                                                          style:
+                                                              const TextStyle(
+                                                                color: Colors
+                                                                    .white,
+                                                                fontSize: 10,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Row(
+                                              children: [
+                                                const DynamicDiamondIcon(
+                                                  width: 14,
+                                                  height: 14,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Target: ${benefit.targetDiamonds}',
+                                                  style: const TextStyle(
+                                                    color: Color(0xFFFFD700),
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  '($userRecharged/${benefit.targetDiamonds})',
+                                                  style: TextStyle(
+                                                    color: isReached
+                                                        ? const Color(
+                                                            0xFF34D399,
+                                                          )
+                                                        : Colors.white54,
+                                                    fontSize: 10,
+                                                    fontWeight: isReached
+                                                        ? FontWeight.bold
+                                                        : FontWeight.normal,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+
+                                      // Claim / Status Button
+                                      if (isClaimed)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(
+                                              0xFF10B981,
+                                            ).withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            border: Border.all(
+                                              color: const Color(
+                                                0xFF10B981,
+                                              ).withValues(alpha: 0.5),
+                                            ),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                Icons.check_circle_rounded,
+                                                color: Color(0xFF34D399),
+                                                size: 14,
+                                              ),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'Claimed',
+                                                style: TextStyle(
+                                                  color: Color(0xFF34D399),
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                      else if (canClaim)
+                                        ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(
+                                              0xFFFFD700,
+                                            ),
+                                            foregroundColor: Colors.black,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 14,
+                                              vertical: 8,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            elevation: 4,
+                                          ),
+                                          onPressed: () async {
+                                            try {
+                                              await OnlineRechargeService
+                                                  .instance
+                                                  .claimWeeklyBenefit(
+                                                    userId: effectiveUserId,
+                                                    benefit: benefit,
+                                                  );
+                                              if (bottomCtx.mounted) {
+                                                ScaffoldMessenger.of(
+                                                  bottomCtx,
+                                                ).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      benefit.bonusDiamonds > 0
+                                                          ? '🎉 Congratulations! You claimed ${benefit.itemName} + ${benefit.bonusDiamonds} Bonus Diamonds!'
+                                                          : '🎉 Congratulations! You claimed ${benefit.itemName} for ${benefit.validityDays} days!',
+                                                    ),
+                                                    backgroundColor:
+                                                        const Color(0xFF10B981),
+                                                    behavior: SnackBarBehavior
+                                                        .floating,
+                                                  ),
+                                                );
+                                              }
+                                            } catch (e) {
+                                              if (bottomCtx.mounted) {
+                                                ScaffoldMessenger.of(
+                                                  bottomCtx,
+                                                ).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      'Failed to claim: $e',
+                                                    ),
+                                                    backgroundColor: Colors.red,
+                                                    behavior: SnackBarBehavior
+                                                        .floating,
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          },
+                                          child: const Text(
+                                            'CLAIM',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        )
+                                      else
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.08,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '${(benefit.targetDiamonds - userRecharged).clamp(0, benefit.targetDiamonds)} left',
+                                            style: const TextStyle(
+                                              color: Colors.white54,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -1365,16 +2386,25 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Recharge'),
-        backgroundColor: Colors.white, // Changed background to white
+        backgroundColor: Colors.white,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.black),
         titleTextStyle: const TextStyle(
-            color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold),
+          color: Colors.black,
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+        ),
         actions: [
           TextButton(
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Details clicked')),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => RechargeAndGiftRecordScreen(
+                    userId: widget.userId,
+                    initialTabIndex: 1, // Opens Gift Record tab (Screenshot 2)
+                  ),
+                ),
               );
             },
             child: const Text('Details', style: TextStyle(color: Colors.black)),
@@ -1389,119 +2419,332 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
             color: Colors.white,
             child: Column(
               children: [
-                DynamicDiamondIcon(height: 60, width: 60), // Placeholder for diamond icon
+                const DynamicDiamondIcon(height: 60, width: 60),
                 const SizedBox(height: 10),
-                const Text('Balance',
-                    style: TextStyle(color: Colors.grey, fontSize: 16)),
+                const Text(
+                  'Balance',
+                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                ),
                 const SizedBox(height: 5),
                 Text(
                   _currentDiamondBalance.toString(),
                   style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 36,
-                      fontWeight: FontWeight.bold),
+                    color: Colors.black,
+                    fontSize: 36,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                const Text('Diamonds',
-                    style: TextStyle(color: Colors.black, fontSize: 16)),
+                const Text(
+                  'Diamonds',
+                  style: TextStyle(color: Colors.black, fontSize: 16),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 20),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              image: const DecorationImage(
-                image: NetworkImage(
-                    'https://via.placeholder.com/300x80/9C27B0/FFFFFF?text=WEEKLY+RECHARGE+BENEFIT'), // Placeholder image
-                fit: BoxFit.cover,
+
+          // Interactive Weekly Recharge Benefit Banner
+          GestureDetector(
+            onTap: () => _showWeeklyRechargeBenefitsModal(context),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF8E24AA), Color(0xFFD81B60)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF8E24AA).withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
               ),
-            ),
-            child: const SizedBox(
-                height: 50), // Adjust height as needed for banner image
-          ),
-          const SizedBox(height: 20),
-          Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 15,
-                mainAxisSpacing: 15,
-                childAspectRatio: 2.5, // Adjust as needed
-              ),
-              itemCount: diamondPackages.length,
-              itemBuilder: (context, index) {
-                final pkg = diamondPackages[index];
-                final isSelected = _selectedDiamondAmount == pkg['bdt'];
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _selectedDiamondAmount = pkg['bdt'];
-                    });
-                  },
-                  child: Container(
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: isSelected ? Colors.pink : Colors.grey.shade300,
-                        width: isSelected ? 2 : 1,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withAlpha(25),
-                          spreadRadius: 1,
-                          blurRadius: 3,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      color: Colors.white.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
                     ),
+                    child: const Icon(
+                      Icons.card_giftcard_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.diamond,
-                                color: Colors.pink, size: 20),
-                            const SizedBox(width: 5),
-                            Text(
-                              pkg['diamonds'].toString(),
-                              style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 5),
                         Text(
-                          'BDT ${pkg['bdt'].toStringAsFixed(2)}',
+                          'WEEKLY RECHARGE BENEFIT',
                           style: TextStyle(
-                              fontSize: 14, color: Colors.grey.shade600),
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Recharge diamonds and claim bonus rewards!',
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
                         ),
                       ],
                     ),
                   ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'View',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(width: 3),
+                        Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          color: Colors.white,
+                          size: 10,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // 3-Column Diamond Package Grid
+          Expanded(
+            child: StreamBuilder<List<RechargePackageModel>>(
+              stream: OnlineRechargeService.instance
+                  .getRechargePackagesStream(),
+              builder: (context, snapshot) {
+                final livePkgs = snapshot.data ?? [];
+                if (livePkgs.isNotEmpty) {
+                  _streamedPackages = livePkgs;
+                  if (_selectedDiamondAmount == 0 ||
+                      !livePkgs.any(
+                        (p) => p.diamondAmount == _selectedDiamondAmount,
+                      )) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        setState(() {
+                          _selectedDiamondAmount = livePkgs.first.diamondAmount;
+                        });
+                      }
+                    });
+                  }
+                }
+
+                final List<Map<String, dynamic>> displayList =
+                    livePkgs.isNotEmpty
+                    ? livePkgs
+                          .map(
+                            (p) => {
+                              'diamonds': p.diamondAmount,
+                              'bdt': p.bdtPrice,
+                              'bonus': p.bonusDiamonds,
+                              'bonusText': p.bonusPercentText,
+                            },
+                          )
+                          .toList()
+                    : fallbackPackages;
+
+                return GridView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 0.85,
+                  ),
+                  itemCount: displayList.length,
+                  itemBuilder: (context, index) {
+                    final pkg = displayList[index];
+                    final dia = pkg['diamonds'] as int;
+                    final bonus = (pkg['bonus'] as num?)?.toInt() ?? 0;
+                    final bonusPercent = dia > 0 && bonus > 0
+                        ? ((bonus / dia) * 100).toInt()
+                        : 0;
+                    final isSelected = _selectedDiamondAmount == dia;
+
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _selectedDiamondAmount = dia;
+                        });
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF9F9F9),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: isSelected
+                                ? const Color(0xFFD81B60)
+                                : Colors.grey.shade200,
+                            width: isSelected ? 2 : 1,
+                          ),
+                        ),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            if (bonus > 0)
+                              Positioned(
+                                top: 0,
+                                left: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 2,
+                                  ),
+                                  decoration: const BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        Color(0xFFFFB300),
+                                        Color(0xFFF57C00),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.only(
+                                      topLeft: Radius.circular(12),
+                                      bottomRight: Radius.circular(8),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        '+$bonusPercent%',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 8.5,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        '(+$bonus',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 8,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 1.5),
+                                      const DynamicDiamondIcon(
+                                        width: 10,
+                                        height: 10,
+                                        fit: BoxFit.contain,
+                                      ),
+                                      const Text(
+                                        ')',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 8,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(height: 8),
+                                  const DynamicDiamondIcon(
+                                    height: 42,
+                                    width: 42,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    dia.toString(),
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: Colors.grey.shade200,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'BDT ${(pkg['bdt'] as num).toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: ElevatedButton(
-              onPressed: () => _handleRecharge(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.pink,
-                minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(25)),
-              ),
-              child: Text(
-                'Recharge BDT ${_selectedDiamondAmount.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 18, color: Colors.white),
+          SafeArea(
+            top: false,
+            bottom: true,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 16.0),
+              child: ElevatedButton(
+                onPressed: () => _handleRecharge(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFD81B60),
+                  minimumSize: const Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                ),
+                child: Text(
+                  _selectedDiamondAmount > 0
+                      ? 'Recharge BDT ${(_streamedPackages.where((p) => p.diamondAmount == _selectedDiamondAmount).firstOrNull?.bdtPrice ?? (_selectedDiamondAmount * 0.03)).toStringAsFixed(2)}'
+                      : 'Recharge Diamonds',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
           ),
@@ -1540,8 +2783,9 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
   }
 
   Future<void> _loadConfigAndWithdrawals() async {
-    final history = await GiftEconomyService.instance
-        .getUserWithdrawals(_userData.userId);
+    final history = await GiftEconomyService.instance.getUserWithdrawals(
+      _userData.userId,
+    );
 
     if (mounted) {
       setState(() {
@@ -1573,11 +2817,15 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Withdraw Beans',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const Text(
+                'Withdraw Beans',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 5),
-              Text('Available: ${_userData.beans} beans',
-                  style: const TextStyle(color: Colors.grey)),
+              Text(
+                'Available: ${_userData.beans} beans',
+                style: const TextStyle(color: Colors.grey),
+              ),
               const SizedBox(height: 15),
               TextField(
                 controller: amountController,
@@ -1586,7 +2834,8 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                   labelText: 'Amount (beans)',
                   hintText: 'Minimum 10,000',
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10)),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -1595,7 +2844,8 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                 decoration: InputDecoration(
                   labelText: 'Account Number',
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10)),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -1604,7 +2854,8 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                 decoration: InputDecoration(
                   labelText: 'Note (optional)',
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10)),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
@@ -1621,10 +2872,13 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.pink,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(25)),
+                      borderRadius: BorderRadius.circular(25),
+                    ),
                   ),
-                  child: const Text('Submit Withdrawal',
-                      style: TextStyle(fontSize: 16, color: Colors.white)),
+                  child: const Text(
+                    'Submit Withdrawal',
+                    style: TextStyle(fontSize: 16, color: Colors.white),
+                  ),
                 ),
               ),
             ],
@@ -1681,8 +2935,9 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
     }
 
     // Check no pending withdrawal
-    final canWithdraw = await GiftEconomyService.instance
-        .canUserWithdraw(_userData.userId);
+    final canWithdraw = await GiftEconomyService.instance.canUserWithdraw(
+      _userData.userId,
+    );
     if (!canWithdraw) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -1690,7 +2945,8 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
           ..showSnackBar(
             const SnackBar(
               content: Text(
-                  'You already have a pending withdrawal. Please wait for it to be processed.'),
+                'You already have a pending withdrawal. Please wait for it to be processed.',
+              ),
               backgroundColor: Colors.orange,
             ),
           );
@@ -1809,7 +3065,13 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Got it', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+            child: const Text(
+              'Got it',
+              style: TextStyle(
+                color: Colors.orange,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -1845,8 +3107,9 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => GiftReceivedRecordPage(
+                  builder: (context) => RechargeAndGiftRecordScreen(
                     userId: _userData.userId,
+                    initialTabIndex: 1,
                   ),
                 ),
               );
@@ -1874,7 +3137,10 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
               // Beans available section (header banner style)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
                 color: const Color(0xFFF5F7FA),
                 child: const Text(
                   'Beans available',
@@ -1887,12 +3153,15 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
               ),
               // Balance display card
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 20,
+                ),
                 color: Colors.white,
                 child: Row(
                   children: [
                     Image.asset(
-                      'assets/images/cashout.png',
+                      'assets/images/cashout.webp',
                       height: 35,
                       width: 35,
                       fit: BoxFit.contain,
@@ -1915,10 +3184,7 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
                   'If you receive a gift, you will receive diamonds by rate',
-                  style: TextStyle(
-                    color: Colors.grey.shade500,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
                 ),
               ),
               const SizedBox(height: 180), // Space to push buttons down
@@ -1955,22 +3221,24 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                       width: double.infinity,
                       height: 50,
                       child: ElevatedButton(
-                        onPressed: _isLoading ? null : () async {
-                          final updatedUser = await Navigator.push<User>(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ExchangeBeansPage(
-                                userData: _userData,
-                                walletService: widget.walletService,
-                              ),
-                            ),
-                          );
-                          if (updatedUser != null && mounted) {
-                            setState(() {
-                              _userData = updatedUser;
-                            });
-                          }
-                        },
+                        onPressed: _isLoading
+                            ? null
+                            : () async {
+                                final updatedUser = await Navigator.push<User>(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ExchangeBeansPage(
+                                      userData: _userData,
+                                      walletService: widget.walletService,
+                                    ),
+                                  ),
+                                );
+                                if (updatedUser != null && mounted) {
+                                  setState(() {
+                                    _userData = updatedUser;
+                                  });
+                                }
+                              },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF00C853),
                           elevation: 0,
@@ -2153,7 +3421,8 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Confirm Exchange'),
         content: Text(
-            'Are you sure you want to exchange ${_formatNumber(beansSpent)} Beans for ${_formatNumber(diamondsReceived)} Diamonds?'),
+          'Are you sure you want to exchange ${_formatNumber(beansSpent)} Beans for ${_formatNumber(diamondsReceived)} Diamonds?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -2161,7 +3430,13 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Exchange', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+            child: const Text(
+              'Exchange',
+              style: TextStyle(
+                color: Colors.green,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -2191,7 +3466,8 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
           ..showSnackBar(
             SnackBar(
               content: Text(
-                  'Successfully exchanged ${_formatNumber(beansSpent)} Beans for ${_formatNumber(diamondsReceived)} Diamonds!'),
+                'Successfully exchanged ${_formatNumber(beansSpent)} Beans for ${_formatNumber(diamondsReceived)} Diamonds!',
+              ),
               backgroundColor: Colors.green,
             ),
           );
@@ -2250,7 +3526,10 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                   Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+                        icon: const Icon(
+                          Icons.arrow_back_ios,
+                          color: Colors.white,
+                        ),
                         onPressed: () => Navigator.pop(context, _userData),
                       ),
                       const Text(
@@ -2268,9 +3547,11 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      DynamicDiamondIcon(height: 35,
+                      DynamicDiamondIcon(
+                        height: 35,
                         width: 35,
-                        fit: BoxFit.contain,),
+                        fit: BoxFit.contain,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         _formatNumber(_userData.diamonds),
@@ -2285,19 +3566,23 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                 ],
               ),
             ),
-            
+
             // Grid of Packages
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : GridView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: 0.9,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 20,
                       ),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            childAspectRatio: 0.9,
+                          ),
                       itemCount: exchangePackages.length,
                       itemBuilder: (context, index) {
                         final pkg = exchangePackages[index];
@@ -2321,9 +3606,11 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 // Diamond Icon
-                                DynamicDiamondIcon(height: 28,
+                                DynamicDiamondIcon(
+                                  height: 28,
                                   width: 28,
-                                  fit: BoxFit.contain,),
+                                  fit: BoxFit.contain,
+                                ),
                                 const SizedBox(height: 8),
                                 // Diamonds to gain
                                 Text(
@@ -2340,10 +3627,12 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Image.asset(
-                                      'assets/images/cashout.png',
+                                      'assets/images/cashout.webp',
                                       height: 12,
                                       width: 12,
                                       fit: BoxFit.contain,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Icon(Icons.error, size: 12),
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
@@ -2362,7 +3651,7 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                       },
                     ),
             ),
-            
+
             // Footer displaying available Beans
             Container(
               width: double.infinity,
@@ -2380,7 +3669,7 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                     ),
                   ),
                   Image.asset(
-                    'assets/images/cashout.png',
+                    'assets/images/cashout.webp',
                     height: 16,
                     width: 16,
                     fit: BoxFit.contain,
@@ -2408,10 +3697,7 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
 class GiftReceivedRecordPage extends StatefulWidget {
   final String userId;
 
-  const GiftReceivedRecordPage({
-    super.key,
-    required this.userId,
-  });
+  const GiftReceivedRecordPage({super.key, required this.userId});
 
   @override
   State<GiftReceivedRecordPage> createState() => _GiftReceivedRecordPageState();
@@ -2419,7 +3705,20 @@ class GiftReceivedRecordPage extends StatefulWidget {
 
 class _GiftReceivedRecordPageState extends State<GiftReceivedRecordPage> {
   String _formatDateTime(DateTime dt) {
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     final hour = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     final minute = dt.minute.toString().padLeft(2, '0');
@@ -2460,7 +3759,9 @@ class _GiftReceivedRecordPageState extends State<GiftReceivedRecordPage> {
           }
 
           if (snapshot.hasError) {
-            return Center(child: Text('Error loading records: ${snapshot.error}'));
+            return Center(
+              child: Text('Error loading records: ${snapshot.error}'),
+            );
           }
 
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
@@ -2473,30 +3774,33 @@ class _GiftReceivedRecordPageState extends State<GiftReceivedRecordPage> {
           }
 
           // Parse and filter transactions locally to avoid complex Firestore composite indexes
-          final transactions = snapshot.data!.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final txId = doc.id;
-            final giftName = data['giftName'] ?? 'Gift';
-            final giftPngUrl = data['giftPngUrl'] ?? '';
-            final senderName = data['senderName'] ?? 'Anonymous';
-            final credits = data['credits'] ?? 0;
-            
-            DateTime dt = DateTime.now();
-            if (data['timestamp'] is Timestamp) {
-              dt = (data['timestamp'] as Timestamp).toDate();
-            } else if (data['timestamp'] is String) {
-              dt = DateTime.tryParse(data['timestamp']) ?? DateTime.now();
-            }
+          final transactions = snapshot.data!.docs
+              .map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                final txId = doc.id;
+                final giftName = data['giftName'] ?? 'Gift';
+                final giftPngUrl = data['giftPngUrl'] ?? '';
+                final senderName = data['senderName'] ?? 'Anonymous';
+                final credits = data['credits'] ?? 0;
 
-            return {
-              'id': txId,
-              'giftName': giftName,
-              'giftPngUrl': giftPngUrl,
-              'senderName': senderName,
-              'credits': credits,
-              'timestamp': dt,
-            };
-          }).where((tx) => (tx['timestamp'] as DateTime).isAfter(oneMonthAgo)).toList();
+                DateTime dt = DateTime.now();
+                if (data['timestamp'] is Timestamp) {
+                  dt = (data['timestamp'] as Timestamp).toDate();
+                } else if (data['timestamp'] is String) {
+                  dt = DateTime.tryParse(data['timestamp']) ?? DateTime.now();
+                }
+
+                return {
+                  'id': txId,
+                  'giftName': giftName,
+                  'giftPngUrl': giftPngUrl,
+                  'senderName': senderName,
+                  'credits': credits,
+                  'timestamp': dt,
+                };
+              })
+              .where((tx) => (tx['timestamp'] as DateTime).isAfter(oneMonthAgo))
+              .toList();
 
           if (transactions.isEmpty) {
             return const Center(
@@ -2508,7 +3812,11 @@ class _GiftReceivedRecordPageState extends State<GiftReceivedRecordPage> {
           }
 
           // Sort descending by timestamp
-          transactions.sort((a, b) => (b['timestamp'] as DateTime).compareTo(a['timestamp'] as DateTime));
+          transactions.sort(
+            (a, b) => (b['timestamp'] as DateTime).compareTo(
+              a['timestamp'] as DateTime,
+            ),
+          );
 
           return ListView.separated(
             padding: const EdgeInsets.all(16),
@@ -2539,51 +3847,71 @@ class _GiftReceivedRecordPageState extends State<GiftReceivedRecordPage> {
                   clipBehavior: Clip.antiAlias,
                   borderRadius: BorderRadius.circular(12),
                   child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  leading: Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF5F7FA),
-                      borderRadius: BorderRadius.circular(8),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
                     ),
-                    child: giftPngUrl.isNotEmpty
-                        ? Image.network(
-                            giftPngUrl,
-                            errorBuilder: (_, __, ___) => Icon(Icons.card_giftcard, color: Colors.orange.shade400, size: 28),
-                          )
-                        : Icon(Icons.card_giftcard, color: Colors.orange.shade400, size: 28),
-                  ),
-                  title: Text(
-                    giftName,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 4),
-                      Text(
-                        'From: $senderName',
-                        style: const TextStyle(color: Colors.grey, fontSize: 13),
+                    leading: Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F7FA),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _formatDateTime(timestamp),
-                        style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+                      child: giftPngUrl.isNotEmpty
+                          ? Image.network(
+                              giftPngUrl,
+                              errorBuilder: (_, __, ___) => Icon(
+                                Icons.card_giftcard,
+                                color: Colors.orange.shade400,
+                                size: 28,
+                              ),
+                            )
+                          : Icon(
+                              Icons.card_giftcard,
+                              color: Colors.orange.shade400,
+                              size: 28,
+                            ),
+                    ),
+                    title: Text(
+                      giftName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
                       ),
-                    ],
-                  ),
-                  trailing: Text(
-                    '+$credits Beans',
-                    style: const TextStyle(
-                      color: Colors.green,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 4),
+                        Text(
+                          'From: $senderName',
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatDateTime(timestamp),
+                          style: TextStyle(
+                            color: Colors.grey.shade400,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                    trailing: Text(
+                      '+$credits Beans',
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            );
+              );
             },
           );
         },
@@ -2609,7 +3937,20 @@ class SocialUsersListPage extends StatefulWidget {
 
 class _SocialUsersListPageState extends State<SocialUsersListPage> {
   String _formatDateTime(DateTime dt) {
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     final hour = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     final minute = dt.minute.toString().padLeft(2, '0');
@@ -2618,10 +3959,13 @@ class _SocialUsersListPageState extends State<SocialUsersListPage> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final oneMonthAgo = DateTime.now().subtract(const Duration(days: 30));
-    
+
     CollectionReference getCollection() {
-      final baseRef = FirebaseFirestore.instance.collection('Users').doc(widget.userId);
+      final baseRef = FirebaseFirestore.instance
+          .collection('Users')
+          .doc(widget.userId);
       switch (widget.listType) {
         case 'Friends':
           return baseRef.collection('Contacts');
@@ -2637,21 +3981,28 @@ class _SocialUsersListPageState extends State<SocialUsersListPage> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FA),
+      backgroundColor: isDarkMode ? Colors.black : const Color(0xFFF7F8FA),
       appBar: AppBar(
         title: Text(
-          widget.listType == 'Visitor' ? 'Visitors (Last 30 Days)' : widget.listType,
-          style: const TextStyle(
-            color: Colors.black,
+          widget.listType == 'Visitor'
+              ? 'Visitors (Last 30 Days)'
+              : widget.listType,
+          style: TextStyle(
+            color: isDarkMode ? Colors.white : Colors.black,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: Colors.white,
+        backgroundColor: isDarkMode ? const Color(0xFF18181C) : Colors.white,
         elevation: 0.5,
-        iconTheme: const IconThemeData(color: Colors.black),
+        iconTheme: IconThemeData(
+          color: isDarkMode ? Colors.white : Colors.black,
+        ),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
+          icon: Icon(
+            Icons.arrow_back_ios,
+            color: isDarkMode ? Colors.white : Colors.black,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -2670,7 +4021,10 @@ class _SocialUsersListPageState extends State<SocialUsersListPage> {
             return Center(
               child: Text(
                 'No ${widget.listType.toLowerCase()} found.',
-                style: const TextStyle(color: Colors.grey, fontSize: 15),
+                style: TextStyle(
+                  color: isDarkMode ? Colors.white54 : Colors.grey,
+                  fontSize: 15,
+                ),
               ),
             );
           }
@@ -2689,29 +4043,38 @@ class _SocialUsersListPageState extends State<SocialUsersListPage> {
               }
 
               if (dt.isAfter(oneMonthAgo)) {
-                visitorList.add({
-                  'userId': doc.id,
-                  'timestamp': dt,
-                });
+                visitorList.add({'userId': doc.id, 'timestamp': dt});
               }
             }
 
             if (visitorList.isEmpty) {
-              return const Center(
+              return Center(
                 child: Text(
                   'No visitors in the last 30 days.',
-                  style: TextStyle(color: Colors.grey, fontSize: 15),
+                  style: TextStyle(
+                    color: isDarkMode ? Colors.white54 : Colors.grey,
+                    fontSize: 15,
+                  ),
                 ),
               );
             }
 
-            visitorList.sort((a, b) => (b['timestamp'] as DateTime).compareTo(a['timestamp'] as DateTime));
+            visitorList.sort(
+              (a, b) => (b['timestamp'] as DateTime).compareTo(
+                a['timestamp'] as DateTime,
+              ),
+            );
           }
 
           return ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            itemCount: widget.listType == 'Visitor' ? visitorList.length : docs.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemCount: widget.listType == 'Visitor'
+                ? visitorList.length
+                : docs.length,
+            separatorBuilder: (_, __) => Divider(
+              height: 1,
+              color: isDarkMode ? Colors.white12 : Colors.grey.shade200,
+            ),
             itemBuilder: (context, index) {
               String targetUserId;
               String? extraText;
@@ -2738,16 +4101,17 @@ class SocialUserTile extends StatelessWidget {
   final String userId;
   final String? extraText;
 
-  const SocialUserTile({
-    super.key,
-    required this.userId,
-    this.extraText,
-  });
+  const SocialUserTile({super.key, required this.userId, this.extraText});
 
   @override
   Widget build(BuildContext context) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('Users').doc(userId).snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('Users')
+          .doc(userId)
+          .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData || !snapshot.data!.exists) {
           return const SizedBox.shrink();
@@ -2759,28 +4123,47 @@ class SocialUserTile extends StatelessWidget {
         final searchId = data['searchId'] ?? '';
 
         return Material(
-          color: Colors.white,
+          color: isDarkMode ? const Color(0xFF1E1E24) : Colors.white,
           child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 4,
+            ),
             leading: CircleAvatar(
               radius: 24,
-              backgroundImage: avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+              backgroundImage: avatarUrl.isNotEmpty
+                  ? NetworkImage(avatarUrl)
+                  : null,
               child: avatarUrl.isEmpty ? const Icon(Icons.person) : null,
             ),
             title: Text(
               name,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+                color: isDarkMode ? Colors.white : Colors.black,
+              ),
             ),
             subtitle: Text(
               'ID: $searchId',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+              style: TextStyle(
+                color: isDarkMode ? Colors.white60 : Colors.grey.shade500,
+                fontSize: 13,
+              ),
             ),
             trailing: extraText != null
                 ? Text(
                     extraText!,
-                    style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    style: TextStyle(
+                      color: isDarkMode ? Colors.white38 : Colors.grey.shade400,
+                      fontSize: 12,
+                    ),
                   )
-                : const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+                : Icon(
+                    Icons.arrow_forward_ios,
+                    size: 14,
+                    color: isDarkMode ? Colors.white38 : Colors.grey,
+                  ),
             onTap: () {
               Navigator.push(
                 context,

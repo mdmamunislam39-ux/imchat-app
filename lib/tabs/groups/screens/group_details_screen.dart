@@ -335,14 +335,16 @@ class GroupDetailsScreen extends GetView<GroupController> {
                         title: Text(member.userId == currentUser.userId
                             ? 'you'.tr
                             : member.fullname),
-                        subtitle: Text('@${member.number}'),
+                        subtitle: Text(member.searchId.isNotEmpty ? 'ID: ${member.searchId}' : 'ID: ${member.userId}'),
                         trailing: Container(
                           margin: const EdgeInsets.only(top: 8),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              // Check member admin status
-                              if (group.isAdmin(member.userId))
+                              // Check member owner / admin status
+                              if (group.isOwner(member.userId))
+                                const OwnerBadge()
+                              else if (group.isAdmin(member.userId))
                                 const AdminBadge(),
                               // Check current user admin status
                               if (isAdmin &&
@@ -361,6 +363,34 @@ class GroupDetailsScreen extends GetView<GroupController> {
         ),
       );
     });
+  }
+}
+
+class OwnerBadge extends StatelessWidget {
+  const OwnerBadge({
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 4,
+        vertical: 2,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFB800),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        'owner'.tr,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
   }
 }
 

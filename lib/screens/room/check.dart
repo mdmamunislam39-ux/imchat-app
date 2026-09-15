@@ -383,8 +383,7 @@ class _VoiceRoomScreen4State extends State<VoiceRoomScreen4>
 
   @override
   void dispose() {
-    _engine.leaveChannel();
-    _engine.release();
+    AgoraService().dispose();
     giftAnimationController.dispose();
     try {
       audioPlayer.dispose();
@@ -1513,7 +1512,7 @@ class _VoiceRoomScreen3State extends State<VoiceRoomScreen3>
                     IconButton(
                       icon:
                           Icon(Icons.sports_esports, color: Colors.greenAccent),
-                      onPressed: () => GameWallBottomSheet.show(context),
+                      onPressed: () => GameWallBottomSheet.show(context, isInAudioRoom: true),
                     ),
                   ],
                 ),

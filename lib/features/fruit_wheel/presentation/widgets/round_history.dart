@@ -61,7 +61,7 @@ class RoundHistory extends StatelessWidget {
               ),
               child: Center(
                 child: item.result == 'sevens'
-                   ? Image.asset('assets/images/77_icon.png', width: isNewest ? 20 : 16)
+                   ? Image.asset('assets/images/77_icon.webp', width: isNewest ? 20 : 16)
                    : Text(
                   _symbolEmoji[item.result] ?? '?',
                   style: TextStyle(fontSize: isNewest ? 16 : 14),

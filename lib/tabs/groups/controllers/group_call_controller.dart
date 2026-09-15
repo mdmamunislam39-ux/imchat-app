@@ -11,6 +11,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:chat_messenger/services/background_service.dart';
 import 'package:chat_messenger/services/agora_token_service.dart';
 import 'package:chat_messenger/services/agora_service.dart';
+import 'package:get_storage/get_storage.dart';
+import 'package:chat_messenger/screens/home/home_screen.dart';
 
 class GroupCallController extends GetxController {
   final Call call;
@@ -105,15 +107,14 @@ class GroupCallController extends GetxController {
     if (permissionsGranted) {
       playRingtone();
 
-      final agoraService = Get.isRegistered<AgoraService>()
-          ? Get.find<AgoraService>()
-          : Get.put(AgoraService());
-      if (agoraService.engine == null) {
-        await agoraService.initialize();
+      final agoraService = AgoraService();
+      agoraService.setChannelMode(AgoraChannelMode.groupCall);
+      if (agoraService.isConnected || agoraService.isConnecting) {
+        try {
+          await agoraService.engine?.leaveChannel();
+        } catch (_) {}
       }
-
-      // Force leave any existing channel (like Voice Room) to avoid ERR_ALREADY_IN_USE on the shared engine
-      await agoraService.leaveChannel();
+      await agoraService.initialize();
 
       engine = agoraService.engine!;
 
@@ -157,9 +158,38 @@ class GroupCallController extends GetxController {
           // Close the call page
           //Future(() => Get.back());
         },
-        onTokenPrivilegeWillExpire: (RtcConnection connection, String token) {
+        onTokenPrivilegeWillExpire: (RtcConnection connection, String token) async {
           debugPrint(
               '[onTokenPrivilegeWillExpire] conn:${connection.toJson()}, token: $token');
+          try {
+            final renewed = await AgoraTokenService.instance.refreshToken(
+              channelName: call.callerId,
+              uid: 0,
+              currentToken: token,
+            );
+            if (renewed != null && renewed.token.isNotEmpty) {
+              await engine.renewToken(renewed.token);
+              debugPrint('[onTokenPrivilegeWillExpire] Group call token renewed successfully');
+            }
+          } catch (e) {
+            debugPrint('[onTokenPrivilegeWillExpire] Failed to renew group call token: $e');
+          }
+        },
+        onRequestToken: (RtcConnection connection) async {
+          debugPrint('[onRequestToken] Group call token requested, renewing...');
+          try {
+            final renewed = await AgoraTokenService.instance.refreshToken(
+              channelName: call.callerId,
+              uid: 0,
+              currentToken: '',
+            );
+            if (renewed != null && renewed.token.isNotEmpty) {
+              await engine.renewToken(renewed.token);
+              debugPrint('[onRequestToken] Group call token renewed successfully');
+            }
+          } catch (e) {
+            debugPrint('[onRequestToken] Failed to renew group call token: $e');
+          }
         },
       );
 
@@ -223,6 +253,9 @@ class GroupCallController extends GetxController {
 
   // End the call and pass the value
   void onEndCall() {
+    try {
+      GetStorage().remove('groupIsActive');
+    } catch (_) {}
     FlutterCallkitIncoming.endAllCalls();
     try {
       if (_eventHandler != null) {
@@ -239,7 +272,15 @@ class GroupCallController extends GetxController {
           .doc(call.callerId)
           .update({'state': 'ended'}).catchError((_) {});
     }
-    Get.back(result: remoteUid.value);
+    try {
+      if (Get.key.currentState?.canPop() ?? false) {
+        Get.back(result: remoteUid.value);
+      } else {
+        Get.offAll(() => HomeScreen());
+      }
+    } catch (_) {
+      Get.offAll(() => HomeScreen());
+    }
   }
 
   // Play Ringtone for outgoing call

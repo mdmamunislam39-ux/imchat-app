@@ -11,6 +11,7 @@ import 'package:get/get.dart';
 import 'package:chat_messenger/config/app_config.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path/path.dart' as path;
@@ -33,16 +34,37 @@ abstract class AppHelper {
     required File file,
     required String userId,
   }) async {
-    // File name
-    final String fileName = path.basename(file.path);
+    if (!await file.exists()) {
+      throw Exception('File does not exist: ${file.path}');
+    }
+
+    // File name with unique prefix
+    final String fileName = '${generateID}_${path.basename(file.path)}';
+
+    final String ext = path.extension(file.path).toLowerCase();
+    String? mimeType;
+    if (ext == '.png') {
+      mimeType = 'image/png';
+    } else if (ext == '.jpg' || ext == '.jpeg') {
+      mimeType = 'image/jpeg';
+    } else if (ext == '.mp4') {
+      mimeType = 'video/mp4';
+    }
+
+    final SettableMetadata? metadata =
+        mimeType != null ? SettableMetadata(contentType: mimeType) : null;
 
     // Upload file
     final UploadTask uploadTask = FirebaseStorage.instance
         .ref()
         .child('uploads/$userId/$fileName')
-        .putFile(file);
-    final TaskSnapshot snapshot = await uploadTask;
+        .putFile(file, metadata);
+
+    debugPrint('AppHelper.uploadFile: uploading uploads/$userId/$fileName (${await file.length()} bytes)');
+    final TaskSnapshot snapshot =
+        await uploadTask.timeout(const Duration(seconds: 45));
     final String url = await snapshot.ref.getDownloadURL();
+    debugPrint('AppHelper.uploadFile: upload finished -> $url');
     return url;
   }
 
@@ -233,34 +255,74 @@ abstract class AppHelper {
   }
 
   // Get Store URL => Google Play / App Store
-  static String get _storeUrl {
-    // Check platform
-    if (Platform.isAndroid) {
-      return "https://play.google.com/store/apps/details?id=${AppConfig.androidPackageName}";
+  static Future<String> getStoreUrl() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final packageName = packageInfo.packageName.isNotEmpty
+          ? packageInfo.packageName
+          : AppConfig.androidPackageName;
+      if (Platform.isAndroid) {
+        return "https://play.google.com/store/apps/details?id=$packageName";
+      } else {
+        return "https://apps.apple.com/app/id${AppConfig.iOsAppId}";
+      }
+    } catch (_) {
+      if (Platform.isAndroid) {
+        return "https://play.google.com/store/apps/details?id=${AppConfig.androidPackageName}";
+      }
+      return "https://apps.apple.com/app/id${AppConfig.iOsAppId}";
     }
-    return "https://apps.apple.com/app/id${AppConfig.iOsAppId}";
   }
 
   /// Share app with friends
   static Future<void> shareApp() async {
-    final String username = AuthController.instance.currentUser.fullname;
+    try {
+      final String username = AuthController.instance.currentUser.fullname;
+      final String storeUrl = await getStoreUrl();
 
-    SharePlus.instance.share(ShareParams(
-      text: 'invite_friend_message'.trParams({
+      final String shareText = 'invite_friend_message'.trParams({
         'appName': AppConfig.appName,
-        'username': '@$username',
+        'username': username,
         'storeName': Platform.isAndroid ? 'Google Play' : 'App Store',
-        'storeUrl': _storeUrl,
-      }),
-    ));
+        'storeUrl': storeUrl,
+      });
+
+      await SharePlus.instance.share(ShareParams(text: shareText));
+    } catch (e) {
+      debugPrint('shareApp() -> error: $e');
+    }
   }
 
   /// Rate app on Google Play / App Store
   static Future<void> rateApp() async {
-    // Get Store Link
-    final String storeLink =
-        Platform.isIOS ? "$_storeUrl?action=write-review" : _storeUrl;
-    await openUrl(storeLink);
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final packageName = packageInfo.packageName.isNotEmpty
+          ? packageInfo.packageName
+          : AppConfig.androidPackageName;
+
+      if (Platform.isAndroid) {
+        final Uri marketUri = Uri.parse("market://details?id=$packageName");
+        if (await canLaunchUrl(marketUri)) {
+          await launchUrl(marketUri, mode: LaunchMode.externalApplication);
+          return;
+        }
+        final String webUrl = "https://play.google.com/store/apps/details?id=$packageName";
+        await openUrl(webUrl);
+      } else if (Platform.isIOS) {
+        final Uri iosMarketUri = Uri.parse("itms-apps://itunes.apple.com/app/id${AppConfig.iOsAppId}?action=write-review");
+        if (await canLaunchUrl(iosMarketUri)) {
+          await launchUrl(iosMarketUri, mode: LaunchMode.externalApplication);
+          return;
+        }
+        final String webUrl = "https://apps.apple.com/app/id${AppConfig.iOsAppId}?action=write-review";
+        await openUrl(webUrl);
+      }
+    } catch (e) {
+      debugPrint('rateApp() -> error: $e');
+      final storeUrl = await getStoreUrl();
+      await openUrl(storeUrl);
+    }
   }
 
   /// Open email app to contact support
@@ -311,7 +373,7 @@ abstract class AppHelper {
       final Uri uri = Uri.parse(url);
 
       if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         debugPrint('Could not launch url: $url');
       }

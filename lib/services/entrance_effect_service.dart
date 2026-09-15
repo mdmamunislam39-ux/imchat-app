@@ -14,9 +14,10 @@ class EntranceEffectService {
     String? userAvatar,
     required String effectId,
     required String effectUrl,
+    required String type,
   }) async {
     try {
-      debugPrint('🎬 [EntranceEffect] Triggering effect for $userName');
+      debugPrint('🎬 [EntranceEffect] Triggering effect of type $type for $userName');
 
       final effect = EntranceEffect(
         userId: userId,
@@ -25,6 +26,7 @@ class EntranceEffectService {
         effectId: effectId,
         effectUrl: effectUrl,
         timestamp: DateTime.now(),
+        type: type,
       );
 
       await _firestore

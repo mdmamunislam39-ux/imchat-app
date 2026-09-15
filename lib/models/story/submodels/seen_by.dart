@@ -16,13 +16,22 @@ class SeenBy {
   });
 
   factory SeenBy.fromMap(Map<String, dynamic> data) {
+    DateTime parsedTime;
+    if (data['time'] is int) {
+      parsedTime = DateTime.fromMillisecondsSinceEpoch(data['time'] as int);
+    } else if (data['time'] != null && data['time'].toString().isNotEmpty) {
+      parsedTime = DateTime.tryParse(data['time'].toString()) ?? DateTime.now();
+    } else {
+      parsedTime = DateTime.now();
+    }
+
     return SeenBy(
-      userId: data['userId'] as String,
-      fullname: data['fullname'] as String,
-      photoUrl: data['photoUrl'] as String,
-      time: DateTime.fromMillisecondsSinceEpoch(data['time'] as int),
-      emoji: data['imoji'] as String,
-      comment: data['comment'] as String,
+      userId: data['userId']?.toString() ?? '',
+      fullname: data['fullname']?.toString() ?? '',
+      photoUrl: data['photoUrl']?.toString() ?? '',
+      time: parsedTime,
+      emoji: (data['imoji'] ?? data['emoji'])?.toString() ?? '',
+      comment: data['comment']?.toString() ?? '',
     );
   }
 
@@ -33,14 +42,15 @@ class SeenBy {
       'photoUrl': photoUrl,
       'time': time.millisecondsSinceEpoch,
       'imoji': emoji,
-      'comment':comment
+      'comment': comment,
     };
   }
 
-  static List<SeenBy> seenByFrom(List listOfMaps) {
-    final seenBy = List<Map<String, dynamic>>.from(listOfMaps);
-    return List<SeenBy>.from(
-      seenBy.map((e) => SeenBy.fromMap(e)).toList(),
-    );
+  static List<SeenBy> seenByFrom(dynamic listOfMaps) {
+    if (listOfMaps == null || listOfMaps is! List) return [];
+    return listOfMaps
+        .whereType<Map>()
+        .map((e) => SeenBy.fromMap(Map<String, dynamic>.from(e)))
+        .toList();
   }
 }

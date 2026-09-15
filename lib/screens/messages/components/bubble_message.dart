@@ -21,6 +21,7 @@ import 'bubbles/call_message.dart';
 import 'bubbles/video_message.dart';
 import 'bubbles/room_share_message.dart';
 import 'bubbles/host_invitation_message.dart';
+import 'bubbles/relationship_invitation_message.dart';
 import 'forwarded_badge.dart';
 import 'read_time_status.dart';
 
@@ -32,6 +33,7 @@ class BubbleMessage extends StatelessWidget {
     required this.onReplyMessage,
     required this.user,
     required this.group,
+    this.isReceiverOnline,
   });
 
   // final bool isGroup;
@@ -42,6 +44,7 @@ class BubbleMessage extends StatelessWidget {
   // final String? profileUrl;
   final Function()? onTapProfile;
   final Function()? onReplyMessage;
+  final RxBool? isReceiverOnline;
 
   @override
   Widget build(BuildContext context) {
@@ -63,7 +66,8 @@ class BubbleMessage extends StatelessWidget {
 
     final Color backgroundColor = isCall ||
             message.type == MessageType.roomShare ||
-            message.type == MessageType.hostInvitation
+            message.type == MessageType.hostInvitation ||
+            message.type == MessageType.relationshipInvitation
         ? Colors.transparent
         : isSender
             ? primaryColor
@@ -104,14 +108,16 @@ class BubbleMessage extends StatelessWidget {
                 ),
           padding: isCall ||
                   message.type == MessageType.roomShare ||
-                  message.type == MessageType.hostInvitation
+                  message.type == MessageType.hostInvitation ||
+                  message.type == MessageType.relationshipInvitation
               ? EdgeInsets.zero
               : const EdgeInsets.fromLTRB(8, 8, 8, 2),
           decoration: BoxDecoration(
             color: backgroundColor,
             borderRadius: isCall ||
                     message.type == MessageType.roomShare ||
-                    message.type == MessageType.hostInvitation
+                    message.type == MessageType.hostInvitation ||
+                    message.type == MessageType.relationshipInvitation
                 ? null
                 : BorderRadius.only(
                     topLeft: Radius.circular(!isSender ? 0 : 12),
@@ -168,8 +174,14 @@ class BubbleMessage extends StatelessWidget {
               ),
               // <-- Show sent time -->
               if (message.type != MessageType.roomShare &&
-                  message.type != MessageType.hostInvitation)
-                ReadTimeStatus(message: message, isGroup: isGroup),
+                  message.type != MessageType.hostInvitation &&
+                  message.type != MessageType.relationshipInvitation)
+                ReadTimeStatus(
+                  message: message,
+                  isGroup: isGroup,
+                  receiver: isGroup ? null : user,
+                  isReceiverOnline: isReceiverOnline,
+                ),
             ],
           ),
               ),
@@ -199,6 +211,7 @@ class BubbleMessage extends StatelessWidget {
             isMissed: isMissed,
             isVideo: isVideo,
             isGroup: isGrp,
+            isReceiverOnline: isReceiverOnline,
           );
         }
         
@@ -238,6 +251,9 @@ class BubbleMessage extends StatelessWidget {
 
       case MessageType.hostInvitation:
         return HostInvitationMessage(message: message, isGroup: group != null);
+
+      case MessageType.relationshipInvitation:
+        return RelationshipInvitationMessage(message: message, isGroup: group != null);
 
       default:
         return const SizedBox.shrink();

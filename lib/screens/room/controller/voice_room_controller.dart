@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 class VoiceRoomController extends GetxController {
   final String initialData;
@@ -20,6 +21,11 @@ class VoiceRoomController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    try {
+      WakelockPlus.enable();
+    } catch (e) {
+      debugPrint('Error enabling wakelock in VoiceRoomController: $e');
+    }
     initializeAgora();
   }
 
@@ -93,7 +99,12 @@ class VoiceRoomController extends GetxController {
 
   @override
   void onClose() {
-    _engine.release();
+    AgoraService().dispose();
+    try {
+      WakelockPlus.disable();
+    } catch (e) {
+      debugPrint('Error disabling wakelock in VoiceRoomController: $e');
+    }
     super.onClose();
   }
 }

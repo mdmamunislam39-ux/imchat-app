@@ -6,6 +6,7 @@ import 'package:chat_messenger/api/message_api.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/models/call.dart';
 import 'package:chat_messenger/models/user.dart';
+import 'package:chat_messenger/models/group.dart';
 import 'package:chat_messenger/routes/app_routes.dart';
 import 'package:chat_messenger/services/push_notification_service.dart';
 
@@ -52,60 +53,69 @@ abstract class CallHelper {
         isVideo ? 'incomming_video_call'.tr : 'incomming_voice_call'.tr;
      
      
-    // Send push notification call
+    // Create call document in Firestore FIRST before sending notification
+    await FirebaseFirestore.instance.collection('Calls').doc(currentUser.userId).set({
+      'callerId': currentUser.userId,
+      'callerName': currentUser.fullname,
+      'callerPhotoUrl': currentUser.photoUrl,
+      // Set receiver info
+      'receiverName': user.fullname,
+      'receiverPhotoUrl': user.photoUrl,
+      'receiverId': user.userId,
+      'state': 'calling'
+    });
+
+    // Save call history
+    CallHistoryApi.saveCall(isVideo: isVideo, receiver: user);
+
+    // Send push notification call SECOND
     PushNotificationService.sendNotification(
       type: NotificationType.call,
       title: currentUser.fullname,
       body: body,
-      //body: '${body} $formattedTime',
       deviceToken: user.deviceToken,
       call: call.toMap(),
     );
-    
-    
 
     // Vars
     dynamic result;
     final Map<String, Call> arguments = {'call': call};
 
-    // Save call history
-    CallHistoryApi.saveCall(isVideo: isVideo, receiver: user);
-
-    // Check call type
+    // Go to call page
     if (isVideo) {
-      await FirebaseFirestore.instance.collection('Calls').doc(currentUser.userId).set({
-        'callerId': currentUser.userId,
-        'callerName': currentUser.fullname,
-        'callerPhotoUrl': currentUser.photoUrl,
-        // Set receiver info
-        'receiverName': user.fullname,
-        'receiverPhotoUrl': user.photoUrl,
-        'receiverId': user.userId,
-        'state': 'calling'
-      });
-      // Go to video call page
       result = await Get.toNamed(AppRoutes.videoCall, arguments: arguments);
     } else {
-      await FirebaseFirestore.instance.collection('Calls').doc(currentUser.userId).set({
-        'callerId': currentUser.userId,
-        'callerName': currentUser.fullname,
-        'callerPhotoUrl': currentUser.photoUrl,
-        // Set receiver info
-        'receiverName': user.fullname,
-        'receiverPhotoUrl': user.photoUrl,
-        'receiverId': user.userId,
-        'state': 'calling'
-      });
-      // Go to voice call page
       result = await Get.toNamed(AppRoutes.voiceCall, arguments: arguments);
-     // CallHistoryApi.saveCall(isVideo: isVideo, receiver: user);
     }
 
-    // Check result to send missed call message
-    if (result == null) {
-      Future.wait([
-        MessageApi.sendMissedCallMessage(isVideo: isVideo, receiver: user),
-        CallHistoryApi.saveMissedCall(isVideo: isVideo, receiver: user),
+    // Process result and save call log to chat & call history
+    if (result is Map<String, dynamic>) {
+      final String status = result['status'] ?? 'canceled';
+      final int duration = result['duration'] ?? 0;
+      final bool isVideoCall = result['isVideo'] ?? isVideo;
+
+      await Future.wait([
+        MessageApi.sendCallLogMessage(
+          isVideo: isVideoCall,
+          receiver: user,
+          status: status,
+          duration: duration,
+        ),
+        if (status == 'missed')
+          CallHistoryApi.saveMissedCall(isVideo: isVideoCall, receiver: user)
+        else
+          CallHistoryApi.saveCall(isVideo: isVideoCall, receiver: user),
+      ]);
+    } else {
+      // Fallback if popped without map (e.g. system back)
+      await Future.wait([
+        MessageApi.sendCallLogMessage(
+          isVideo: isVideo,
+          receiver: user,
+          status: 'canceled',
+          duration: 0,
+        ),
+        CallHistoryApi.saveCall(isVideo: isVideo, receiver: user),
       ]);
     }
   }
@@ -120,6 +130,9 @@ abstract class CallHelper {
   static Future<void> makeGroupCall({
     required bool isVideo,
     required List<User> recipients,  // Multiple recipients
+    String? groupName,
+    String? groupPhotoUrl,
+    Group? group,
   }) async {
     // Get current user
     final User currentUser = AuthController.instance.currentUser;

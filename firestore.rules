@@ -43,6 +43,30 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // paymentMethods collection
+    match /paymentMethods/{paymentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // rechargePackages collection
+    match /rechargePackages/{packageId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Real-time daily game leaderboard for HTML5 games (Greedy Market, Greedy Delicious)
+    match /daily_game_leaderboard/{document=**} {
+      allow read, write: if true;
+    }
+
+    // rechargeOrders collection
+    match /rechargeOrders/{orderId} {
+      allow read: if request.auth != null && (resource == null || request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid && request.resource.data.status == 'Pending';
+      allow update, delete: if isAdmin();
+    }
     
     // other collections ... (fallback rule, assume public read for app function, authenticated write)
     match /{document=**} {

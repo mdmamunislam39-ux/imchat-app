@@ -27,20 +27,50 @@ import '../widgets/diamond_balance.dart';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
 
 
-/// Shows the Fruit Wheel game as a bottom sheet.
-void showFruitWheelSheet(BuildContext context) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    barrierColor: Colors.black54,
-    enableDrag: true,
-    builder: (_) => const FruitWheelSheet(),
-  );
+/// Shows the Fruit Wheel game as a bottom sheet (in voice room) or full screen (outside voice room).
+void showFruitWheelSheet(BuildContext context, {bool isInAudioRoom = true}) {
+  if (!isInAudioRoom) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          backgroundColor: const Color(0xFF0D0020),
+          body: SafeArea(
+            child: Stack(
+              children: [
+                const FruitWheelSheet(isInAudioRoom: false),
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: CircleAvatar(
+                    backgroundColor: Colors.black54,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  } else {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.35),
+      enableDrag: true,
+      builder: (_) => const SafeArea(top: false, bottom: true, child: FruitWheelSheet(isInAudioRoom: true)),
+    );
+  }
 }
 
 class FruitWheelSheet extends StatelessWidget {
-  const FruitWheelSheet({super.key});
+  final bool isInAudioRoom;
+  const FruitWheelSheet({super.key, this.isInAudioRoom = true});
 
   @override
   Widget build(BuildContext context) {
@@ -52,13 +82,14 @@ class FruitWheelSheet extends StatelessWidget {
           firestore: FirebaseFirestore.instance,
         ),
       )..add(ConnectToGame()),
-      child: const _FruitWheelSheetContent(),
+      child: _FruitWheelSheetContent(isInAudioRoom: isInAudioRoom),
     );
   }
 }
 
 class _FruitWheelSheetContent extends StatefulWidget {
-  const _FruitWheelSheetContent();
+  final bool isInAudioRoom;
+  const _FruitWheelSheetContent({this.isInAudioRoom = true});
 
   @override
   State<_FruitWheelSheetContent> createState() =>
@@ -301,7 +332,7 @@ class _FruitWheelSheetContentState extends State<_FruitWheelSheetContent>
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     return Container(
-      height: screenHeight * 0.75,
+      height: screenHeight * (widget.isInAudioRoom ? 0.75 : 1.0),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           colors: [Color(0xFF3A0E6E), Color(0xFF1E0840), Color(0xFF0D0020)],
@@ -892,7 +923,7 @@ class _BetHistoryRow extends StatelessWidget {
                            mainAxisSize: MainAxisSize.min,
                            children: [
                               e.key == 'sevens' 
-                                 ? Image.asset('assets/images/77_icon.png', width: 14) 
+                                 ? Image.asset('assets/images/77_icon.webp', width: 14) 
                                  : Text(symbolEmoji[e.key] ?? e.key),
                               const SizedBox(width: 4),
                               Text('${e.value}', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
@@ -905,7 +936,7 @@ class _BetHistoryRow extends StatelessWidget {
                    children: [
                       const Text('Result: ', style: TextStyle(color: Colors.white54, fontSize: 11)),
                       entry.result == 'sevens' 
-                          ? Image.asset('assets/images/77_icon.png', width: 12) 
+                          ? Image.asset('assets/images/77_icon.webp', width: 12) 
                           : Text(resultEmoji, style: const TextStyle(fontSize: 11)),
                    ]
                 ),

@@ -12,6 +12,7 @@ class Gift extends Equatable {
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isActive;
+  final int? showingTimeSeconds;
 
   const Gift({
     required this.id,
@@ -23,6 +24,7 @@ class Gift extends Equatable {
     required this.createdAt,
     required this.updatedAt,
     this.isActive = true,
+    this.showingTimeSeconds,
   });
 
   /// Create from JSON
@@ -37,6 +39,9 @@ class Gift extends Equatable {
       createdAt: _parseTimestamp(json['createdAt']),
       updatedAt: _parseTimestamp(json['updatedAt']),
       isActive: json['isActive'] ?? true,
+      showingTimeSeconds: json['showingTimeSeconds'] is int
+          ? json['showingTimeSeconds']
+          : int.tryParse(json['showingTimeSeconds']?.toString() ?? json['showingTime']?.toString() ?? ''),
     );
   }
 
@@ -63,6 +68,7 @@ class Gift extends Equatable {
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
       'isActive': isActive,
+      if (showingTimeSeconds != null) 'showingTimeSeconds': showingTimeSeconds,
     };
   }
 
@@ -77,6 +83,7 @@ class Gift extends Equatable {
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? isActive,
+    int? showingTimeSeconds,
   }) {
     return Gift(
       id: id ?? this.id,
@@ -88,6 +95,7 @@ class Gift extends Equatable {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isActive: isActive ?? this.isActive,
+      showingTimeSeconds: showingTimeSeconds ?? this.showingTimeSeconds,
     );
   }
 
@@ -102,6 +110,7 @@ class Gift extends Equatable {
         createdAt,
         updatedAt,
         isActive,
+        showingTimeSeconds,
       ];
 }
 
@@ -155,9 +164,7 @@ class GiftTransaction extends Equatable {
       receiverImageUrl: json['receiverImageUrl'],
       roomId: json['roomId'] ?? '',
       credits: json['credits'] ?? 0,
-      timestamp: json['timestamp'] is Timestamp
-          ? (json['timestamp'] as Timestamp).toDate()
-          : DateTime.parse(json['timestamp'] ?? DateTime.now().toIso8601String()),
+      timestamp: Gift._parseTimestamp(json['timestamp']),
     );
   }
 

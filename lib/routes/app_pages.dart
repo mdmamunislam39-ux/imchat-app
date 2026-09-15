@@ -10,8 +10,11 @@ import 'package:chat_messenger/tabs/groups/screens/create_group_screen.dart';
 import 'package:chat_messenger/tabs/groups/screens/groups_screen.dart';
 import 'package:chat_messenger/tabs/groups/screens/edit_group_screen.dart';
 import 'package:chat_messenger/tabs/groups/screens/group_details_screen.dart';
+import 'package:chat_messenger/tabs/groups/screens/group_video_call.dart';
 import 'package:chat_messenger/tabs/profile/edit_profile_screen.dart';
 import 'package:chat_messenger/tabs/profile/profile_view_screen.dart';
+import 'package:chat_messenger/tabs/stories/add_story_screen.dart';
+import 'package:chat_messenger/tabs/stories/story_editor_screen.dart';
 import 'package:chat_messenger/tabs/stories/story_view_screen.dart';
 import 'package:chat_messenger/tabs/stories/write_story_screen.dart';
 import 'package:get/get.dart';
@@ -135,6 +138,20 @@ abstract class AppPages {
       },
     ),
     GetPage(
+      name: AppRoutes.groupCall,
+      page: () {
+        final args = Get.arguments;
+        final Call call = args['call'];
+        final bool isVideo = args['isVideo'] ?? call.isVideo;
+        final List<User>? recipients = args['recipients'];
+        return GroupCallScreen(
+          isVideo: isVideo,
+          call: call,
+          recipients: recipients,
+        );
+      },
+    ),
+    GetPage(
       name: AppRoutes.session,
       page: () => const SesssionScreen(),
     ),
@@ -148,7 +165,7 @@ abstract class AppPages {
     ),
     GetPage(
       name: AppRoutes.contacts,
-      page: () => const ContactsScreen(),
+      page: () => const ContactsScreen(showAppBar: true),
     ),
     GetPage(
       name: AppRoutes.groups,
@@ -203,6 +220,17 @@ abstract class AppPages {
     GetPage(
       name: AppRoutes.writeStory,
       page: () => const WriteStoryScreen(),
+    ),
+    GetPage(
+      name: AppRoutes.addStory,
+      page: () => const AddStoryScreen(),
+    ),
+    GetPage(
+      name: AppRoutes.storyEditor,
+      page: () {
+        final args = Get.arguments;
+        return StoryEditorScreen(imageFile: args['imageFile']);
+      },
     ),
     GetPage(
       name: AppRoutes.storyView,

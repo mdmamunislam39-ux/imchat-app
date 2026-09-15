@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:chat_messenger/api/official_team_api.dart';
 
 /// Clean follow service with proper error handling
 class FollowService {
@@ -46,6 +48,20 @@ class FollowService {
         targetUserRef.set({'followers': FieldValue.increment(1)}, SetOptions(merge: true)).timeout(const Duration(seconds: 15)),
       ]);
       
+      // Trigger follow notification & sound feedback
+      try {
+        final senderDoc = await _firestore.collection('Users').doc(currentUserId).get();
+        final senderName = senderDoc.data()?['fullname'] ?? senderDoc.data()?['displayName'] ?? 'User';
+        OfficialTeamApi.sendFollowNotification(
+          receiverId: targetUserId,
+          senderName: senderName,
+        );
+        final player = AudioPlayer();
+        await player.play(AssetSource('sounds/sent_msg.mp3'));
+      } catch (soundErr) {
+        debugPrint('Sound/notification error on follow: $soundErr');
+      }
+
       debugPrint('✅ Successfully followed user: $targetUserId');
       return FollowResult.success('Successfully followed user');
     } catch (e) {

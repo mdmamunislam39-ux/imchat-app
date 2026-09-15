@@ -3,6 +3,7 @@ import 'package:flutter_iconly/flutter_iconly.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/screens/messages/components/rich_text_message.dart';
+import 'package:chat_messenger/screens/messages/components/read_time_status.dart';
 import 'package:get/get.dart';
 
 class MessageBadge extends StatelessWidget {
@@ -21,6 +22,57 @@ class MessageBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (type == MessageType.text && ReadTimeStatus.isCallMessage(textMsg)) {
+      final isVideo = textMsg.toLowerCase().contains('video') || textMsg.startsWith('📹');
+      final isMissed = textMsg.toLowerCase().contains('missed') || textMsg.startsWith('📹') || textMsg.startsWith('🎤');
+      
+      String displayTitle = isVideo ? 'Video call' : 'Audio call';
+      if (textMsg.startsWith('call|')) {
+        final parts = textMsg.split('|');
+        final status = parts.length > 2 ? parts[2] : '';
+        final dur = parts.length > 3 ? int.tryParse(parts[3]) ?? 0 : 0;
+        if (status == 'missed') {
+          displayTitle = isVideo ? 'Missed Video Call' : 'Missed Audio Call';
+        } else if (status == 'canceled') {
+          displayTitle = 'Canceled Call';
+        } else if (status == 'rejected') {
+          displayTitle = 'Rejected Call';
+        } else if (dur > 0) {
+          final m = dur ~/ 60;
+          final s = dur % 60;
+          final durStr = m > 0 ? (s > 0 ? '$m min $s sec' : '$m min') : '$s sec';
+          displayTitle = '${isVideo ? 'Video call' : 'Audio call'} ($durStr)';
+        }
+      } else if (isMissed) {
+        displayTitle = isVideo ? 'Missed Video Call' : 'Missed Audio Call';
+      }
+
+      final icon = isMissed
+          ? Icons.call_missed
+          : (isVideo ? Icons.videocam : Icons.call);
+      final color = isMissed ? Colors.red : greyColor;
+
+      return Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 5),
+            child: Icon(icon, size: 20, color: color),
+          ),
+          Expanded(
+            child: RichTexMessage(
+              text: displayTitle,
+              maxLines: maxLines,
+              defaultStyle: textStyle ??
+                  const TextStyle(
+                    fontSize: 14,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+            ),
+          ),
+        ],
+      );
+    }
+
     return switch (type) {
       MessageType.text => rowInfo(title: textMsg),
       MessageType.image => rowInfo(icon: Icons.image, title: 'photo'.tr),

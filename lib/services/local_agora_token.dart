@@ -14,8 +14,8 @@ class RtcTokenBuilder {
     required String appCertificate,
     required String channelName,
     required int uid,
-    int tokenExpireSeconds = 3600,
-    int privilegeExpireSeconds = 3600,
+    int tokenExpireSeconds = 86400,
+    int privilegeExpireSeconds = 86400,
   }) {
     final now = (DateTime.now().millisecondsSinceEpoch / 1000).floor();
     final issueTs = now;

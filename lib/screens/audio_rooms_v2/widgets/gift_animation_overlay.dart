@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_svga/flutter_svga.dart';
 import '../../../AdminPane/models/gift.dart';
 import 'package:video_player/video_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'dart:ui' as ui;
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-import '../../../widgets/alpha_video_player.dart';
+import '../../../components/universal_asset_widget.dart';
+import '../../../vap/vap_widget.dart';
 
 /// Class for grouping identical multi-recipient transactions
 class GroupedGiftTransaction {
@@ -24,12 +25,14 @@ class GroupedGiftTransaction {
 class GiftAnimationOverlay extends StatefulWidget {
   final List<GiftTransaction> transactions;
   final VoidCallback? onAnimationComplete;
+  final Function(GiftTransaction transaction)? onTransactionFinished;
   final Function(GiftTransaction transaction, List<String> receiverIds)? onGiftFlightTriggered;
 
   const GiftAnimationOverlay({
     super.key,
     required this.transactions,
     this.onAnimationComplete,
+    this.onTransactionFinished,
     this.onGiftFlightTriggered,
   });
 
@@ -44,22 +47,31 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
   bool _isProcessing = false;
   VideoPlayerController? _videoController;
   SVGAAnimationController? _svgaController;
-  ui.FragmentShader? _shader;
+
+  static final Map<String, Uint8List> _svgaBytesCache = {};
+
+  Future<dynamic> _loadSvgaWithCache(String url) async {
+    try {
+      Uint8List? bytes = _svgaBytesCache[url];
+      if (bytes == null) {
+        final file = await DefaultCacheManager()
+            .getSingleFile(url)
+            .timeout(const Duration(seconds: 4));
+        bytes = await file.readAsBytes();
+        _svgaBytesCache[url] = bytes;
+      }
+      final parser = SVGAParser();
+      return await parser.decodeFromBuffer(bytes);
+    } catch (_) {
+      final parser = SVGAParser();
+      return await parser.decodeFromURL(url).timeout(const Duration(seconds: 3));
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadShader();
     _addTransactions(widget.transactions);
-  }
-
-  Future<void> _loadShader() async {
-    final program = await AlphaVideoShaderManager.instance.getProgram();
-    if (program != null && mounted) {
-      setState(() {
-        _shader = program.fragmentShader();
-      });
-    }
   }
 
   @override
@@ -73,6 +85,16 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
     for (final transaction in transactions) {
       if (!_processedIds.contains(transaction.id)) {
         _processedIds.add(transaction.id);
+
+        // Combo hits and simple gifts without SVGA animation skip full-screen playback queue
+        if (transaction.giftSvgaUrl == null || transaction.giftSvgaUrl!.trim().isEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            widget.onGiftFlightTriggered?.call(transaction, [transaction.receiverId]);
+            widget.onTransactionFinished?.call(transaction);
+          });
+          continue;
+        }
 
         // Group together transactions that represent the same physical gift event
         // (same sender, same gift ID, timestamp within 1.5 seconds)
@@ -154,16 +176,17 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
           '🎁 [GiftAnimation] Processing grouped gift: ${transaction.primaryTransaction.giftName} for ${transaction.receiverIds.length} users');
 
       final url = transaction.primaryTransaction.giftSvgaUrl?.toLowerCase() ?? '';
-      final isMp4 = url.contains('.mp4');
+      final isVap = url.contains('.vap');
+      final isMp4 = url.contains('.mp4') || isVap;
       final isPng = url.contains('.png');
-      Duration duration = const Duration(seconds: 4); // Default fallback
 
       if (isMp4) {
         _videoController?.dispose();
 
         // Cache the file locally to guarantee instant playback
         File cachedFile = await DefaultCacheManager()
-            .getSingleFile(transaction.primaryTransaction.giftSvgaUrl!);
+            .getSingleFile(transaction.primaryTransaction.giftSvgaUrl!)
+            .timeout(const Duration(seconds: 5));
             
         // Critical Fix: Android's MediaExtractor fails to decode the video track 
         // if the file doesn't have an .mp4 extension, resulting in audio-only black screens.
@@ -191,49 +214,69 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
           // Instantly trigger a rebuild once the controller is initialized so the player is displayed immediately!
           setState(() {});
 
-          final Completer<void> videoCompleter = Completer<void>();
-          _videoController!.addListener(() {
-            if (_videoController == null) return;
-            
-            if (_videoController!.value.hasError) {
-              debugPrint('❌ [GiftAnimation] MP4 player error during playback: ${_videoController!.value.errorDescription}');
-              if (!videoCompleter.isCompleted) {
-                videoCompleter.complete();
+          if (isVap && Theme.of(context).platform == TargetPlatform.android) {
+            final duration = _videoController!.value.duration;
+            await Future.delayed(duration);
+            debugPrint('🎁 [GiftAnimation] VAP Android native playback finished via duration timer: $duration');
+          } else {
+            final Completer<void> videoCompleter = Completer<void>();
+            _videoController!.addListener(() {
+              if (_videoController == null) return;
+              
+              if (_videoController!.value.hasError) {
+                debugPrint('❌ [GiftAnimation] MP4 player error during playback: ${_videoController!.value.errorDescription}');
+                if (!videoCompleter.isCompleted) {
+                  videoCompleter.complete();
+                }
+              } else {
+                final pos = _videoController!.value.position;
+                final dur = _videoController!.value.duration;
+                if ((dur > Duration.zero && pos >= dur) ||
+                    (pos > const Duration(milliseconds: 500) && !_videoController!.value.isPlaying)) {
+                  if (!videoCompleter.isCompleted) {
+                    videoCompleter.complete();
+                  }
+                }
               }
-            } else if (_videoController!.value.position >= _videoController!.value.duration &&
-                !_videoController!.value.isPlaying) {
-              if (!videoCompleter.isCompleted) {
-                videoCompleter.complete();
-              }
-            }
-          });
+            });
 
-          await _videoController!.play();
-          if (!mounted) {
-            _videoController?.dispose();
-            _videoController = null;
-            return;
+            await _videoController!.play();
+            if (!mounted) {
+              _videoController?.dispose();
+              _videoController = null;
+              return;
+            }
+            final duration = _videoController!.value.duration;
+            final safeTimeout = duration > Duration.zero
+                ? duration + const Duration(milliseconds: 800)
+                : const Duration(seconds: 4);
+
+            await videoCompleter.future.timeout(
+              safeTimeout,
+              onTimeout: () {
+                debugPrint('⏱️ [GiftAnimation] MP4 player timeout after ${safeTimeout.inMilliseconds}ms - advancing');
+              },
+            );
+            debugPrint('🎁 [GiftAnimation] MP4 playback finished');
           }
-          await videoCompleter.future;
-          debugPrint('🎁 [GiftAnimation] MP4 playback finished via callback');
         } catch (e) {
           debugPrint('❌ [GiftAnimation] Video initialize error: $e');
         }
       } else if (isPng) {
-        await Future.delayed(const Duration(seconds: 4));
-        debugPrint('🎁 [GiftAnimation] PNG duration fallback: 4000ms');
+        final Duration fallbackDuration = _queue.isNotEmpty
+            ? const Duration(milliseconds: 600)
+            : const Duration(milliseconds: 1200);
+        await Future.delayed(fallbackDuration);
+        debugPrint('🎁 [GiftAnimation] PNG duration fallback: ${fallbackDuration.inMilliseconds}ms');
       } else {
-        final parser = SVGAParser();
         dynamic videoItem;
 
-        // 1. Wait for SVGA to load/decode
+        // 1. Wait for SVGA to load/decode (using memory cache)
         try {
-          if (transaction.primaryTransaction.giftSvgaUrl != null &&
-              transaction.primaryTransaction.giftSvgaUrl!.isNotEmpty) {
-            videoItem = await parser
-                .decodeFromURL(transaction.primaryTransaction.giftSvgaUrl!);
+          final svgaUrl = transaction.primaryTransaction.giftSvgaUrl;
+          if (svgaUrl != null && svgaUrl.isNotEmpty) {
+            videoItem = await _loadSvgaWithCache(svgaUrl);
           } else {
-            debugPrint('🎁 [GiftAnimation] No SVGA URL, skipping animation to prevent OOM');
             videoItem = null;
           }
         } catch (e) {
@@ -260,10 +303,27 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
           setState(() {}); // Trigger rebuild to show SVGAImage
 
           _svgaController!.forward(); // Play exactly once
-          await svgaCompleter.future;
-          debugPrint('🎁 [GiftAnimation] SVGA playback finished via callback');
+
+          int durationMs = 3000;
+          try {
+            final int frames = (videoItem.frames ?? 60) as int;
+            final int fps = (videoItem.FPS ?? 20) as int;
+            final calcMs = ((frames / (fps > 0 ? fps : 20)) * 1000).toInt() + 500;
+            durationMs = calcMs.clamp(1000, 8000);
+          } catch (_) {}
+
+          await svgaCompleter.future.timeout(
+            Duration(milliseconds: durationMs),
+            onTimeout: () {
+              debugPrint('⏱️ [GiftAnimation] SVGA completer timeout after ${durationMs}ms - advancing');
+            },
+          );
+          debugPrint('🎁 [GiftAnimation] SVGA playback finished');
         } else {
-          await Future.delayed(const Duration(seconds: 4)); // fallback
+          final Duration fallbackDuration = _queue.isNotEmpty
+              ? const Duration(milliseconds: 600)
+              : const Duration(milliseconds: 1200);
+          await Future.delayed(fallbackDuration);
         }
       }
 
@@ -275,7 +335,7 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
       }
     } catch (e) {
       debugPrint('❌ [GiftAnimation] Error processing gift: $e');
-      await Future.delayed(const Duration(seconds: 4));
+      await Future.delayed(const Duration(milliseconds: 300));
       if (!mounted) return;
       if (widget.onGiftFlightTriggered != null) {
         widget.onGiftFlightTriggered!(
@@ -283,21 +343,31 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
       }
     }
 
-    // 4. Clear current and process next
+    // 4. Notify transaction finished, clear current and process next
     if (mounted) {
+      widget.onTransactionFinished?.call(transaction.primaryTransaction);
+
+      final vToDispose = _videoController;
+      _videoController = null;
+      final sToDispose = _svgaController;
+      _svgaController = null;
+
       setState(() {
         _currentTransaction = null;
       });
-      try {
-        _videoController?.dispose();
-      } catch (_) {}
-      _videoController = null;
-      try {
-        _svgaController?.dispose();
-      } catch (_) {}
-      _svgaController = null;
+
+      // Dispose controllers after the frame unmounts to prevent paint assertion errors
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        try {
+          vToDispose?.dispose();
+        } catch (_) {}
+        try {
+          sToDispose?.dispose();
+        } catch (_) {}
+      });
+
       // Small delay before next gift to prevent overlap/flicker
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(const Duration(milliseconds: 100));
       if (mounted) {
         _processQueue();
       }
@@ -321,6 +391,8 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
     super.dispose();
   }
 
+
+
   @override
   Widget build(BuildContext context) {
     if (_currentTransaction == null) {
@@ -334,47 +406,23 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
     );
   }
 
-  Widget _buildSVGAAnimation(GiftTransaction transaction) {
+Widget _buildSVGAAnimation(GiftTransaction transaction) {
     final url = transaction.giftSvgaUrl?.toLowerCase() ?? '';
 
-    if (url.contains('.mp4')) {
+    if (url.contains('.vap') && Theme.of(context).platform == TargetPlatform.android) {
+      return VapWidget(
+        url: transaction.giftSvgaUrl!,
+        fit: BoxFit.contain,
+      );
+    } else if (url.contains('.mp4') || url.contains('.vap')) {
       if (_videoController == null || !_videoController!.value.isInitialized) {
         return const SizedBox.shrink();
       }
 
-      Widget videoWidget = SizedBox.expand(
-        child: FittedBox(
-          fit: BoxFit.contain,
-          child: SizedBox(
-            width: _videoController!.value.size.width,
-            height: _videoController!.value.size.height,
-            child: VideoPlayer(_videoController!),
-          ),
-        ),
+      return AlphaVideoPlayer(
+        controller: _videoController!,
+        fit: BoxFit.contain,
       );
-
-      if (_shader != null) {
-        final double aspect = _videoController!.value.aspectRatio / 2; // Horizontal side-by-side
-        return Center(
-          child: AspectRatio(
-            aspectRatio: aspect,
-            child: ShaderMask(
-              blendMode: BlendMode.src,
-              shaderCallback: (Rect bounds) {
-                final shader = _shader!;
-                shader.setFloat(0, bounds.width);  // uSize.x
-                shader.setFloat(1, bounds.height); // uSize.y
-                shader.setFloat(2, 0.0); // uLayout (0.0 = horizontal)
-                return shader;
-              },
-              child: videoWidget,
-            ),
-          ),
-        );
-      }
-
-      // Fallback if shader is not loaded yet
-      return videoWidget;
     } else if (url.contains('.png')) {
       return SizedBox(
         width: double.infinity,

@@ -174,17 +174,19 @@ class SignUpScreen extends GetView<SignUpController> {
         ),
       ),
       bottomNavigationBar: Obx(
-        () => Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: defaultPadding,
-            vertical: defaultPadding * 2,
-          ),
-          child: DefaultButton(
-            height: 45,
-            isLoading: controller.isLoading.value,
-            width: double.maxFinite,
-            text: 'create_account'.tr.toUpperCase(),
-            onPress: () => controller.signUp(number),
+        () => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: defaultPadding,
+              vertical: defaultPadding * 2,
+            ),
+            child: DefaultButton(
+              height: 45,
+              isLoading: controller.isLoading.value,
+              width: double.maxFinite,
+              text: 'create_account'.tr.toUpperCase(),
+              onPress: () => controller.signUp(number),
+            ),
           ),
         ),
       ),

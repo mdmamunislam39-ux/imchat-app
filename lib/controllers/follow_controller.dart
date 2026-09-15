@@ -7,7 +7,7 @@ class FollowController extends ChangeNotifier {
   final Map<String, int> _followerCounts = {};
   final Map<String, bool> _loadingStates = {};
   final Map<String, DateTime> _lastToggleTimes = {};
-  
+
   // Spam protection: minimum time between toggles (in milliseconds)
   static const int _minToggleInterval = 1000; // 1 second
 
@@ -15,12 +15,12 @@ class FollowController extends ChangeNotifier {
   bool isFollowing(String userId) => _followStatus[userId] ?? false;
   int getFollowerCount(String userId) => _followerCounts[userId] ?? 0;
   bool isLoading(String userId) => _loadingStates[userId] ?? false;
-  
+
   /// Check if enough time has passed since last toggle (spam protection)
   bool canToggle(String userId) {
     final lastToggle = _lastToggleTimes[userId];
     if (lastToggle == null) return true;
-    
+
     final now = DateTime.now();
     final timeDiff = now.difference(lastToggle).inMilliseconds;
     return timeDiff >= _minToggleInterval;
@@ -37,6 +37,7 @@ class FollowController extends ChangeNotifier {
     required String currentUserId,
     required String targetUserId,
   }) async {
+    if (_isDisposed) return;
     try {
       _loadingStates[targetUserId] = true;
       notifyListeners();
@@ -46,6 +47,8 @@ class FollowController extends ChangeNotifier {
         targetUserId: targetUserId,
       );
 
+      if (_isDisposed) return;
+
       debugPrint('🔍 [FollowController] Server response: ${result.data}');
       debugPrint('🔍 [FollowController] Is success: ${result.isSuccess}');
       debugPrint('🔍 [FollowController] Message: ${result.message}');
@@ -53,23 +56,32 @@ class FollowController extends ChangeNotifier {
       if (result.isSuccess) {
         final isFollowing = result.data == 'true';
         _followStatus[targetUserId] = isFollowing;
-        debugPrint('🔍 [FollowController] Set follow status for $targetUserId: $isFollowing');
+        debugPrint(
+            '🔍 [FollowController] Set follow status for $targetUserId: $isFollowing');
       } else {
-        debugPrint('❌ Error loading follow status from server: ${result.message}');
+        debugPrint(
+            '❌ Error loading follow status from server: ${result.message}');
         _followStatus[targetUserId] = false;
       }
 
+      if (_isDisposed) return;
+
       // Load follower count
       final countResult = await FollowService.getFollowerCount(targetUserId);
-      if (countResult.isSuccess) {
-        _followerCounts[targetUserId] = int.tryParse(countResult.data ?? '0') ?? 0;
+      if (!_isDisposed && countResult.isSuccess) {
+        _followerCounts[targetUserId] =
+            int.tryParse(countResult.data ?? '0') ?? 0;
       }
     } catch (e) {
       debugPrint('❌ Exception loading follow status from server: $e');
-      _followStatus[targetUserId] = false;
+      if (!_isDisposed) {
+        _followStatus[targetUserId] = false;
+      }
     } finally {
-      _loadingStates[targetUserId] = false;
-      notifyListeners();
+      if (!_isDisposed) {
+        _loadingStates[targetUserId] = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -78,8 +90,11 @@ class FollowController extends ChangeNotifier {
     required String currentUserId,
     required String targetUserId,
   }) async {
+    if (_isDisposed) return;
+
     // Don't reload if already loaded and not loading
-    if (_followStatus.containsKey(targetUserId) && !_loadingStates[targetUserId]!) {
+    if (_followStatus.containsKey(targetUserId) &&
+        !(_loadingStates[targetUserId] ?? false)) {
       return;
     }
 
@@ -92,6 +107,8 @@ class FollowController extends ChangeNotifier {
         targetUserId: targetUserId,
       );
 
+      if (_isDisposed) return;
+
       if (result.isSuccess) {
         _followStatus[targetUserId] = result.data == 'true';
       } else {
@@ -99,17 +116,24 @@ class FollowController extends ChangeNotifier {
         _followStatus[targetUserId] = false;
       }
 
+      if (_isDisposed) return;
+
       // Load follower count
       final countResult = await FollowService.getFollowerCount(targetUserId);
-      if (countResult.isSuccess) {
-        _followerCounts[targetUserId] = int.tryParse(countResult.data ?? '0') ?? 0;
+      if (!_isDisposed && countResult.isSuccess) {
+        _followerCounts[targetUserId] =
+            int.tryParse(countResult.data ?? '0') ?? 0;
       }
     } catch (e) {
       debugPrint('❌ Exception loading follow status: $e');
-      _followStatus[targetUserId] = false;
+      if (!_isDisposed) {
+        _followStatus[targetUserId] = false;
+      }
     } finally {
-      _loadingStates[targetUserId] = false;
-      notifyListeners();
+      if (!_isDisposed) {
+        _loadingStates[targetUserId] = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -122,8 +146,10 @@ class FollowController extends ChangeNotifier {
       // Spam protection: check if enough time has passed
       if (!canToggle(targetUserId)) {
         final lastToggle = _lastToggleTimes[targetUserId];
-        final timeLeft = _minToggleInterval - DateTime.now().difference(lastToggle!).inMilliseconds;
-        return FollowResult.error('Please wait ${(timeLeft / 1000).ceil()} seconds before toggling again');
+        final timeLeft = _minToggleInterval -
+            DateTime.now().difference(lastToggle!).inMilliseconds;
+        return FollowResult.error(
+            'Please wait ${(timeLeft / 1000).ceil()} seconds before toggling again');
       }
 
       // Check if already loading
@@ -132,14 +158,16 @@ class FollowController extends ChangeNotifier {
       }
 
       final isCurrentlyFollowing = _followStatus[targetUserId] ?? false;
-      
+
       // INSTANT UI UPDATE - Update UI immediately without loading state
       _followStatus[targetUserId] = !isCurrentlyFollowing;
       _lastToggleTimes[targetUserId] = DateTime.now();
       if (!isCurrentlyFollowing) {
-        _followerCounts[targetUserId] = (_followerCounts[targetUserId] ?? 0) + 1;
+        _followerCounts[targetUserId] =
+            (_followerCounts[targetUserId] ?? 0) + 1;
       } else {
-        _followerCounts[targetUserId] = (_followerCounts[targetUserId] ?? 0) - 1;
+        _followerCounts[targetUserId] =
+            (_followerCounts[targetUserId] ?? 0) - 1;
       }
       notifyListeners();
 
@@ -161,9 +189,11 @@ class FollowController extends ChangeNotifier {
       if (!result.isSuccess) {
         _followStatus[targetUserId] = isCurrentlyFollowing;
         if (isCurrentlyFollowing) {
-          _followerCounts[targetUserId] = (_followerCounts[targetUserId] ?? 0) + 1;
+          _followerCounts[targetUserId] =
+              (_followerCounts[targetUserId] ?? 0) + 1;
         } else {
-          _followerCounts[targetUserId] = (_followerCounts[targetUserId] ?? 0) - 1;
+          _followerCounts[targetUserId] =
+              (_followerCounts[targetUserId] ?? 0) - 1;
         }
         notifyListeners();
       }
@@ -171,18 +201,30 @@ class FollowController extends ChangeNotifier {
       return result;
     } catch (e) {
       debugPrint('❌ Exception in toggleFollow: $e');
-      
+
       // Revert optimistic update on error
       final isCurrentlyFollowing = _followStatus[targetUserId] ?? false;
       _followStatus[targetUserId] = !isCurrentlyFollowing;
       if (isCurrentlyFollowing) {
-        _followerCounts[targetUserId] = (_followerCounts[targetUserId] ?? 0) + 1;
+        _followerCounts[targetUserId] =
+            (_followerCounts[targetUserId] ?? 0) + 1;
       } else {
-        _followerCounts[targetUserId] = (_followerCounts[targetUserId] ?? 0) - 1;
+        _followerCounts[targetUserId] =
+            (_followerCounts[targetUserId] ?? 0) - 1;
       }
       notifyListeners();
-      
+
       return FollowResult.error('An unexpected error occurred: $e');
+    }
+  }
+
+  bool _isDisposed = false;
+  bool get isDisposed => _isDisposed;
+
+  @override
+  void notifyListeners() {
+    if (!_isDisposed) {
+      super.notifyListeners();
     }
   }
 
@@ -206,7 +248,11 @@ class FollowController extends ChangeNotifier {
 
   @override
   void dispose() {
-    clear();
+    _isDisposed = true;
+    _followStatus.clear();
+    _followerCounts.clear();
+    _loadingStates.clear();
+    _lastToggleTimes.clear();
     super.dispose();
   }
 }

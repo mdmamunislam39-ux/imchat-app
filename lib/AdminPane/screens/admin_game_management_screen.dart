@@ -20,6 +20,7 @@ class _AdminGameManagementScreenState extends State<AdminGameManagementScreen> {
 
   bool _isEditing = false;
   String? _editingGameId;
+  bool _editingGameIsActive = true;
 
   @override
   void dispose() {
@@ -34,6 +35,7 @@ class _AdminGameManagementScreenState extends State<AdminGameManagementScreen> {
     setState(() {
       _isEditing = false;
       _editingGameId = null;
+      _editingGameIsActive = true;
       _nameController.clear();
       _thumbnailUrlController.clear();
       _gameUrlController.clear();
@@ -45,6 +47,7 @@ class _AdminGameManagementScreenState extends State<AdminGameManagementScreen> {
     setState(() {
       _isEditing = true;
       _editingGameId = game.id;
+      _editingGameIsActive = game.isActive;
       _nameController.text = game.name;
       _thumbnailUrlController.text = game.thumbnailUrl;
       _gameUrlController.text = game.gameUrl;
@@ -65,6 +68,7 @@ class _AdminGameManagementScreenState extends State<AdminGameManagementScreen> {
         thumbnailUrl: _thumbnailUrlController.text,
         gameUrl: _gameUrlController.text,
         winRatio: winRatio,
+        isActive: _isEditing ? _editingGameIsActive : true,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
       );
@@ -166,8 +170,9 @@ class _AdminGameManagementScreenState extends State<AdminGameManagementScreen> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please enter win ratio';
+                    }
                     final num = double.tryParse(value);
                     if (num == null || num < 0 || num > 1) {
                       return 'Must be between 0.0 and 1.0';

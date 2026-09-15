@@ -17,7 +17,9 @@ import 'package:chat_messenger/services/background_service.dart';
 import 'package:chat_messenger/services/global_settings_service.dart';
 import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
+import 'package:get_storage/get_storage.dart';
 import 'package:chat_messenger/services/firebase_messaging_service.dart';
+import 'package:chat_messenger/services/premium_room_service.dart';
 import 'package:flutter/services.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 
@@ -27,9 +29,14 @@ bool isDebugMode() {
   return inDebug;
 }
 
-final navigatorKey = GlobalKey<NavigatorState>();
+final navigatorKey = Get.key;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await GetStorage.init();
+  } catch (e) {
+    debugPrint('⚠️ GetStorage.init() error: $e');
+  }
   MobileAds.instance.initialize();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
@@ -48,6 +55,9 @@ void main() async {
     
     debugPrint('🔄 Initializing AppThemeService...');
     Get.put(AppThemeService());
+
+    debugPrint('🔄 Initializing PremiumRoomService...');
+    Get.put(PremiumRoomService(), permanent: true);
 
     debugPrint('🔄 Initializing DeepLinkService...');
     await Get.putAsync(() => DeepLinkService().init());

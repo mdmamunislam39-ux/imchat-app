@@ -79,6 +79,14 @@ class RichTexMessage extends StatelessWidget {
             );
           },
         ),
+        // Mentions (@User)
+        EasyRichTextPattern(
+          targetString: r'@[A-Za-z0-9_.\u0980-\u09FF\s]+',
+          style: const TextStyle(
+            color: primaryColor,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
     );
   }

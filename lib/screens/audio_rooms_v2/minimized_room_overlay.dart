@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../models/audio_room_v2.dart';
 import 'minimized_room_controller.dart';
 import 'audio_room_screen.dart';
 import 'bloc/audio_rooms_bloc.dart';
@@ -144,105 +145,117 @@ class _FloatingRoomOverlayState extends State<_FloatingRoomOverlay> {
     }
   }
 
-  Widget _buildFloatingWidget(room) {
+  Widget _buildFloatingWidget(AudioRoomV2 room) {
     return Container(
-      width: 60,
-      height: 60,
+      width: 74,
+      height: 74,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        shape: BoxShape.circle,
+        color: const Color(0xFFF5F5F8),
+        borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 10,
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 16,
             spreadRadius: 2,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: Colors.white.withValues(alpha: 0.9),
+            blurRadius: 8,
+            spreadRadius: -2,
+            offset: const Offset(-2, -2),
           ),
         ],
       ),
-      child: Stack(
-        children: [
-          // Room image or icon
-          Center(
-            child: room.imageUrl != null
-                ? ClipOval(
-                    child: Image.network(
+      padding: const EdgeInsets.all(6),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(17),
+        child: Stack(
+          children: [
+            // Room Image (Filling the inner area)
+            Positioned.fill(
+              child: room.imageUrl != null && room.imageUrl!.isNotEmpty
+                  ? Image.network(
                       room.imageUrl!,
-                      width: 60,
-                      height: 60,
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
-                        return const Icon(
-                          Icons.mic,
-                          color: Colors.white,
-                          size: 30,
+                        return Container(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.mic_rounded,
+                            color: Colors.white,
+                            size: 32,
+                          ),
                         );
                       },
+                    )
+                  : Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.mic_rounded,
+                        color: Colors.white,
+                        size: 32,
+                      ),
                     ),
-                  )
-                : const Icon(
-                    Icons.mic,
-                    color: Colors.white,
-                    size: 30,
-                  ),
-          ),
+            ),
 
-          // Pulse animation ring
-          Positioned.fill(
-            child: _PulseRing(),
-          ),
-
-          // Live indicator
-          Positioned(
-            top: 0,
-            right: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.red,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'LIVE',
-                style: TextStyle(
+            // Bottom-Right Corner Activity Equalizer Badge (White Cutout)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: const BoxDecoration(
                   color: Colors.white,
-                  fontSize: 8,
-                  fontWeight: FontWeight.bold,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(15),
+                  ),
+                ),
+                padding: const EdgeInsets.only(top: 6, left: 6, right: 3, bottom: 3),
+                child: const Center(
+                  child: _ActivityEqualizerBars(),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-/// Pulse ring animation
-class _PulseRing extends StatefulWidget {
+/// Dynamic cyan audio equalizer activity animation for bottom-right corner
+class _ActivityEqualizerBars extends StatefulWidget {
+  const _ActivityEqualizerBars();
+
   @override
-  State<_PulseRing> createState() => _PulseRingState();
+  State<_ActivityEqualizerBars> createState() => _ActivityEqualizerBarsState();
 }
 
-class _PulseRingState extends State<_PulseRing>
+class _ActivityEqualizerBarsState extends State<_ActivityEqualizerBars>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  late Animation<double> _animation;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(seconds: 2),
       vsync: this,
-    )..repeat();
-
-    _animation = Tween<double>(begin: 1.0, end: 1.3).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
   }
 
   @override
@@ -254,23 +267,36 @@ class _PulseRingState extends State<_PulseRing>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _animation,
+      animation: _controller,
       builder: (context, child) {
-        // Calculate opacity and clamp to valid range (0.0 - 1.0)
-        final opacity = ((1 - _animation.value) * 0.5).clamp(0.0, 1.0);
-
-        return Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: Colors.white.withValues(alpha: opacity),
-              width: 2,
-            ),
-          ),
-          transform: Matrix4.identity()..scale(_animation.value),
-          transformAlignment: Alignment.center,
+        final val = _controller.value;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _buildBar((5 + (val * 9)).clamp(4.0, 15.0)),
+            const SizedBox(width: 2.5),
+            _buildBar((11 + ((1 - val) * 5)).clamp(4.0, 16.0)),
+            const SizedBox(width: 2.5),
+            _buildBar((6 + (val * 8)).clamp(4.0, 14.0)),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildBar(double height) {
+    return Container(
+      width: 3.2,
+      height: height,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF00C6FF), Color(0xFF0072FF)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        borderRadius: BorderRadius.circular(3),
+      ),
     );
   }
 }

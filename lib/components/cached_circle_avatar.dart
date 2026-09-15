@@ -1,9 +1,10 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chat_messenger/components/loading_indicator.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
 import 'package:chat_messenger/helpers/frame_helper.dart';
+import 'package:get/get.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
 
 import 'svg_icon.dart';
 import 'universal_asset_widget.dart';
@@ -27,6 +28,7 @@ class CachedCircleAvatar extends StatelessWidget {
     this.borderWidth = 2.0,
     this.padding = 2,
     this.showOfflineStatus = false,
+    this.showFrame = true,
   });
 
   final String imageUrl;
@@ -45,64 +47,68 @@ class CachedCircleAvatar extends StatelessWidget {
   final double borderWidth;
   final double padding;
   final bool showOfflineStatus;
+  final bool showFrame;
 
   @override
   Widget build(BuildContext context) {
-    // Fetch frame from user document if userId is provided (highest priority for real-time sync)
-    if (userId != null && userId!.isNotEmpty) {
-      return StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('Users')
-            .doc(userId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData || !snapshot.data!.exists) {
-            // Fallback to frameId or frameUrl if user doc not loaded/found
-            if (frameUrl != null && frameUrl!.isNotEmpty) {
-              return _buildAvatar(context, frameUrl);
-            }
-            if (frameId != null && frameId!.isNotEmpty) {
-              return FutureBuilder<String?>(
-                future: FrameHelper.getFrameUrl(frameId),
-                builder: (context, frameSnapshot) {
-                  return _buildAvatar(context, frameSnapshot.data);
-                },
-              );
-            }
-            return _buildAvatar(context, null);
-          }
-          final userData = snapshot.data!.data() as Map<String, dynamic>?;
-          final customization = userData?['customization'] as Map<String, dynamic>?;
-          final selectedFrameId = customization?['selectedFrameId'] as String?;
-          
-          if (selectedFrameId == null || selectedFrameId.isEmpty) {
-            // NO EQUIPPED FRAME IN DB! 
-            // We should NOT fallback to old cached frameId since the DB is the source of truth.
-            return _buildAvatar(context, null);
-          }
-          
-          return FutureBuilder<String?>(
-            future: FrameHelper.getFrameUrl(selectedFrameId),
-            builder: (context, frameSnapshot) {
-              final resolvedFrameUrl = frameSnapshot.data;
-              return _buildAvatar(context, resolvedFrameUrl);
-            },
-          );
-        },
-      );
+    if (!showFrame) {
+      return _buildAvatar(context, null);
     }
 
-    // Otherwise, priority: frameUrl > frameId
+    // 1. Direct URL provided (highest priority & immediate)
     if (frameUrl != null && frameUrl!.isNotEmpty) {
       return _buildAvatar(context, frameUrl);
     }
 
+    // 2. Check if current logged-in user and has live frame in AuthController
+    if (Get.isRegistered<AuthController>()) {
+      final auth = AuthController.instance;
+      if (userId != null && userId == auth.currentUser.userId) {
+        final liveUrl = auth.currentFrameUrl.value;
+        if (liveUrl.isNotEmpty) {
+          return _buildAvatar(context, liveUrl);
+        } else {
+          // Current user explicitly has NO frame equipped
+          return _buildAvatar(context, null);
+        }
+      }
+    }
+
+    // 2. Check synchronous memory cache
+    final String? cachedByFrameId = (frameId != null && frameId!.isNotEmpty)
+        ? FrameHelper.getCachedFrameUrl(frameId)
+        : null;
+    if (cachedByFrameId != null && cachedByFrameId.isNotEmpty) {
+      return _buildAvatar(context, cachedByFrameId);
+    }
+
+    final String? cachedByUserId = (userId != null && userId!.isNotEmpty)
+        ? FrameHelper.getCachedUserFrameUrl(userId)
+        : null;
+    if (cachedByUserId != null && cachedByUserId.isNotEmpty) {
+      return _buildAvatar(context, cachedByUserId);
+    }
+
+    // 3. Resolve via frameId if provided
     if (frameId != null && frameId!.isNotEmpty) {
       return FutureBuilder<String?>(
         future: FrameHelper.getFrameUrl(frameId),
+        initialData: cachedByFrameId,
         builder: (context, snapshot) {
-          final resolvedFrameUrl = snapshot.data;
-          return _buildAvatar(context, resolvedFrameUrl);
+          final resolved = snapshot.data ?? cachedByFrameId;
+          return _buildAvatar(context, resolved);
+        },
+      );
+    }
+
+    // 4. Resolve via userId if provided
+    if (userId != null && userId!.isNotEmpty) {
+      return FutureBuilder<String?>(
+        future: FrameHelper.getFrameUrlFromUserId(userId),
+        initialData: cachedByUserId,
+        builder: (context, snapshot) {
+          final resolved = snapshot.data ?? cachedByUserId;
+          return _buildAvatar(context, resolved);
         },
       );
     }
@@ -257,9 +263,10 @@ class CachedCircleAvatar extends StatelessWidget {
             right: -radius * 0.4 * frameScale,
             child: IgnorePointer(
               child: UniversalAssetWidget(
+                key: ValueKey(currentFrameUrl),
                 url: currentFrameUrl,
-                fit: BoxFit.cover,
-                isAlphaVideo: true,
+                fit: BoxFit.contain,
+                isAlphaVideo: false,
               ),
             ),
           ),

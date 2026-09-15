@@ -37,18 +37,36 @@ class Story {
     required User user,
     required Map<String, dynamic> data,
   }) {
+    DateTime parsedUpdatedAt;
+    if (data['updatedAt'] is Timestamp) {
+      parsedUpdatedAt = (data['updatedAt'] as Timestamp).toDate();
+    } else if (data['updatedAt'] is int) {
+      parsedUpdatedAt =
+          DateTime.fromMillisecondsSinceEpoch(data['updatedAt'] as int);
+    } else {
+      parsedUpdatedAt = DateTime.now();
+    }
+
+    StoryType storyType = StoryType.image;
+    if (data['type'] != null) {
+      storyType = StoryType.values.firstWhere(
+        (e) => e.name == data['type'],
+        orElse: () => StoryType.image,
+      );
+    }
+
     return Story(
       user: user,
-      viewers: List<String>.from(data['viewers'] ?? []),
-      id: data['id'] as String,
-      userId: data['userId'] as String,
-      type: StoryType.values.firstWhere((e) => e.name == data['type']),
+      viewers: data['viewers'] is List
+          ? List<String>.from(data['viewers'])
+          : <String>[],
+      id: data['id']?.toString() ?? user.userId,
+      userId: data['userId']?.toString() ?? user.userId,
+      type: storyType,
       texts: StoryText.textsFrom(data['texts']),
       images: StoryImage.imagesFrom(data['images']),
       videos: StoryVideo.videosFrom(data['videos']),
-      updatedAt: data['updatedAt'] != null
-          ? data['updatedAt']!.toDate()
-          : DateTime.now(),
+      updatedAt: parsedUpdatedAt,
     );
   }
 

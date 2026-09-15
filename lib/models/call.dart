@@ -10,6 +10,7 @@ class Call {
   String receiverName;
   String receiverPhotoUrl;
   String receiverId;
+  String? agoraToken;
 
   Call({
     this.isVideo = false,
@@ -21,10 +22,14 @@ class Call {
     this.receiverName = '',
     this.receiverPhotoUrl = '',
     this.receiverId = '',
+    this.agoraToken,
   });
 
   // Check caller id
   bool get isCaller => callerId == AuthController.instance.currentUser.userId;
+  String get effectiveChannelName => callerId;
+  bool get isGroup => receiverId == 'group_call';
+
 
   factory Call.fromMap({required Map<String, dynamic> data}) {
     return Call(
@@ -37,6 +42,7 @@ class Call {
       receiverName: data['receiverName'] ?? '',
       receiverPhotoUrl: data['receiverPhotoUrl'] ?? '',
       receiverId: data['receiverId'] ?? '',
+      agoraToken: data['agoraToken'],
     );
   }
 
@@ -48,7 +54,8 @@ class Call {
       "callerPhotoUrl": callerPhotoUrl,
       "receiverName": receiverName,
       "receiverPhotoUrl": receiverPhotoUrl,
-      "receiverId" : receiverId
+      "receiverId" : receiverId,
+      if (agoraToken != null) "agoraToken": agoraToken,
     };
   }
 }

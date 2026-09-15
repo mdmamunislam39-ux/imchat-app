@@ -96,7 +96,7 @@ class DocumentMessage extends StatelessWidget {
       children: [
         // Icon
         Image.asset(
-          'assets/icons/extensions/$icon',
+          'assets/icons/extensions/${icon.replaceAll('.png', '.webp')}',
           fit: BoxFit.cover,
           width: 40,
         ),

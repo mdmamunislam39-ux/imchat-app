@@ -8,6 +8,7 @@ import '../../../services/store_service.dart';
 import '../../../services/wallet_service.dart';
 import 'dart:async';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/golden_seat_widget.dart';
 
 
 class RoomDecorSheet extends StatefulWidget {
@@ -86,19 +87,37 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
     _seatDecorSub =
         _storeService.getStoreItemsByTypeStream('seatDecor').listen((items) {
       if (mounted) {
-        final List<Map<String, dynamic>> freeModes = [
+        final defaultFreeModes = [
           {
             'id': 'free_mode_original',
-            'name': 'Original (Free)',
+            'name': 'Classic Mic & Owner (Free)',
             'type': 'seatDecor',
             'isFreeMode': true,
+            'diamondPrice': 0,
             'seatColorMode': SeatColorMode.original,
+          },
+          {
+            'id': 'free_mode_golden',
+            'name': 'Golden Sofa & Host (Free)',
+            'type': 'seatDecor',
+            'isFreeMode': true,
+            'diamondPrice': 0,
+            'seatColorMode': SeatColorMode.golden,
+          },
+          {
+            'id': 'free_mode_purple',
+            'name': 'Neon Purple & Gold (Free)',
+            'type': 'seatDecor',
+            'isFreeMode': true,
+            'diamondPrice': 0,
+            'seatColorMode': SeatColorMode.purple,
           },
           {
             'id': 'free_mode_dashedPink',
             'name': 'Dashed Pink (Free)',
             'type': 'seatDecor',
             'isFreeMode': true,
+            'diamondPrice': 0,
             'seatColorMode': SeatColorMode.dashedPink,
           },
           {
@@ -106,10 +125,52 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
             'name': 'Dashed Orange (Free)',
             'type': 'seatDecor',
             'isFreeMode': true,
+            'diamondPrice': 0,
             'seatColorMode': SeatColorMode.dashedOrange,
           }
         ];
-        setState(() => _seatDecorItems = [...freeModes, ...items]);
+
+        final List<Map<String, dynamic>> resolvedItems = [];
+        final Set<String> seenIds = {};
+
+        for (final raw in items) {
+          final item = Map<String, dynamic>.from(raw);
+          final id = item['id']?.toString() ?? '';
+          seenIds.add(id);
+
+          SeatColorMode? mode;
+          final scm = item['seatColorMode']?.toString().toLowerCase();
+          final nameLower = (item['name'] ?? '').toString().toLowerCase();
+          if (id == 'free_mode_golden' || (scm != null && (scm.contains('golden') || scm.contains('sofa'))) || (nameLower.contains('golden sofa') && (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty))) {
+            mode = SeatColorMode.golden;
+          } else if (id == 'free_mode_purple' || (scm != null && scm.contains('purple')) || (nameLower.contains('neon purple') && (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty))) {
+            mode = SeatColorMode.purple;
+          } else if (id == 'free_mode_dashedpink' || id == 'free_mode_dashedPink' || (scm != null && scm.contains('dashedpink'))) {
+            mode = SeatColorMode.dashedPink;
+          } else if (id == 'free_mode_dashedorange' || id == 'free_mode_dashedOrange' || (scm != null && scm.contains('dashedorange'))) {
+            mode = SeatColorMode.dashedOrange;
+          } else if (id == 'free_mode_original' || id == 'free_mode_classic_mic_owner' || (scm != null && scm.contains('original')) || (nameLower.contains('classic mic') && (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty))) {
+            mode = SeatColorMode.original;
+          }
+
+          if (mode != null) {
+            item['seatColorMode'] = mode;
+            item['isFreeMode'] = (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty);
+          }
+
+          final price = (item['diamondPrice'] as num?)?.toInt() ?? 0;
+          if (price <= 0) {
+            item['isFree'] = true;
+          }
+
+          resolvedItems.add(item);
+        }
+
+        if (items.isEmpty) {
+          resolvedItems.addAll(defaultFreeModes);
+        }
+
+        setState(() => _seatDecorItems = resolvedItems);
         if (_isLoading) checkLoading();
       }
     }, onError: (e) {
@@ -143,13 +204,17 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
     });
   }
 
-  bool _isItemUnlocked(String itemId) {
-    if (itemId.startsWith('free_mode_')) return true;
-    return _userItems.any((item) => item['storeItemId'] == itemId);
+  bool _isItemUnlocked(Map<String, dynamic> item) {
+    if (item['isFreeMode'] == true || item['isFree'] == true) return true;
+    final price = (item['diamondPrice'] as num?)?.toInt() ?? 0;
+    if (price <= 0) return true;
+    final id = item['id']?.toString() ?? '';
+    if (id.startsWith('free_mode_')) return true;
+    return _userItems.any((userItem) => userItem['storeItemId'] == id);
   }
 
   void _onItemTapped(Map<String, dynamic> item, String type) {
-    if (!_isItemUnlocked(item['id'])) {
+    if (!_isItemUnlocked(item)) {
       _showPurchaseDialog(item);
       return;
     }
@@ -161,8 +226,34 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
         imageUrl: item['fileUrl'],
       ));
     } else if (type == 'seatDecor') {
-      if (item['isFreeMode'] == true) {
-        final SeatColorMode mode = item['seatColorMode'];
+      final bool isFreeItem = item['isFreeMode'] == true ||
+          item['isFree'] == true ||
+          (item['diamondPrice'] as num?)?.toInt() == 0 ||
+          item['id'] == 'free_mode_classic_mic_owner' ||
+          item['id'] == 'free_mode_golden' ||
+          item['id'] == 'free_mode_purple' ||
+          item['id'] == 'free_mode_original' ||
+          (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty);
+
+      if (isFreeItem) {
+        SeatColorMode mode = SeatColorMode.original;
+        final rawMode = item['seatColorMode'];
+        if (rawMode is SeatColorMode) {
+          mode = rawMode;
+        } else if (rawMode is String) {
+          final l = rawMode.toLowerCase();
+          if (l.contains('golden') || l.contains('sofa')) {
+            mode = SeatColorMode.golden;
+          } else if (l.contains('dashedpink')) {
+            mode = SeatColorMode.dashedPink;
+          } else if (l.contains('dashedorange')) {
+            mode = SeatColorMode.dashedOrange;
+          } else if (l.contains('purple')) {
+            mode = SeatColorMode.purple;
+          } else {
+            mode = SeatColorMode.original;
+          }
+        }
         final updatedSettings = widget.currentRoom.settings.copyWith(
           seatColorMode: mode,
           clearSeatDecor: true,
@@ -174,8 +265,9 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
         ));
       } else {
         final updatedSettings = widget.currentRoom.settings.copyWith(
+          hostSeatDecorUrl: item['hostSeatDecorUrl'] ?? item['hostFileUrl'] ?? item['fileUrl'],
           seatDecorUrl: item['fileUrl'],
-          lockedSeatDecorUrl: item['lockedFileUrl'],
+          lockedSeatDecorUrl: item['lockedFileUrl'] ?? item['lockedSeatDecorUrl'] ?? item['fileUrl'],
           seatColorMode: SeatColorMode.original,
         );
 
@@ -238,18 +330,35 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
                           ? Container(
                               color: Colors.black45,
                               child: Center(
-                                child: item['seatColorMode'] ==
-                                        SeatColorMode.original
-                                    ? Image.asset('assets/icons/sofa_ic.png',
-                                        height: 40, color: Colors.white54)
-                                    : item['seatColorMode'] ==
-                                            SeatColorMode.dashedPink
-                                        ? const Icon(Icons.music_note,
-                                            color: Colors.pink, size: 40)
-                                        : Image.asset(
-                                            'assets/icons/sofa_ic.png',
-                                            height: 40,
-                                            color: Colors.orange),
+                                child: (item['seatColorMode'] == SeatColorMode.purple || item['seatColorMode'] == 'purple')
+                                  ? const NeonPurpleGlassOrbWidget(
+                                      size: 46,
+                                      child: GoldenSofaIcon(width: 24, height: 21, isNeonPurple: true),
+                                    )
+                                  : (item['seatColorMode'] == SeatColorMode.golden || item['seatColorMode'] == 'golden')
+                                      ? const GoldenGlassOrbWidget(
+                                          size: 46,
+                                          child: GoldenSofaIcon(width: 24, height: 21),
+                                        )
+                                  : (item['seatColorMode'] == SeatColorMode.original || item['seatColorMode'] == 'original')
+                                      ? Container(
+                                          width: 44,
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: Colors.white.withValues(alpha: 0.16),
+                                            border: Border.all(color: Colors.white38, width: 1.5),
+                                          ),
+                                          child: const Icon(Icons.mic_rounded, color: Colors.white70, size: 24),
+                                        )
+                                      : item['seatColorMode'] ==
+                                              SeatColorMode.dashedPink
+                                          ? const Icon(Icons.music_note,
+                                              color: Colors.pink, size: 40)
+                                          : Image.asset(
+                                              'assets/icons/sofa_ic.webp',
+                                              height: 40,
+                                              color: Colors.orange),
                               ),
                             )
                           : ClipRRect(
@@ -429,6 +538,7 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
       ));
     } else if (type == 'seatDecor') {
       final updatedSettings = widget.currentRoom.settings.copyWith(
+        hostSeatDecorUrl: null,
         seatDecorUrl: null,
         lockedSeatDecorUrl: null,
         clearSeatDecor: true,
@@ -492,12 +602,13 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
             itemCount: items.length,
             itemBuilder: (context, index) {
               final item = items[index];
-              final isUnlocked = _isItemUnlocked(item['id']);
+              final isUnlocked = _isItemUnlocked(item);
               final isSelected = item['isFreeMode'] == true
-                  ? (widget.currentRoom.settings.seatDecorUrl == null &&
+                  ? ((widget.currentRoom.settings.seatDecorUrl == null ||
+                          widget.currentRoom.settings.seatDecorUrl!.trim().isEmpty) &&
                       widget.currentRoom.settings.seatColorMode ==
                           item['seatColorMode'])
-                  : item['fileUrl'] == currentUrl;
+                  : (item['fileUrl'] == currentUrl || (item['hostSeatDecorUrl'] != null && item['hostSeatDecorUrl'] == widget.currentRoom.settings.hostSeatDecorUrl));
 
               return GestureDetector(
                 onTap: () => _onItemTapped(item, type),
@@ -517,16 +628,33 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
                         Container(
                           color: Colors.black45,
                           child: Center(
-                            child: item['seatColorMode'] ==
-                                    SeatColorMode.original
-                                ? Image.asset('assets/icons/sofa_ic.png',
-                                    height: 40, color: Colors.white54)
-                                : item['seatColorMode'] ==
-                                        SeatColorMode.dashedPink
-                                    ? const Icon(Icons.music_note,
-                                        color: Colors.pink, size: 40)
-                                    : Image.asset('assets/icons/sofa_ic.png',
-                                        height: 40, color: Colors.orange),
+                            child: (item['seatColorMode'] == SeatColorMode.purple || item['seatColorMode'] == 'purple')
+                                ? const NeonPurpleGlassOrbWidget(
+                                    size: 46,
+                                    child: GoldenSofaIcon(width: 24, height: 21, isNeonPurple: true),
+                                  )
+                                : (item['seatColorMode'] == SeatColorMode.golden || item['seatColorMode'] == 'golden')
+                                    ? const GoldenGlassOrbWidget(
+                                        size: 46,
+                                        child: GoldenSofaIcon(width: 24, height: 21),
+                                      )
+                                : (item['seatColorMode'] == SeatColorMode.original || item['seatColorMode'] == 'original')
+                                    ? Container(
+                                        width: 44,
+                                        height: 44,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.white.withValues(alpha: 0.16),
+                                          border: Border.all(color: Colors.white38, width: 1.5),
+                                        ),
+                                        child: const Icon(Icons.mic_rounded, color: Colors.white70, size: 24),
+                                      )
+                                    : item['seatColorMode'] ==
+                                            SeatColorMode.dashedPink
+                                        ? const Icon(Icons.music_note,
+                                            color: Colors.pink, size: 40)
+                                        : Image.asset('assets/icons/sofa_ic.webp',
+                                            height: 40, color: Colors.orange),
                           ),
                         )
                       else

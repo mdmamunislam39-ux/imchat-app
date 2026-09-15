@@ -55,12 +55,20 @@ class _EmojiPickerBottomSheetState extends State<EmojiPickerBottomSheet> {
           displayName: 'Ludo Dice',
           emojiUrl: 'local_dice_action', // Special marker
           categoryId: '',
+          order: -2,
+        );
+        final blueDiceEmoji = const EmojiItem(
+          id: 'local_blue_dice_action',
+          name: 'blue_dice',
+          displayName: 'Blue Ludo Dice',
+          emojiUrl: 'local_blue_dice_action', // Special marker
+          categoryId: '',
           order: -1,
         );
         if (emojisByCategory.containsKey(activityCategory.id)) {
-          emojisByCategory[activityCategory.id]!.insert(0, diceEmoji);
+          emojisByCategory[activityCategory.id]!.insertAll(0, [diceEmoji, blueDiceEmoji]);
         } else {
-          emojisByCategory[activityCategory.id] = [diceEmoji];
+          emojisByCategory[activityCategory.id] = [diceEmoji, blueDiceEmoji];
         }
       }
 
@@ -159,9 +167,18 @@ class _EmojiPickerBottomSheetState extends State<EmojiPickerBottomSheet> {
                   child: StaticDiceWidget(
                     number: 6,
                     size: 32,
+                    diceStyle: 'classic',
                   ),
                 )
-              : CachedNetworkImage(
+              : emoji.emojiUrl == 'local_blue_dice_action'
+                  ? const Center(
+                      child: StaticDiceWidget(
+                        number: 6,
+                        size: 32,
+                        diceStyle: 'blue',
+                      ),
+                    )
+                  : CachedNetworkImage(
                   imageUrl: emoji.emojiUrl,
                   fit: BoxFit.contain,
                   placeholder: (context, url) => Container(

@@ -9,6 +9,12 @@ import 'screens/admin_banners_screen.dart';
 import 'screens/admin_notifications_screen.dart';
 import 'screens/admin_greedy_game_screen.dart';
 import 'screens/admin_ban_management.dart';
+import 'screens/admin_intimacy_levels_screen.dart';
+import 'screens/admin_theme_assets_screen.dart';
+import 'screens/admin_grab_the_top_screen.dart';
+import 'screens/admin_moment_management_screen.dart';
+import 'screens/admin_payment_management_screen.dart';
+import 'screens/admin_recharge_requests_screen.dart';
 
 
 /// Main AdminPane entry point — access gated by RoleService
@@ -30,7 +36,8 @@ class _AdminPaneState extends State<AdminPane> {
       if (roleService.isLoading.value) {
         return const Scaffold(
           backgroundColor: Color(0xFF1E142B),
-          body: Center(child: CircularProgressIndicator(color: Colors.purpleAccent)),
+          body: Center(
+              child: CircularProgressIndicator(color: Colors.purpleAccent)),
         );
       }
 
@@ -45,7 +52,10 @@ class _AdminPaneState extends State<AdminPane> {
                 SizedBox(height: 16),
                 Text(
                   'Access Denied',
-                  style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold),
                 ),
                 SizedBox(height: 8),
                 Text(
@@ -100,11 +110,19 @@ class _AdminPaneState extends State<AdminPane> {
   List<_AdminTab> _buildAvailableTabs(RoleService roleService) {
     final tabs = <_AdminTab>[];
 
-    if (roleService.canManageBanners || roleService.canManageGifts || roleService.isAdmin) {
+    if (roleService.canManageBanners ||
+        roleService.canManageGifts ||
+        roleService.isAdmin) {
       tabs.add(_AdminTab(
         label: 'Assets',
         icon: Icons.layers,
         screen: const AdminAssetsScreen(),
+      ));
+      
+      tabs.add(_AdminTab(
+        label: 'Theme',
+        icon: Icons.palette,
+        screen: const AdminThemeAssetsScreen(),
       ));
     }
 
@@ -134,11 +152,17 @@ class _AdminPaneState extends State<AdminPane> {
 
     if (roleService.isAdmin) {
       tabs.add(_AdminTab(
+        label: 'Grab Top',
+        icon: Icons.chair,
+        screen: const AdminGrabTheTopScreen(),
+      ));
+
+      tabs.add(_AdminTab(
         label: 'Rooms',
         icon: Icons.meeting_room,
         screen: const AdminAudioRoomsScreen(),
       ));
-      
+
       tabs.add(_AdminTab(
         label: 'Bans',
         icon: Icons.gavel,
@@ -152,6 +176,30 @@ class _AdminPaneState extends State<AdminPane> {
         icon: Icons.casino,
         screen: const AdminGreedyGameScreen(),
       ));
+
+      tabs.add(_AdminTab(
+        label: 'Intimacy',
+        icon: Icons.favorite,
+        screen: const AdminIntimacyLevelsScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Moment',
+        icon: Icons.auto_awesome_motion,
+        screen: const AdminMomentManagementScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Payments',
+        icon: Icons.payments,
+        screen: const AdminPaymentManagementScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Recharges',
+        icon: Icons.receipt_long,
+        screen: const AdminRechargeRequestsScreen(),
+      ));
     }
 
     return tabs;
@@ -162,7 +210,8 @@ class _AdminTab {
   final String label;
   final IconData icon;
   final Widget screen;
-  const _AdminTab({required this.label, required this.icon, required this.screen});
+  const _AdminTab(
+      {required this.label, required this.icon, required this.screen});
 }
 
 /// Role Management Screen for Admin to assign roles
@@ -200,10 +249,8 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
 
     try {
       // Search by userId directly
-      final doc = await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(query)
-          .get();
+      final doc =
+          await FirebaseFirestore.instance.collection('Users').doc(query).get();
 
       if (doc.exists) {
         setState(() {
@@ -261,11 +308,14 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
   }
 
   void _parseUserRoles(Map<String, dynamic> data) {
-    final rawRoles = List<String>.from(data['roles'] ?? [data['userType'] ?? AppRoles.regular]);
+    final rawRoles = List<String>.from(
+        data['roles'] ?? [data['userType'] ?? AppRoles.regular]);
     _isSuperAdminTarget = rawRoles.contains(AppRoles.admin);
-    
+
     // Filter to only allowed roles to be selected
-    _selectedRoles = rawRoles.where((r) => _allRoles.contains(r) && r != AppRoles.regular).toList();
+    _selectedRoles = rawRoles
+        .where((r) => _allRoles.contains(r) && r != AppRoles.regular)
+        .toList();
   }
 
   Future<void> _assignRole() async {
@@ -286,13 +336,17 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ Roles updated for ${_foundUser!['fullname'] ?? _foundUser!['id']}'),
+          content: Text(
+              '✅ Roles updated for ${_foundUser!['fullname'] ?? _foundUser!['id']}'),
           backgroundColor: Colors.green,
         ),
       );
       setState(() {
-        _foundUser!['roles'] = _selectedRoles.isEmpty ? [AppRoles.regular] : List.from(_selectedRoles);
-        _foundUser!['userType'] = _selectedRoles.isEmpty ? AppRoles.regular : _selectedRoles.first;
+        _foundUser!['roles'] = _selectedRoles.isEmpty
+            ? [AppRoles.regular]
+            : List.from(_selectedRoles);
+        _foundUser!['userType'] =
+            _selectedRoles.isEmpty ? AppRoles.regular : _selectedRoles.first;
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -329,15 +383,18 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF4A148C).withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.3)),
+                  border: Border.all(
+                      color: Colors.purpleAccent.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.verified_user, color: Colors.purpleAccent, size: 20),
+                    const Icon(Icons.verified_user,
+                        color: Colors.purpleAccent, size: 20),
                     const SizedBox(width: 8),
                     Text(
                       'Your role: ${roleService.userRole.value.toUpperCase()}',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -364,7 +421,8 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none,
                       ),
-                      prefixIcon: const Icon(Icons.search, color: Colors.white38),
+                      prefixIcon:
+                          const Icon(Icons.search, color: Colors.white38),
                     ),
                     onSubmitted: (_) => _searchUser(),
                   ),
@@ -374,13 +432,17 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                   onPressed: _isSearching ? null : _searchUser,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.purpleAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                   child: _isSearching
                       ? const SizedBox(
-                          width: 18, height: 18,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2),
                         )
                       : const Icon(Icons.search, color: Colors.white),
                 ),
@@ -398,9 +460,12 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
+                    const Icon(Icons.error_outline,
+                        color: Colors.redAccent, size: 18),
                     const SizedBox(width: 8),
-                    Expanded(child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent))),
+                    Expanded(
+                        child: Text(_errorMessage!,
+                            style: const TextStyle(color: Colors.redAccent))),
                   ],
                 ),
               ),
@@ -413,7 +478,8 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E142B),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.3)),
+                  border: Border.all(
+                      color: Colors.purpleAccent.withValues(alpha: 0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -422,11 +488,14 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                       children: [
                         CircleAvatar(
                           radius: 24,
-                          backgroundImage: _foundUser!['photoUrl'] != null && (_foundUser!['photoUrl'] as String).isNotEmpty
+                          backgroundImage: _foundUser!['photoUrl'] != null &&
+                                  (_foundUser!['photoUrl'] as String).isNotEmpty
                               ? NetworkImage(_foundUser!['photoUrl'])
                               : null,
-                          backgroundColor: Colors.purpleAccent.withValues(alpha: 0.3),
-                          child: _foundUser!['photoUrl'] == null || (_foundUser!['photoUrl'] as String).isEmpty
+                          backgroundColor:
+                              Colors.purpleAccent.withValues(alpha: 0.3),
+                          child: _foundUser!['photoUrl'] == null ||
+                                  (_foundUser!['photoUrl'] as String).isEmpty
                               ? const Icon(Icons.person, color: Colors.white)
                               : null,
                         ),
@@ -437,15 +506,24 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                             children: [
                               Text(
                                 _foundUser!['fullname'] ?? 'Unknown',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16),
                               ),
                               Text(
                                 'ID: ${(_foundUser!['id'] as String).substring(0, 8)}... | SearchID: ${_foundUser!['searchId'] ?? 'N/A'}',
-                                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                style: const TextStyle(
+                                    color: Colors.white54, fontSize: 12),
                               ),
                               Text(
-                                'Current Roles: ${List<String>.from(_foundUser!['roles'] ?? [_foundUser!['userType'] ?? 'regular']).join(', ').toUpperCase()}',
-                                style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+                                'Current Roles: ${List<String>.from(_foundUser!['roles'] ?? [
+                                      _foundUser!['userType'] ?? 'regular'
+                                    ]).join(', ').toUpperCase()}',
+                                style: const TextStyle(
+                                    color: Colors.amber,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold),
                               ),
                             ],
                           ),
@@ -468,19 +546,25 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                             Expanded(
                               child: Text(
                                 'This user is a Super Admin. Their roles can only be managed from the Web Admin Panel.',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold),
                               ),
                             ),
                           ],
                         ),
                       ),
                     ] else ...[
-                      const Text('Assign New Roles (Select multiple):', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                      const Text('Assign New Roles (Select multiple):',
+                          style:
+                              TextStyle(color: Colors.white70, fontSize: 13)),
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
-                        children: _allRoles.where((r) => r != AppRoles.regular).map((role) {
+                        children: _allRoles
+                            .where((r) => r != AppRoles.regular)
+                            .map((role) {
                           final isSelected = _selectedRoles.contains(role);
                           Color roleColor = Colors.grey;
                           if (role == AppRoles.agency) {
@@ -500,20 +584,27 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                               });
                             },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 8),
                               decoration: BoxDecoration(
-                                color: isSelected ? roleColor.withValues(alpha: 0.25) : const Color(0xFF2A1B3D),
+                                color: isSelected
+                                    ? roleColor.withValues(alpha: 0.25)
+                                    : const Color(0xFF2A1B3D),
                                 borderRadius: BorderRadius.circular(20),
                                 border: Border.all(
-                                  color: isSelected ? roleColor : Colors.white12,
+                                  color:
+                                      isSelected ? roleColor : Colors.white12,
                                   width: isSelected ? 2 : 1,
                                 ),
                               ),
                               child: Text(
                                 role.toUpperCase(),
                                 style: TextStyle(
-                                  color: isSelected ? roleColor : Colors.white54,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                  color:
+                                      isSelected ? roleColor : Colors.white54,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
                                   fontSize: 12,
                                 ),
                               ),
@@ -527,12 +618,14 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                         child: ElevatedButton.icon(
                           onPressed: _assignRole,
                           icon: const Icon(Icons.save),
-                          label: Text('Update Roles for ${_foundUser!['fullname'] ?? 'user'}'),
+                          label: Text(
+                              'Update Roles for ${_foundUser!['fullname'] ?? 'user'}'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.purpleAccent,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ),
@@ -551,14 +644,18 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
 /// Quick access to admin screens
 class AdminPaneRoutes {
   static const String assets = '/admin/assets';
+  static const String theme = '/admin/theme';
   static const String banners = '/admin/banners';
   static const String notifications = '/admin/notifications';
   static const String roles = '/admin/roles';
+  static const String grabTheTop = '/admin/grab_the_top';
 
   static Map<String, WidgetBuilder> get routes => {
-    assets: (context) => const AdminAssetsScreen(),
-    banners: (context) => const AdminBannersScreen(),
-    notifications: (context) => const AdminNotificationsScreen(),
-    roles: (context) => const RoleManagementScreen(),
-  };
+        assets: (context) => const AdminAssetsScreen(),
+        theme: (context) => const AdminThemeAssetsScreen(),
+        banners: (context) => const AdminBannersScreen(),
+        notifications: (context) => const AdminNotificationsScreen(),
+        roles: (context) => const RoleManagementScreen(),
+        grabTheTop: (context) => const AdminGrabTheTopScreen(),
+      };
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/controllers/gift_combo_controller.dart';
 import 'package:chat_messenger/AdminPane/models/gift.dart';
 import 'package:chat_messenger/AdminPane/services/gift_service.dart';
 import 'package:chat_messenger/services/emoji_chat_service.dart';
@@ -63,6 +64,8 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
   final List<AudioRoomParticipant> _seatedParticipants = [];
   // Quantity of gifts to send
   int _selectedQuantity = 1;
+  // Guard against double taps / multiple pop calls
+  bool _isSending = false;
 
   @override
   void initState() {
@@ -175,6 +178,10 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
                 if (oldGiftsList[i] is! Map) continue;
                 final oldGiftData = oldGiftsList[i] as Map<String, dynamic>;
                 
+                // Filter out deactivated gifts
+                final bool giftIsActive = oldGiftData['isActive'] ?? true;
+                if (!giftIsActive) continue;
+                
                 final oldName = oldGiftData['name'] ?? oldGiftData['giftName'] ?? '';
                 if (oldName.toString().trim().isEmpty) continue;
                 
@@ -212,7 +219,41 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
 
       debugPrint('🎁 [GiftSelection] Parsed ${activeGifts.length} active gifts');
 
-      final categories = activeGifts.map((g) => g.category).toSet().toList();
+      // Check for category order from categories_config doc
+      List<String> configuredOrder = [];
+      for (final doc in snapshot.docs) {
+        if (doc.id == 'categories_config') {
+          final data = doc.data() as Map<String, dynamic>?;
+          if (data != null) {
+            final rawOrder = data['categories'] ?? data['order'];
+            if (rawOrder is List) {
+              configuredOrder = rawOrder.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+            }
+          }
+          break;
+        }
+      }
+
+      if (configuredOrder.isEmpty) {
+        configuredOrder = ['Hot', 'Event', 'Lucky', 'Local', 'Privilege', 'Trick', 'Customized'];
+      }
+
+      final presentCategories = activeGifts.map((g) => g.category).toSet();
+      final orderedCategories = <String>[];
+
+      for (final cat in configuredOrder) {
+        if (presentCategories.contains(cat) || snapshot.docs.any((d) => d.id == cat)) {
+          orderedCategories.add(cat);
+        }
+      }
+
+      for (final cat in presentCategories) {
+        if (!orderedCategories.contains(cat)) {
+          orderedCategories.add(cat);
+        }
+      }
+
+      final categories = orderedCategories.isNotEmpty ? orderedCategories : configuredOrder;
     
       setState(() {
         _debugTotalDocs = snapshot.docs.length;
@@ -303,6 +344,8 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
   }
 
   void _sendGift() {
+    if (_isSending) return;
+
     if (_selectedGift == null) {
       _showErrorSnackBar('Please select a gift to send');
       return;
@@ -326,6 +369,8 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
       );
       return;
     }
+
+    _isSending = true;
 
     // Capture all needed values BEFORE closing the sheet
     final gift = _selectedGift!;
@@ -352,21 +397,34 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
 
     debugPrint('🎁 [GiftSelection] Instant-sending gift: $displayName to ${receiversList.length} recipients');
 
-    // Close the bottom sheet IMMEDIATELY - no waiting
+    // Close the bottom sheet IMMEDIATELY
     Navigator.of(context).pop();
 
-    // Fire-and-forget: all Firebase work happens in background
-    _processGiftInBackground(
-      gift: gift,
-      displayName: displayName,
-      giftCredits: giftCredits,
-      quantity: quantity,
-      roomId: roomId,
-      senderId: senderId,
-      senderName: senderName,
-      senderImageUrl: senderImageUrl,
-      receiversList: receiversList,
-    );
+    // Defer combo timer & background tasks to post-frame callback so Navigator pop completes smoothly
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      GiftComboController.instance.startComboSession(
+        gift: gift,
+        receivers: receiversList,
+        quantity: quantity,
+        roomId: roomId,
+        senderId: senderId,
+        senderName: senderName,
+        senderImageUrl: senderImageUrl,
+        initialComboCount: 1,
+      );
+
+      _processGiftInBackground(
+        gift: gift,
+        displayName: displayName,
+        giftCredits: giftCredits,
+        quantity: quantity,
+        roomId: roomId,
+        senderId: senderId,
+        senderName: senderName,
+        senderImageUrl: senderImageUrl,
+        receiversList: receiversList,
+      );
+    });
   }
 
   /// Runs all Firebase operations in the background without blocking the UI
@@ -744,19 +802,23 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
                                         mainAxisAlignment:
                                             MainAxisAlignment.center,
                                         children: [
-                                          gift.pngUrl != null &&
-                                                  gift.pngUrl!.isNotEmpty
-                                              ? CachedNetworkImage(
-                                                  imageUrl: gift.pngUrl!,
-                                                  width: 55,
-                                                  height: 55,
-                                                  fit: BoxFit.contain,
-                                                )
-                                              : const Icon(
-                                                  Icons.card_giftcard,
-                                                  color: Colors.white,
-                                                  size: 30,
-                                                ),
+                                          SelectedGiftPulse(
+                                            isSelected: isSelected,
+                                            child: gift.pngUrl != null &&
+                                                    gift.pngUrl!.isNotEmpty &&
+                                                    gift.pngUrl!.startsWith('http')
+                                                ? CachedNetworkImage(
+                                                    imageUrl: gift.pngUrl!,
+                                                    width: 55,
+                                                    height: 55,
+                                                    fit: BoxFit.contain,
+                                                  )
+                                                : const Icon(
+                                                    Icons.card_giftcard,
+                                                    color: Colors.white,
+                                                    size: 30,
+                                                  ),
+                                          ),
                                           const SizedBox(height: 6),
                                           Text(
                                             gift.name,
@@ -954,3 +1016,84 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
     );
   }
 }
+
+/// A helper widget to animate scaling (zoom in/out heartbeat effect) when a gift is selected.
+class SelectedGiftPulse extends StatefulWidget {
+  final Widget child;
+  final bool isSelected;
+
+  const SelectedGiftPulse({
+    super.key,
+    required this.child,
+    required this.isSelected,
+  });
+
+  @override
+  State<SelectedGiftPulse> createState() => _SelectedGiftPulseState();
+}
+
+class _SelectedGiftPulseState extends State<SelectedGiftPulse>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+
+    _scaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.0, end: 1.15)
+            .chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 50,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.15, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 50,
+      ),
+    ]).animate(_controller);
+
+    if (widget.isSelected) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(SelectedGiftPulse oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isSelected != oldWidget.isSelected) {
+      if (widget.isSelected) {
+        _controller.repeat();
+      } else {
+        _controller.stop();
+        _controller.reverse();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _scaleAnimation,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: widget.isSelected ? _scaleAnimation.value : 1.0,
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+

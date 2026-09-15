@@ -18,7 +18,7 @@ class DocPreview extends StatelessWidget {
   // Get icon preview
   Widget getImgIcon(String icon) {
     return Image.asset(
-      'assets/icons/extensions/$icon',
+      'assets/icons/extensions/${icon.replaceAll('.png', '.webp')}',
       fit: BoxFit.cover,
       width: double.maxFinite,
       height: double.maxFinite,

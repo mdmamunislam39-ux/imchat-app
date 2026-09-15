@@ -24,7 +24,7 @@ class GameModel {
       picture: map['picture'] ?? '',
       apiLink: map['apiLink'] ?? '',
       winningValue: (map['winningValue'] ?? 1.0).toDouble(),
-      isEnabled: map['isEnabled'] ?? true,
+      isEnabled: (map['isEnabled'] != false && map['isActive'] != false && map['status'] != 'inactive'),
     );
   }
 

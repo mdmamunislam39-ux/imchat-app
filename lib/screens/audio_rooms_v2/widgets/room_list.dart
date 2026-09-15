@@ -1,7 +1,10 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/modern_room_card.dart';
+import 'package:chat_messenger/services/app_theme_service.dart';
 
 /// Widget for displaying a list of audio rooms
 class RoomList extends StatelessWidget {
@@ -80,6 +83,18 @@ class RoomList extends StatelessWidget {
 
   /// Build title section
   Widget _buildTitle() {
+    final themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : null;
+    final screenBgColor = themeService?.getScreenColor('room');
+    final bool isLightBg =
+        screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
+    final primaryTextColor = themeService?.getScreenTextColor('room') ??
+        (isLightBg ? Colors.black87 : Colors.white);
+    final secondaryTextColor =
+        themeService?.getScreenSecondaryTextColor('room') ??
+            (isLightBg ? Colors.black54 : Colors.white.withValues(alpha: 0.4));
+
     return Padding(
       padding: const EdgeInsets.all(defaultPadding),
       child: Row(
@@ -87,10 +102,10 @@ class RoomList extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: primaryTextColor,
             ),
           ),
           if (rooms.isNotEmpty && showTotalCount)
@@ -98,7 +113,7 @@ class RoomList extends StatelessWidget {
               '${rooms.length} rooms',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.white.withValues(alpha: 0.4),
+                color: secondaryTextColor,
               ),
             ),
         ],
@@ -115,7 +130,7 @@ class RoomList extends StatelessWidget {
           child: ListView.builder(
             shrinkWrap: shrinkWrap,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: headerWidget != null ? 6 : 5, // Show 5 skeleton cards + 1 header if any
+            itemCount: headerWidget != null ? 6 : 5,
             itemBuilder: (context, index) {
               if (headerWidget != null && index == 0) return headerWidget!;
               return _buildSkeletonCard();
@@ -137,7 +152,7 @@ class RoomList extends StatelessWidget {
                 children: [
                   headerWidget!,
                   SizedBox(
-                    height: 400, // Fixed height to push empty widget down slightly
+                    height: 400,
                     child: emptyWidget ?? _buildDefaultEmptyWidget(),
                   ),
                 ],
@@ -150,6 +165,18 @@ class RoomList extends StatelessWidget {
 
   /// Build default empty widget
   Widget _buildDefaultEmptyWidget() {
+    final themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : null;
+    final screenBgColor = themeService?.getScreenColor('room');
+    final bool isLightBg =
+        screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
+    final primaryTextColor = themeService?.getScreenTextColor('room') ??
+        (isLightBg ? Colors.black87 : Colors.white);
+    final secondaryTextColor =
+        themeService?.getScreenSecondaryTextColor('room') ??
+            (isLightBg ? Colors.black54 : Colors.white.withValues(alpha: 0.7));
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(defaultPadding * 2),
@@ -159,14 +186,14 @@ class RoomList extends StatelessWidget {
             Icon(
               Icons.voice_chat_outlined,
               size: 80,
-              color: Colors.grey[400],
+              color: secondaryTextColor.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 16),
             Text(
               emptyMessage,
               style: TextStyle(
                 fontSize: 16,
-                color: Colors.grey[600],
+                color: primaryTextColor,
                 fontWeight: FontWeight.w500,
               ),
               textAlign: TextAlign.center,
@@ -176,7 +203,7 @@ class RoomList extends StatelessWidget {
               'Create a new room or join an existing one to get started.',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[500],
+                color: secondaryTextColor,
               ),
               textAlign: TextAlign.center,
             ),
@@ -188,129 +215,124 @@ class RoomList extends StatelessWidget {
 
   /// Build skeleton card for loading state
   Widget _buildSkeletonCard() {
-    return Card(
-      elevation: 2,
+    final themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : null;
+    final screenBgColor = themeService?.getScreenColor('room');
+    final bool isLightBg =
+        screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
+
+    return Container(
       margin: const EdgeInsets.symmetric(
         horizontal: defaultPadding,
         vertical: 8,
       ),
-      shape: RoundedRectangleBorder(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isLightBg
+            ? Colors.black.withValues(alpha: 0.04)
+            : Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header skeleton
-            Row(
-              children: [
-                // Avatar skeleton
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    shape: BoxShape.circle,
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: isLightBg
+                      ? Colors.black.withValues(alpha: 0.08)
+                      : Colors.white.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(width: 12),
-                
-                // Title and subtitle skeleton
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: double.infinity,
-                        height: 16,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        width: 100,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                
-                // Participant count skeleton
-                Container(
-                  width: 40,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 12),
-            
-            // Description skeleton
-            Container(
-              width: double.infinity,
-              height: 14,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(4),
               ),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              width: 200,
-              height: 14,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(4),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: isLightBg ? Colors.grey[300] : Colors.white12,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      width: 100,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: isLightBg ? Colors.grey[300] : Colors.white12,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              Container(
+                width: 40,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: isLightBg ? Colors.grey[300] : Colors.white12,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            height: 14,
+            decoration: BoxDecoration(
+              color: isLightBg ? Colors.grey[300] : Colors.white12,
+              borderRadius: BorderRadius.circular(4),
             ),
-            
-            const SizedBox(height: 12),
-            
-            // Bottom row skeleton
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Participants skeleton
-                Row(
-                  children: List.generate(3, (index) => 
-                    Padding(
-                      padding: EdgeInsets.only(left: index > 0 ? 4 : 0),
-                      child: Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          shape: BoxShape.circle,
-                        ),
+          ),
+          const SizedBox(height: 4),
+          Container(
+            width: 200,
+            height: 14,
+            decoration: BoxDecoration(
+              color: isLightBg ? Colors.grey[300] : Colors.white12,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: List.generate(
+                  3,
+                  (index) => Padding(
+                    padding: EdgeInsets.only(left: index > 0 ? 4 : 0),
+                    child: Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: isLightBg ? Colors.grey[300] : Colors.white12,
+                        shape: BoxShape.circle,
                       ),
                     ),
                   ),
                 ),
-                
-                // Join button skeleton
-                Container(
-                  width: 60,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(16),
-                  ),
+              ),
+              Container(
+                width: 60,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: isLightBg ? Colors.grey[300] : Colors.white12,
+                  borderRadius: BorderRadius.circular(16),
                 ),
-              ],
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -337,10 +359,18 @@ class HorizontalRoomList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : null;
+    final screenBgColor = themeService?.getScreenColor('room');
+    final bool isLightBg =
+        screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
+    final primaryTextColor = themeService?.getScreenTextColor('room') ??
+        (isLightBg ? Colors.black87 : Colors.white);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Title and see all button
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: defaultPadding),
           child: Row(
@@ -348,9 +378,10 @@ class HorizontalRoomList extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
+                  color: primaryTextColor,
                 ),
               ),
               if (rooms.length > 3 && onSeeAll != null)
@@ -361,10 +392,7 @@ class HorizontalRoomList extends StatelessWidget {
             ],
           ),
         ),
-        
         const SizedBox(height: 8),
-        
-        // Horizontal room list
         SizedBox(
           height: 200,
           child: isLoading ? _buildLoadingList() : _buildRoomList(),
@@ -373,7 +401,6 @@ class HorizontalRoomList extends StatelessWidget {
     );
   }
 
-  /// Build horizontal room list
   Widget _buildRoomList() {
     if (rooms.isEmpty) {
       return Center(
@@ -402,114 +429,152 @@ class HorizontalRoomList extends StatelessWidget {
     );
   }
 
-  /// Build horizontal room card
   Widget _buildHorizontalRoomCard(AudioRoomV2 room) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
+    final themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : null;
+    final screenBgColor = themeService?.getScreenColor('room');
+    final bool isLightBg =
+        screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
+    final primaryTextColor = themeService?.getScreenTextColor('room') ??
+        (isLightBg ? Colors.black87 : Colors.white);
+    final secondaryTextColor =
+        themeService?.getScreenSecondaryTextColor('room') ??
+            (isLightBg ? Colors.black54 : Colors.white.withValues(alpha: 0.6));
+
+    return Container(
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: isLightBg
+                ? Colors.black.withValues(alpha: 0.07)
+                : Colors.black.withValues(alpha: 0.25),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
-      child: InkWell(
-        onTap: () => onRoomTap?.call(room),
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Room image and participant count
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundImage: room.imageUrl != null
-                        ? NetworkImage(room.imageUrl!)
-                        : null,
-                    backgroundColor: primaryColor.withValues(alpha: 0.1),
-                    child: room.imageUrl == null
-                        ? Icon(
-                            Icons.voice_chat,
-                            size: 16,
-                            color: primaryColor,
-                          )
-                        : null,
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isLightBg
+                  ? Colors.white.withValues(alpha: 0.65)
+                  : Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isLightBg
+                    ? Colors.black.withValues(alpha: 0.1)
+                    : Colors.white.withValues(alpha: 0.16),
+                width: 1,
+              ),
+            ),
+            child: InkWell(
+              onTap: () => onRoomTap?.call(room),
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundImage: room.imageUrl != null
+                              ? NetworkImage(room.imageUrl!)
+                              : null,
+                          backgroundColor: primaryColor.withValues(alpha: 0.1),
+                          child: room.imageUrl == null
+                              ? Icon(
+                                  Icons.voice_chat,
+                                  size: 16,
+                                  color: primaryColor,
+                                )
+                              : null,
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isLightBg
+                                ? Colors.black.withValues(alpha: 0.06)
+                                : Colors.white.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isLightBg
+                                  ? Colors.black.withValues(alpha: 0.1)
+                                  : Colors.white.withValues(alpha: 0.15),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: Text(
+                            '${room.participantCount}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: primaryTextColor,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(8),
+                    const SizedBox(height: 8),
+                    Text(
+                      room.name,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: primaryTextColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    child: Text(
-                      '${room.participantCount}',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
+                    const SizedBox(height: 4),
+                    Text(
+                      'by ${room.creatorName}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: secondaryTextColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: room.isFull ? null : () => onJoinRoom?.call(room),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(
+                          room.isFull ? 'Full' : 'Join',
+                          style: const TextStyle(fontSize: 12),
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              
-              const SizedBox(height: 8),
-              
-              // Room name
-              Text(
-                room.name,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              
-              const SizedBox(height: 4),
-              
-              // Creator name
-              Text(
-                'by ${room.creatorName}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey[600],
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              
-              const Spacer(),
-              
-              // Join button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: room.isFull ? null : () => onJoinRoom?.call(room),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: Text(
-                    room.isFull ? 'Full' : 'Join',
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  /// Build loading list
   Widget _buildLoadingList() {
     return ListView.builder(
       scrollDirection: Axis.horizontal,

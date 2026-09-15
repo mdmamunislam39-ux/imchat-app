@@ -12,10 +12,18 @@ class StoryImage {
   });
 
   factory StoryImage.fromMap(Map<String, dynamic> data) {
+    DateTime parsedCreatedAt;
+    if (data['createdAt'] is int) {
+      parsedCreatedAt =
+          DateTime.fromMillisecondsSinceEpoch(data['createdAt'] as int);
+    } else {
+      parsedCreatedAt = DateTime.now();
+    }
+
     return StoryImage(
-      imageUrl: data['imageUrl'] as String,
+      imageUrl: data['imageUrl']?.toString() ?? '',
       seenBy: SeenBy.seenByFrom(data['seenBy']),
-      createdAt: DateTime.fromMillisecondsSinceEpoch(data['createdAt'] as int),
+      createdAt: parsedCreatedAt,
     );
   }
 
@@ -27,10 +35,11 @@ class StoryImage {
     };
   }
 
-  static List<StoryImage> imagesFrom(List listOfMaps) {
-    final images = List<Map<String, dynamic>>.from(listOfMaps);
-    return List<StoryImage>.from(
-      images.map((item) => StoryImage.fromMap(item)),
-    );
+  static List<StoryImage> imagesFrom(dynamic listOfMaps) {
+    if (listOfMaps == null || listOfMaps is! List) return [];
+    return listOfMaps
+        .whereType<Map>()
+        .map((item) => StoryImage.fromMap(Map<String, dynamic>.from(item)))
+        .toList();
   }
 }

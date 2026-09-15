@@ -62,12 +62,57 @@ class BackgroundService {
     }
   }
 
+  /// Start the service with specific notification details for a call / room
+  Future<void> startCallService({
+    String? title,
+    String? content,
+  }) async {
+    try {
+      final service = FlutterBackgroundService();
+      if (!await service.isRunning()) {
+        debugPrint('🔄 [BackgroundService] Starting call background service ($title)...');
+        await service.startService();
+      }
+      if (title != null || content != null) {
+        await updateNotificationInfo(title: title, content: content);
+      }
+    } catch (e) {
+      debugPrint('🔄 [BackgroundService] Error starting call service: $e');
+    }
+  }
+
   /// Stop the service
   Future<void> stopService() async {
-    final service = FlutterBackgroundService();
-    if (await service.isRunning()) {
-      debugPrint('🔄 [BackgroundService] Stopping background service...');
-      service.invoke('stopService');
+    try {
+      final service = FlutterBackgroundService();
+      if (await service.isRunning()) {
+        debugPrint('🔄 [BackgroundService] Stopping background service...');
+        service.invoke('stopService');
+      }
+      final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+          FlutterLocalNotificationsPlugin();
+      await flutterLocalNotificationsPlugin.cancel(id: 888);
+    } catch (e) {
+      debugPrint(
+          '🔄 [BackgroundService] Error stopping background service: $e');
+    }
+  }
+
+  /// Update the background notification title and content dynamically
+  Future<void> updateNotificationInfo({
+    String? title,
+    String? content,
+  }) async {
+    try {
+      final service = FlutterBackgroundService();
+      if (await service.isRunning()) {
+        service.invoke('updateNotification', {
+          if (title != null) 'title': title,
+          if (content != null) 'content': content,
+        });
+      }
+    } catch (e) {
+      debugPrint('🔄 [BackgroundService] Error updating notification: $e');
     }
   }
 }
@@ -76,7 +121,11 @@ class BackgroundService {
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
   // Only available for flutter 3.0.0 and later
-  DartPluginRegistrant.ensureInitialized();
+  try {
+    DartPluginRegistrant.ensureInitialized();
+  } catch (e) {
+    debugPrint('🔄 [BackgroundService] Plugin registrant notice: $e');
+  }
 
   // For flutter_background_service v2+
   if (service is AndroidServiceInstance) {
@@ -87,9 +136,25 @@ void onStart(ServiceInstance service) async {
     service.on('setAsBackground').listen((event) {
       service.setAsBackgroundService();
     });
+
+    service.on('updateNotification').listen((event) {
+      if (event != null) {
+        final title = event['title'] as String? ?? 'Call in progress';
+        final content = event['content'] as String? ?? 'Connected';
+        service.setForegroundNotificationInfo(
+          title: title,
+          content: content,
+        );
+      }
+    });
   }
 
-  service.on('stopService').listen((event) {
+  service.on('stopService').listen((event) async {
+    try {
+      final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+          FlutterLocalNotificationsPlugin();
+      await flutterLocalNotificationsPlugin.cancel(id: 888);
+    } catch (_) {}
     service.stopSelf();
   });
 
@@ -114,7 +179,9 @@ void onStart(ServiceInstance service) async {
 /// Handling iOS background execution
 @pragma('vm:entry-point')
 Future<bool> onIosBackground(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    DartPluginRegistrant.ensureInitialized();
+  } catch (_) {}
   return true;
 }

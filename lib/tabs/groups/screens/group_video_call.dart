@@ -137,14 +137,17 @@ import 'package:get_storage/get_storage.dart';
 
 class GroupCallScreen extends StatefulWidget {
   final bool isVideo;
-  // final List<User> participants;
+  final List<User>? recipients;
+  final String? agoraToken;
   final Call call;
 
-  const GroupCallScreen(
-      {super.key,
-      required this.isVideo,
-      //required this.participants ,
-      required this.call});
+  const GroupCallScreen({
+    super.key,
+    required this.isVideo,
+    required this.call,
+    this.recipients,
+    this.agoraToken,
+  });
 
   @override
   _GroupCallScreenState createState() => _GroupCallScreenState();
@@ -154,6 +157,7 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
   final RxList<String> receiverNames = <String>[].obs; // To hold receiver names
   final box = GetStorage();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _receiverNamesSubscription;
+  late final GroupCallController groupCallController;
 
   Future<bool> onPhoneBackButtonPress() async {
     box.write('groupIsActive', widget.call.toMap());
@@ -164,6 +168,11 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
   @override
   void initState() {
     super.initState();
+    if (Get.isRegistered<GroupCallController>()) {
+      Get.delete<GroupCallController>(force: true);
+    }
+    groupCallController = Get.put(GroupCallController(call: widget.call));
+    groupCallController.stopRingtone();
     _listenToReceiverNames();
   }
 
@@ -189,13 +198,6 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (Get.isRegistered<GroupCallController>()) {
-      Get.delete<GroupCallController>(force: true);
-    }
-    final GroupCallController groupCallController =
-        Get.put(GroupCallController(call: widget.call));
-    groupCallController.stopRingtone();
-
     final User currentUser = AuthController.instance.currentUser;
 
     // Render the local user video

@@ -164,7 +164,8 @@ class _AddNewContactScreenState extends State<AddNewContactScreen> {
     var permissionStatus = await Permission.contacts.status;
 
     if (permissionStatus.isGranted) {
-      Iterable<ContactInfo> contacts = await FlutterContactsService.getContacts();
+      Iterable<ContactInfo> contacts =
+          await FlutterContactsService.getContacts();
       if (!mounted) return;
       setState(() {
         _contacts = contacts.toList();
@@ -185,20 +186,23 @@ class _AddNewContactScreenState extends State<AddNewContactScreen> {
   }
 
   Future<List<String>> getAppUsers(List<String> contactNumbers) async {
-    final uniqueNumbers = contactNumbers.where((n) => n.isNotEmpty).toSet().toList();
+    final uniqueNumbers = contactNumbers
+        .where((n) => n.isNotEmpty)
+        .toSet()
+        .toList();
     List<String> appUsers = [];
-    
+
     // Firestore 'in' query supports up to 30 items at a time
     for (int i = 0; i < uniqueNumbers.length; i += 30) {
       int end = (i + 30 < uniqueNumbers.length) ? i + 30 : uniqueNumbers.length;
       List<String> chunk = uniqueNumbers.sublist(i, end);
-      
+
       try {
         QuerySnapshot usersSnapshot = await FirebaseFirestore.instance
             .collection('Users')
             .where('number', whereIn: chunk)
             .get();
-            
+
         for (var doc in usersSnapshot.docs) {
           final data = doc.data() as Map<String, dynamic>?;
           if (data != null && data.containsKey('number')) {
@@ -216,8 +220,9 @@ class _AddNewContactScreenState extends State<AddNewContactScreen> {
     List<String> contactNumbers = [];
     for (var contact in _contacts) {
       contact.phones?.forEach((phone) {
-        contactNumbers.add(phone.value!
-            .replaceAll(RegExp(r'\s+|-'), '')); // Normalize phone numbers
+        contactNumbers.add(
+          phone.value!.replaceAll(RegExp(r'\s+|-'), ''),
+        ); // Normalize phone numbers
       });
     }
     List<String> appUsers = await getAppUsers(contactNumbers);
@@ -275,155 +280,172 @@ class _AddNewContactScreenState extends State<AddNewContactScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Add Contact'),
-      ),
-      body:
-      _permissionDenied
-         ? Center(
-             child: Text('Permission is required to access contacts.'),
-           )
-         :
-           _isLoading
-              ? Center(child: CircularProgressIndicator())
-              : _contacts.isEmpty
-                  ? Center(child: Text('No contacts found.'))
-                  : ListView.builder(
-                      itemCount:
-                          _matchedContacts.length + _unmatchedContacts.length + 2,
-                      itemBuilder: (context, index) {
-                        if (index == 0) {
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: primaryColor.withValues(alpha: 0.1),
-                              child: const Icon(IconlyBold.user3, color: primaryColor),
-                            ),
-                            title: Text(
-                              'new_group'.tr,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            onTap: () {
-                              Get.toNamed(AppRoutes.groups);
-                            },
-                          );
-                        }
-                        if (index == 1) {
-                          return StreamBuilder<QuerySnapshot>(
-                            stream: FirebaseFirestore.instance
-                                .collection('Users')
-                                .doc(AuthController.instance.currentUser.userId)
-                                .collection('friend_requests')
-                                .snapshots(),
-                            builder: (context, snapshot) {
-                              int requestCount = snapshot.hasData ? snapshot.data!.docs.length : 0;
-                              return ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: Colors.orange.withValues(alpha: 0.1),
-                                  child: const Icon(Icons.person_add, color: Colors.orange),
-                                ),
-                                title: Row(
-                                  children: [
-                                    Text(
-                                      'add_request'.tr,
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                    if (requestCount > 0) ...[
-                                      const SizedBox(width: 8),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Colors.red,
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Text(
-                                          requestCount.toString(),
-                                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                onTap: () {
-                                  Get.to(() => const FriendRequestScreen());
-                                },
-                              );
-                            },
-                          );
-                        }
-
-                        final contactIndex = index - 2;
-                        ContactInfo contact;
-                        bool isMatched;
-
-                        // Show matched users first
-                        if (contactIndex < _matchedContacts.length) {
-                          contact = _matchedContacts[contactIndex];
-                          isMatched = true;
-                        } else {
-                          contact = _unmatchedContacts[
-                              contactIndex - _matchedContacts.length];
-                          isMatched = false;
-                        }
-
-                        var phoneNumber = contact.phones!.isNotEmpty
-                            ? contact.phones!.first.value!.replaceAll(
-                                RegExp(r'\s+|-'), '') // Normalize phone numbers
-                            : '';
-
-                        return ListTile(
-                          title: Text(contact.displayName ?? ''),
-                          subtitle: Text(phoneNumber.isNotEmpty
-                              ? phoneNumber
-                              : 'No phone number'),
-                          trailing: phoneNumber != 'No phone number'
-                              ? isMatched
-                                  ? Container(
-                                      width: 75,
-                                      decoration: BoxDecoration(
-                                          border:
-                                              Border.all(color: primaryColor)),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(5.0),
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceAround,
-                                          children: [
-                                            Icon(Icons.messenger_outline,
-                                                size: 17, color: Colors.blue),
-                                            Text('Chat')
-                                          ],
-                                        ),
-                                      ),
-                                    )// Call icon for matched user
-                                  : Container(
-                                    height: 30,
-                                      width: 65,
-                                      decoration: BoxDecoration(
-                                          border:
-                                              Border.all(color: primaryColor)),
-                                      child: Align(
-                                        alignment: Alignment.center,
-                                        child: Text('Invite')),
-                                    )
-                              : null, // Email icon for unmatched user
-                          onTap: () async {
-                            if (isMatched) {
-                              // Handle call action for matched user
-                              var user = await getUserData(phoneNumber);
-
-                              if (!context.mounted) return;
-                              FocusScope.of(context).unfocus();
-
-                              // Send friend request
-                              await ContactApi.sendFriendRequest(targetUserId: user.userId);
-                            } else {
-                              AppHelper.openMessageApp(phoneNumber, 'message');
-                              // Handle email action for unmatched user
-                            }
-                          },
-                        );
-                      },
+      appBar: AppBar(title: Text('Add Contact')),
+      body: _permissionDenied
+          ? Center(child: Text('Permission is required to access contacts.'))
+          : _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : _contacts.isEmpty
+          ? Center(child: Text('No contacts found.'))
+          : ListView.builder(
+              itemCount:
+                  _matchedContacts.length + _unmatchedContacts.length + 2,
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: primaryColor.withValues(alpha: 0.1),
+                      child: const Icon(IconlyBold.user3, color: primaryColor),
                     ),
+                    title: Text(
+                      'new_group'.tr,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    onTap: () {
+                      Get.toNamed(AppRoutes.groups);
+                    },
+                  );
+                }
+                if (index == 1) {
+                  return StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('Users')
+                        .doc(AuthController.instance.currentUser.userId)
+                        .collection('friend_requests')
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      int requestCount = snapshot.hasData
+                          ? snapshot.data!.docs.length
+                          : 0;
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.orange.withValues(alpha: 0.1),
+                          child: const Icon(
+                            Icons.person_add,
+                            color: Colors.orange,
+                          ),
+                        ),
+                        title: Row(
+                          children: [
+                            Text(
+                              'add_request'.tr,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (requestCount > 0) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  requestCount.toString(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        onTap: () {
+                          Get.to(() => const FriendRequestScreen());
+                        },
+                      );
+                    },
+                  );
+                }
+
+                final contactIndex = index - 2;
+                ContactInfo contact;
+                bool isMatched;
+
+                // Show matched users first
+                if (contactIndex < _matchedContacts.length) {
+                  contact = _matchedContacts[contactIndex];
+                  isMatched = true;
+                } else {
+                  contact =
+                      _unmatchedContacts[contactIndex -
+                          _matchedContacts.length];
+                  isMatched = false;
+                }
+
+                var phoneNumber = contact.phones!.isNotEmpty
+                    ? contact.phones!.first.value!.replaceAll(
+                        RegExp(r'\s+|-'),
+                        '',
+                      ) // Normalize phone numbers
+                    : '';
+
+                return ListTile(
+                  title: Text(contact.displayName ?? ''),
+                  subtitle: Text(
+                    phoneNumber.isNotEmpty ? phoneNumber : 'No phone number',
+                  ),
+                  trailing: phoneNumber != 'No phone number'
+                      ? isMatched
+                            ? Container(
+                                width: 75,
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: primaryColor),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(5.0),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceAround,
+                                    children: [
+                                      Icon(
+                                        Icons.messenger_outline,
+                                        size: 17,
+                                        color: Colors.blue,
+                                      ),
+                                      Text('Chat'),
+                                    ],
+                                  ),
+                                ),
+                              ) // Call icon for matched user
+                            : Container(
+                                height: 30,
+                                width: 65,
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: primaryColor),
+                                ),
+                                child: Align(
+                                  alignment: Alignment.center,
+                                  child: Text('Invite'),
+                                ),
+                              )
+                      : null, // Email icon for unmatched user
+                  onTap: () async {
+                    if (isMatched) {
+                      // Handle call action for matched user
+                      var user = await getUserData(phoneNumber);
+
+                      if (!context.mounted) return;
+                      FocusScope.of(context).unfocus();
+
+                      // Send friend request
+                      await ContactApi.sendFriendRequest(
+                        targetUserId: user.userId,
+                      );
+                    } else {
+                      AppHelper.openMessageApp(phoneNumber, 'message');
+                      // Handle email action for unmatched user
+                    }
+                  },
+                );
+              },
+            ),
     );
   }
 }

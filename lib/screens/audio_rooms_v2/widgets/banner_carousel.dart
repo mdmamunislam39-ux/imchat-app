@@ -116,14 +116,18 @@ class _BannerCarouselState extends State<BannerCarousel> {
 
     // Sort in memory by createdAt descending
     uniqueBanners.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    debugPrint('📡 [BannerCarousel] Loaded ${uniqueBanners.length} deduplicated, merged and sorted banners.');
 
-    setState(() {
-      _banners = uniqueBanners;
-      _isLoading = false;
-    });
+    final bool isChanged = _banners.length != uniqueBanners.length ||
+        !_banners.every((oldB) => uniqueBanners.any((newB) => newB.id == oldB.id));
 
-    _startAutoSlide();
+    if (isChanged || _isLoading) {
+      if (!mounted) return;
+      setState(() {
+        _banners = uniqueBanners;
+        _isLoading = false;
+      });
+      _startAutoSlide();
+    }
   }
 
   void _subscribeToBanners() {
@@ -396,9 +400,11 @@ class _BannerCarouselState extends State<BannerCarousel> {
   }
 
   Widget _buildSkeletonLoader() {
+    final double bannerHeight = widget.height ?? 120.0;
+    final bool isCompact = bannerHeight < 90.0;
     return Container(
-      height: widget.height ?? 120.0,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: bannerHeight,
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: isCompact ? 2 : 8),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
@@ -425,9 +431,15 @@ class _BannerCarouselState extends State<BannerCarousel> {
   }
 
   Widget _buildDefaultFallbackBanner() {
+    final double bannerHeight = widget.height ?? 120.0;
+    final bool isCompact = bannerHeight < 90.0;
+
     return Container(
-      height: widget.height ?? 120.0,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: bannerHeight,
+      margin: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: isCompact ? 2 : 8,
+      ),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         gradient: const LinearGradient(
@@ -450,46 +462,59 @@ class _BannerCarouselState extends State<BannerCarousel> {
             bottom: -20,
             child: Icon(
               Icons.stars,
-              size: 150,
+              size: isCompact ? 90 : 150,
               color: Colors.white.withValues(alpha: 0.05),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(20.0),
+            padding: EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: isCompact ? 6.0 : 16.0,
+            ),
             child: Row(
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text(
+                      Text(
                         'VISION AGENCY',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 20,
+                          fontSize: isCompact ? 14 : 18,
                           fontWeight: FontWeight.bold,
-                          letterSpacing: 1.2,
+                          letterSpacing: 1.1,
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      if (!isCompact) const SizedBox(height: 4),
                       Text(
                         'Thanks for your lovely support',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.7),
-                          fontSize: 12,
+                          fontSize: isCompact ? 10 : 12,
                         ),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: EdgeInsets.all(isCompact ? 6 : 10),
                   decoration: BoxDecoration(
                     color: Colors.amber.withValues(alpha: 0.2),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.card_giftcard, color: Colors.amber, size: 26),
+                  child: Icon(
+                    Icons.card_giftcard,
+                    color: Colors.amber,
+                    size: isCompact ? 18 : 24,
+                  ),
                 ),
               ],
             ),

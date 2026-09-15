@@ -7,6 +7,9 @@ class AnimatedSvipName extends StatefulWidget {
   final String name;
   final int activeSvipLevel;
   final String svipValidUntilMonth;
+  final int activeVipLevel;
+  final String vipValidUntilMonth;
+  final DateTime? vipValidUntil;
   final TextStyle? style;
 
   const AnimatedSvipName({
@@ -14,6 +17,9 @@ class AnimatedSvipName extends StatefulWidget {
     required this.name,
     required this.activeSvipLevel,
     required this.svipValidUntilMonth,
+    this.activeVipLevel = 0,
+    this.vipValidUntilMonth = '',
+    this.vipValidUntil,
     this.style,
   });
 
@@ -22,14 +28,16 @@ class AnimatedSvipName extends StatefulWidget {
 }
 
 class _AnimatedSvipNameState extends State<AnimatedSvipName> with SingleTickerProviderStateMixin {
-  // Global cache for SVIP configs to avoid excessive Firestore reads
-  static final Map<String, dynamic> _svipConfigsCache = {};
+  // Global cache for SVIP and VIP configs to avoid excessive Firestore reads
+  static final Map<String, dynamic> _configsCache = {};
   static bool _isLoadingCache = false;
   static DateTime? _lastCacheTime;
   
   late AnimationController _animationController;
   Map<String, dynamic>? _myConfig;
+  bool _isStyleActive = false;
   bool _isSvipActive = false;
+  bool _isVipActive = false;
 
   @override
   void initState() {
@@ -41,7 +49,11 @@ class _AnimatedSvipNameState extends State<AnimatedSvipName> with SingleTickerPr
   @override
   void didUpdateWidget(AnimatedSvipName oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.activeSvipLevel != widget.activeSvipLevel || oldWidget.svipValidUntilMonth != widget.svipValidUntilMonth) {
+    if (oldWidget.activeSvipLevel != widget.activeSvipLevel || 
+        oldWidget.svipValidUntilMonth != widget.svipValidUntilMonth ||
+        oldWidget.activeVipLevel != widget.activeVipLevel ||
+        oldWidget.vipValidUntilMonth != widget.vipValidUntilMonth ||
+        oldWidget.vipValidUntil != widget.vipValidUntil) {
       _checkSvipStatus();
     }
   }
@@ -57,22 +69,38 @@ class _AnimatedSvipNameState extends State<AnimatedSvipName> with SingleTickerPr
     final currentMonth = "${now.year}-${now.month.toString().padLeft(2, '0')}";
     
     _isSvipActive = widget.activeSvipLevel > 0 && widget.svipValidUntilMonth == currentMonth;
+    _isVipActive = widget.activeVipLevel > 0 && 
+        ((widget.vipValidUntil != null && widget.vipValidUntil!.isAfter(now)) || 
+         widget.vipValidUntilMonth == currentMonth);
+    _isStyleActive = _isSvipActive || _isVipActive;
     
-    if (_isSvipActive) {
+    if (_isStyleActive) {
       _loadConfigForLevel();
+    } else {
+      if (mounted) {
+        setState(() {
+          _myConfig = null;
+        });
+      }
     }
   }
 
   Future<void> _loadConfigForLevel() async {
-    final levelId = 'vip${widget.activeSvipLevel}';
+    // Prioritize SVIP
+    final String collectionName = _isSvipActive ? 'svip_levels' : 'vip_levels';
+    final String levelId = _isSvipActive 
+        ? 'svip${widget.activeSvipLevel}' 
+        : 'vip${widget.activeVipLevel}';
+    
+    final cacheKey = '${collectionName}_$levelId';
     
     // Check if cache is fresh (less than 5 mins old)
-    if (_svipConfigsCache.containsKey(levelId) && 
+    if (_configsCache.containsKey(cacheKey) && 
         _lastCacheTime != null && 
         DateTime.now().difference(_lastCacheTime!).inMinutes < 5) {
       if (mounted) {
         setState(() {
-          _myConfig = _svipConfigsCache[levelId];
+          _myConfig = _configsCache[cacheKey];
         });
       }
       return;
@@ -82,13 +110,13 @@ class _AnimatedSvipNameState extends State<AnimatedSvipName> with SingleTickerPr
     if (!_isLoadingCache) {
       _isLoadingCache = true;
       try {
-        final snapshot = await FirebaseFirestore.instance.collection('config').doc('svip_levels').collection('levels').get();
+        final snapshot = await FirebaseFirestore.instance.collection('config').doc(collectionName).collection('levels').get();
         for (var doc in snapshot.docs) {
-          _svipConfigsCache[doc.id] = doc.data();
+          _configsCache['${collectionName}_${doc.id}'] = doc.data();
         }
         _lastCacheTime = DateTime.now();
       } catch (e) {
-        debugPrint('Error loading SVIP configs for animated name: $e');
+        debugPrint('Error loading $collectionName configs for animated name: $e');
       } finally {
         _isLoadingCache = false;
       }
@@ -99,7 +127,7 @@ class _AnimatedSvipNameState extends State<AnimatedSvipName> with SingleTickerPr
     
     if (mounted) {
       setState(() {
-        _myConfig = _svipConfigsCache[levelId];
+        _myConfig = _configsCache[cacheKey];
       });
     }
   }
@@ -114,7 +142,7 @@ class _AnimatedSvipNameState extends State<AnimatedSvipName> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
-    if (!_isSvipActive || _myConfig == null) {
+    if (!_isStyleActive || _myConfig == null) {
       return Text(widget.name, style: widget.style);
     }
     

@@ -11,6 +11,7 @@ import 'package:firebase_auth/firebase_auth.dart' as auth;
 import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:chat_messenger/services/device_session_service.dart';
 import 'package:chat_messenger/services/ban_service.dart';
+import 'package:chat_messenger/helpers/frame_helper.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' as cloud_firestore;
 
 import 'app_controller.dart';
@@ -136,22 +137,46 @@ class AuthController extends GetxController {
   }
 
   Future<void> _updateFrameUrl(User user) async {
-    if (user.customization?.selectedFrameId != null) {
+    final frameId = user.customization?.selectedFrameId;
+    if (frameId != null && frameId.isNotEmpty) {
       try {
-        final frameDetails = await _storeService
-            .getStoreItemDetails(user.customization!.selectedFrameId!);
+        final frameDetails = await _storeService.getStoreItemDetails(frameId);
         if (frameDetails != null) {
-          currentFrameUrl.value = frameDetails['fileUrl'] ??
+          final url = (frameDetails['fileUrl'] ??
               frameDetails['thumbnailUrl'] ??
               frameDetails['imageUrl'] ??
               frameDetails['image'] ??
-              '';
+              '') as String;
+          if (url.isNotEmpty) {
+            currentFrameUrl.value = url;
+            FrameHelper.setCachedUserFrame(
+              userId: user.userId,
+              frameId: frameId,
+              frameUrl: url,
+            );
+            return;
+          }
+        }
+        final resolved = await FrameHelper.getFrameUrl(frameId);
+        if (resolved != null && resolved.isNotEmpty) {
+          currentFrameUrl.value = resolved;
+          FrameHelper.setCachedUserFrame(
+            userId: user.userId,
+            frameId: frameId,
+            frameUrl: resolved,
+          );
+          return;
         }
       } catch (e) {
         debugPrint('❌ Error loading frame: $e');
       }
     } else {
       currentFrameUrl.value = '';
+      FrameHelper.setCachedUserFrame(
+        userId: user.userId,
+        frameId: null,
+        frameUrl: null,
+      );
     }
   }
 
@@ -208,8 +233,9 @@ class AuthController extends GetxController {
     DeviceSessionService.registerSession(firebaseUser!.uid);
 
     // Go to home page
-    Get.offAllNamed(AppRoutes.home)?.then((_) {
-      DeepLinkService.checkPendingRoom();
+    Get.offAllNamed(AppRoutes.home);
+    Future.delayed(const Duration(milliseconds: 500), () {
+      DeepLinkService.checkPendingDeepLinks();
     });
   }
 

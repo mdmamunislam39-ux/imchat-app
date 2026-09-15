@@ -27,6 +27,10 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
   final _descriptionController = TextEditingController();
   final _categoryController = TextEditingController();
   final _priceController = TextEditingController();
+  final _price3dController = TextEditingController();
+  final _price7dController = TextEditingController();
+  final _price15dController = TextEditingController();
+  final _price30dController = TextEditingController();
 
   late String _selectedType;
   File? _pngFile;
@@ -34,6 +38,7 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
   bool _isLoading = false;
   bool _fastMode = false;
   int _starRating = 1;
+  int _verifyLevel = 0;
 
   @override
   void initState() {
@@ -47,6 +52,14 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
       _priceController.text = widget.asset!['price']?.toString() ?? '0';
       _selectedType = widget.asset!['type'] ?? widget.initialType;
       _starRating = widget.asset!['starRating'] ?? 1;
+      _verifyLevel = widget.asset!['verifyLevel'] ?? widget.asset!['verificationLevel'] ?? 0;
+      if (widget.asset!['validityPrices'] != null && widget.asset!['validityPrices'] is Map) {
+        final vp = Map<String, dynamic>.from(widget.asset!['validityPrices']);
+        _price3dController.text = vp['3']?.toString() ?? '';
+        _price7dController.text = vp['7']?.toString() ?? '';
+        _price15dController.text = vp['15']?.toString() ?? '';
+        _price30dController.text = vp['30']?.toString() ?? '';
+      }
     } else {
       _categoryController.text = _selectedType == 'gift' ? 'love' : 'general';
     }
@@ -58,6 +71,10 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
     _descriptionController.dispose();
     _categoryController.dispose();
     _priceController.dispose();
+    _price3dController.dispose();
+    _price7dController.dispose();
+    _price15dController.dispose();
+    _price30dController.dispose();
     super.dispose();
   }
 
@@ -68,8 +85,8 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
       if (type == 'png') {
         extensions = ['png', 'jpg', 'jpeg'];
       } else {
-        // Animation file can be SVGA, MP4 (Alpha), or PNG
-        extensions = ['svga', 'mp4', 'png'];
+        // Animation file can be SVGA, MP4 (Alpha), VAP, or PNG
+        extensions = ['svga', 'mp4', 'vap', 'png'];
       }
 
       final result = await FilePicker.platform.pickFiles(
@@ -125,6 +142,16 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
       final category = _categoryController.text.trim();
       final price = int.tryParse(_priceController.text.trim()) ?? 0;
 
+      final Map<String, dynamic> validityPrices = {};
+      final p3 = int.tryParse(_price3dController.text.trim());
+      if (p3 != null && p3 > 0) validityPrices['3'] = p3;
+      final p7 = int.tryParse(_price7dController.text.trim());
+      if (p7 != null && p7 > 0) validityPrices['7'] = p7;
+      final p15 = int.tryParse(_price15dController.text.trim());
+      if (p15 != null && p15 > 0) validityPrices['15'] = p15;
+      final p30 = int.tryParse(_price30dController.text.trim());
+      if (p30 != null && p30 > 0) validityPrices['30'] = p30;
+
       if (widget.asset == null) {
         // Create new
         await widget.assetsService.addAsset(
@@ -137,6 +164,8 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
           animationFile: _fastMode ? null : _animationFile,
           skipFileUpload: _fastMode,
           starRating: _starRating,
+          verifyLevel: _verifyLevel,
+          validityPrices: validityPrices.isNotEmpty ? validityPrices : null,
         );
         _showSnackBar('Asset created successfully!');
         if (mounted) Navigator.of(context).pop(true);
@@ -152,6 +181,8 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
           pngFile: _pngFile,
           animationFile: _animationFile,
           starRating: _starRating,
+          verifyLevel: _verifyLevel,
+          validityPrices: validityPrices.isNotEmpty ? validityPrices : null,
         );
         _showSnackBar('Asset updated successfully!');
         if (mounted) Navigator.of(context).pop(true);
@@ -273,57 +304,187 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
                   ),
                   const SizedBox(height: 16),
                   
-                  // Star Rating Dropdown
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Star Rating',
-                        style: TextStyle(color: Colors.white.withAlpha(179), fontSize: 13, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(10),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white.withAlpha(20)),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            value: _starRating,
-                            dropdownColor: const Color(0xFF202125),
-                            icon: const Icon(Icons.star, color: Colors.amber),
-                            isExpanded: true,
-                            style: const TextStyle(color: Colors.white, fontSize: 14),
-                            items: [1, 2, 3, 4, 5].map((rating) {
-                              return DropdownMenuItem<int>(
-                                value: rating,
-                                child: Row(
-                                  children: [
-                                    Text('$rating Star${rating > 1 ? 's' : ''} '),
-                                    Row(
-                                      children: List.generate(
-                                        rating,
-                                        (index) => const Icon(Icons.star, color: Colors.amber, size: 14),
-                                      ),
-                                    ),
-                                  ],
+                  // Star Rating and Verify Level
+                  if (_selectedType == 'badge')
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Star Rating',
+                                style: TextStyle(
+                                    color: Colors.white.withAlpha(179),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withAlpha(10),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border:
+                                      Border.all(color: Colors.white.withAlpha(20)),
                                 ),
-                              );
-                            }).toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                setState(() {
-                                  _starRating = val;
-                                });
-                              }
-                            },
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<int>(
+                                    value: _starRating,
+                                    dropdownColor: const Color(0xFF202125),
+                                    icon: const Icon(Icons.star, color: Colors.amber),
+                                    isExpanded: true,
+                                    style: const TextStyle(
+                                        color: Colors.white, fontSize: 14),
+                                    items: [1, 2, 3, 4, 5].map((rating) {
+                                      return DropdownMenuItem<int>(
+                                        value: rating,
+                                        child: Row(
+                                          children: [
+                                            Text('$rating ★ '),
+                                            Row(
+                                              children: List.generate(
+                                                rating,
+                                                (index) => const Icon(Icons.star,
+                                                    color: Colors.amber, size: 12),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }).toList(),
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setState(() {
+                                          _starRating = val;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Verify Level (ভেরিফাই লেভেল)',
+                                style: TextStyle(
+                                    color: Colors.white.withAlpha(179),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withAlpha(10),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border:
+                                      Border.all(color: Colors.white.withAlpha(20)),
+                                ),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<int>(
+                                    value: _verifyLevel,
+                                    dropdownColor: const Color(0xFF202125),
+                                    icon: const Icon(Icons.verified,
+                                        color: Colors.tealAccent),
+                                    isExpanded: true,
+                                    style: const TextStyle(
+                                        color: Colors.white, fontSize: 14),
+                                    items: [
+                                      const DropdownMenuItem<int>(
+                                        value: 0,
+                                        child: Text('0 - Normal (নন-ভেরিফাই)'),
+                                      ),
+                                      ...List.generate(10, (index) {
+                                        final lvl = index + 1;
+                                        return DropdownMenuItem<int>(
+                                          value: lvl,
+                                          child: Row(
+                                            children: [
+                                              Text('Level $lvl '),
+                                              const Icon(Icons.verified,
+                                                  color: Colors.tealAccent, size: 14),
+                                            ],
+                                          ),
+                                        );
+                                      }),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setState(() {
+                                          _verifyLevel = val;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Star Rating',
+                          style: TextStyle(
+                              color: Colors.white.withAlpha(179),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withAlpha(10),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withAlpha(20)),
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<int>(
+                              value: _starRating,
+                              dropdownColor: const Color(0xFF202125),
+                              icon: const Icon(Icons.star, color: Colors.amber),
+                              isExpanded: true,
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              items: [1, 2, 3, 4, 5].map((rating) {
+                                return DropdownMenuItem<int>(
+                                  value: rating,
+                                  child: Row(
+                                    children: [
+                                      Text('$rating Star${rating > 1 ? 's' : ''} '),
+                                      Row(
+                                        children: List.generate(
+                                          rating,
+                                          (index) => const Icon(Icons.star,
+                                              color: Colors.amber, size: 14),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setState(() {
+                                    _starRating = val;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 16),
 
                   if (_selectedType != 'gift') ...[
@@ -346,7 +507,7 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
                   const SizedBox(height: 16),
 
                   _buildFilePicker(
-                    label: 'Dynamic Animation File (SVGA / MP4 Alpha / PNG)',
+                    label: 'Dynamic Animation File (SVGA / MP4 Alpha / VAP / PNG)',
                     file: _animationFile,
                     type: 'animation',
                     existingUrl: isEdit ? (widget.asset!['fileUrl']) : null,
@@ -555,6 +716,7 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
       'avatarFrame': '🖼️ Avatar Frame',
       'roomTheme': '🎙️ Room Theme',
       'backgroundTheme': '🎨 Profile Skin',
+      'roomEntry': '🚪 Room Entry Banner',
     };
 
     return Column(

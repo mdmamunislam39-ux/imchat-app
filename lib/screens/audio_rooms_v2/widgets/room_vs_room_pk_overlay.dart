@@ -56,6 +56,65 @@ class _RoomVsRoomPKOverlayState extends State<RoomVsRoomPKOverlay> with SingleTi
     return "$m:$s";
   }
 
+  Widget _buildPKBadgeHeader(String timeText, {bool isPunishment = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0x8024133A),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(16),
+          topLeft: Radius.circular(10),
+          topRight: Radius.circular(10),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Text(
+            'P',
+            style: TextStyle(
+              color: Color(0xFF2EB5FF),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              fontStyle: FontStyle.italic,
+              height: 1.0,
+            ),
+          ),
+          const Text(
+            'K',
+            style: TextStyle(
+              color: Color(0xFFFF2B67),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              fontStyle: FontStyle.italic,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            timeText,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 19,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Determine progress bar percentage
@@ -102,25 +161,11 @@ class _RoomVsRoomPKOverlayState extends State<RoomVsRoomPKOverlay> with SingleTi
               // Top Header (PK Timer)
               Padding(
                 padding: const EdgeInsets.only(top: 8, bottom: 20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      isPunishment ? 'Punishment' : 'PK',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                        fontStyle: FontStyle.italic,
-                        shadows: [Shadow(color: Colors.pink, blurRadius: 10)],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _formatTime(widget.match.startTime, widget.match.durationMinutes),
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ],
+                child: Center(
+                  child: _buildPKBadgeHeader(
+                    _formatTime(widget.match.startTime, widget.match.durationMinutes),
+                    isPunishment: isPunishment,
+                  ),
                 ),
               ),
               

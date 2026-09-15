@@ -20,6 +20,8 @@ import 'components/msg_appbar_tools.dart';
 import 'controllers/block_controller.dart';
 import 'components/bubble_message.dart';
 import 'components/chat_input_field.dart';
+import 'components/group_active_audio_room_bar.dart';
+import 'components/pending_friend_request_banner.dart';
 import 'components/group_date_separator.dart';
 import 'components/scroll_down_button.dart';
 import 'controllers/message_controller.dart';
@@ -89,6 +91,17 @@ class MessageScreen extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // <-- Active Group Audio Room Bar -->
+                if (isGroup)
+                  GroupActiveAudioRoomBar(
+                    controller: controller,
+                    overrideGroupId: groupId,
+                  ),
+
+                // <-- Pending Friend Request Banner (for 1-on-1 chats) -->
+                if (!isGroup && user != null)
+                  PendingFriendRequestBanner(user: user!),
+
                 // <-- List of Messages -->
                 Expanded(
                   child: Padding(
@@ -210,6 +223,7 @@ class MessageScreen extends StatelessWidget {
                               message: message,
                               user: user,
                               group: group,
+                              isReceiverOnline: controller.isReceiverOnline,
                               onTapProfile: message.isSender
                                   ? null
                                   : () => RoutesHelper.toProfileView(

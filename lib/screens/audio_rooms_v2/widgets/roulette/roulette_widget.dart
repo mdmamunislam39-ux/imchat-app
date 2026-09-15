@@ -115,7 +115,7 @@ class _RouletteWidgetState extends State<RouletteWidget> with SingleTickerProvid
                 children: [
                   // 1. The static outer ring PNG
                   Image.asset(
-                    'assets/images/roulette_ring.png',
+                    'assets/images/roulette_ring.webp',
                     width: 320,
                     height: 320,
                     fit: BoxFit.contain,
@@ -148,7 +148,7 @@ class _RouletteWidgetState extends State<RouletteWidget> with SingleTickerProvid
                       }
                     },
                     child: Image.asset(
-                      'assets/images/roulette_go.png',
+                      'assets/images/roulette_go.webp',
                       width: 90,
                       height: 90,
                       fit: BoxFit.contain,

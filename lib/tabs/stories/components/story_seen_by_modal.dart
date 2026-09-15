@@ -25,9 +25,10 @@ class StorySeenByModal extends StatelessWidget {
           topRight: Radius.circular(defaultRadius),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
           // Header
           Container(
             color: primaryColor,
@@ -85,6 +86,7 @@ class StorySeenByModal extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 }

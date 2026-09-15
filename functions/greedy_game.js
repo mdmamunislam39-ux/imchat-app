@@ -94,28 +94,16 @@ async function runGreedyTick() {
 
     const result = await roundRef.transaction((currentData) => {
         const now = Date.now();
-        const FULL_ROUND_TIME = DURATION_MS.BETTING + DURATION_MS.SPINNING + DURATION_MS.RESULT; // 37000ms
-
-        // Calculate expected deterministic round based on 10 PM BST start time
         const bstOffset = 6 * 60 * 60 * 1000;
         const bstDate = new Date(now + bstOffset);
-        let startBst = new Date(bstDate);
-        startBst.setUTCHours(22, 0, 0, 0);
-        if (bstDate.getUTCHours() < 22) {
-            startBst.setUTCDate(startBst.getUTCDate() - 1);
-        }
-        const startTimeMs = startBst.getTime() - bstOffset;
-        const timeSinceStart = now - startTimeMs;
-        const currentExpectedRound = Math.floor(timeSinceStart / FULL_ROUND_TIME) + 1;
-        const expectedDayId = startBst.toISOString().split('T')[0];
-        const currentRoundStartTime = startTimeMs + (currentExpectedRound - 1) * FULL_ROUND_TIME;
+        const expectedDayId = bstDate.toISOString().split('T')[0];
 
         if (!currentData) {
             return {
-                roundNumber: currentExpectedRound,
+                roundNumber: 1001,
                 dailyRoundDate: expectedDayId,
                 phase: PHASES.BETTING,
-                phaseEndTime: currentRoundStartTime + DURATION_MS.BETTING,
+                phaseEndTime: now + DURATION_MS.BETTING,
                 totalBets: {},
                 bets: {},
                 result: null,
@@ -123,39 +111,30 @@ async function runGreedyTick() {
             };
         }
 
-        if (now < currentData.phaseEndTime - 2000) return;
-
-        let timePassed = now - currentData.phaseEndTime;
-        
-        if (timePassed > FULL_ROUND_TIME) {
-            currentData.roundNumber = currentExpectedRound;
-            currentData.dailyRoundDate = expectedDayId;
-            currentData.phase = PHASES.BETTING;
-            currentData.phaseEndTime = currentRoundStartTime + DURATION_MS.BETTING;
-            currentData.totalBets = {};
-            currentData.bets = {};
-            currentData.winners = {};
-            currentData.result = null;
-            return currentData;
+        // Only transition if phase duration has ended (500ms safety buffer)
+        if (currentData.phaseEndTime && now < currentData.phaseEndTime - 500) {
+            return;
         }
+
+        const currentRoundNumber = currentData.roundNumber || 1000;
 
         if (currentData.phase === PHASES.BETTING) {
             currentData.phase = PHASES.SPINNING;
-            currentData.phaseEndTime = (currentData.phaseEndTime || now) + DURATION_MS.SPINNING;
+            currentData.phaseEndTime = now + DURATION_MS.SPINNING;
             currentData.result = 'PENDING';
             return currentData;
         }
         else if (currentData.phase === PHASES.SPINNING) {
             currentData.phase = PHASES.RESULT;
-            currentData.phaseEndTime = (currentData.phaseEndTime || now) + DURATION_MS.RESULT;
+            currentData.phaseEndTime = now + DURATION_MS.RESULT;
             return currentData;
         }
-        else if (currentData.phase === PHASES.RESULT) {
+        else if (currentData.phase === PHASES.RESULT || !currentData.phase) {
             return {
-                roundNumber: currentExpectedRound,
+                roundNumber: currentRoundNumber + 1,
                 dailyRoundDate: expectedDayId,
                 phase: PHASES.BETTING,
-                phaseEndTime: currentRoundStartTime + DURATION_MS.BETTING,
+                phaseEndTime: now + DURATION_MS.BETTING,
                 totalBets: {},
                 bets: {},
                 result: null,

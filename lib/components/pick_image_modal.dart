@@ -71,47 +71,49 @@ class PickImageModal extends StatelessWidget {
           topRight: Radius.circular(defaultRadius),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                margin: const EdgeInsets.only(left: 8.0),
-                padding: const EdgeInsets.all(8.0),
-                child: Text(
-                  'photo'.tr,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(left: 8.0),
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text(
+                    'photo'.tr,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
                   ),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, color: greyColor),
-                onPressed: () => Get.back(),
-              ),
-            ],
-          ),
-          const Divider(height: 0),
-          ListTile(
-            leading: const Icon(IconlyLight.image),
-            title: Text('gallery'.tr),
-            onTap: () async {
-              File? croppedImage = await _pickAndCropImage(ImageSource.gallery);
-              Get.back(result: croppedImage);
-            },
-          ),
-          ListTile(
-            leading: const Icon(IconlyLight.camera),
-            title: Text('camera'.tr),
-            onTap: () async {
-              File? croppedImage = await _pickAndCropImage(ImageSource.camera);
-              Get.back(result: croppedImage);
-            },
-          ),
-        ],
+                IconButton(
+                  icon: const Icon(Icons.close, color: greyColor),
+                  onPressed: () => Get.back(),
+                ),
+              ],
+            ),
+            const Divider(height: 0),
+            ListTile(
+              leading: const Icon(IconlyLight.image),
+              title: Text('gallery'.tr),
+              onTap: () async {
+                File? croppedImage = await _pickAndCropImage(ImageSource.gallery);
+                Get.back(result: croppedImage);
+              },
+            ),
+            ListTile(
+              leading: const Icon(IconlyLight.camera),
+              title: Text('camera'.tr),
+              onTap: () async {
+                File? croppedImage = await _pickAndCropImage(ImageSource.camera);
+                Get.back(result: croppedImage);
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

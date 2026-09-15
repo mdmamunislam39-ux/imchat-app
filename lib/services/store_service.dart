@@ -3,11 +3,49 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
+import 'package:chat_messenger/helpers/frame_helper.dart';
+import 'package:chat_messenger/helpers/mic_refill_helper.dart';
+import 'package:get/get.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
+import 'package:chat_messenger/models/user.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_controller.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/repository/audio_rooms_repository.dart';
+import 'package:chat_messenger/models/audio_room_v2.dart';
 
 /// Service for managing store items and user purchases
 class StoreService {
+  /// Helper to check if an item is categorized as Official
+  static bool _isOfficialCategory(dynamic category, dynamic isOfficial) {
+    if (isOfficial == true) return true;
+    if (category == null) return false;
+    final catStr = category.toString().toLowerCase().trim();
+    return catStr == 'official' ||
+        catStr == 'officialstore' ||
+        catStr == 'official_store';
+  }
+
   static const String _storeItemsCollection = 'market_items';
   static const String _userStoreItemsCollection = 'user_store_items';
+
+  // Static in-memory cache for fast lookup across screens & scroll rebuilds
+  static final Map<String, Map<String, dynamic>> _itemDetailsCache = {};
+  static final Map<String, Future<Map<String, dynamic>?>> _inFlightItemDetails =
+      {};
+
+  /// Synchronous cached details lookup
+  static Map<String, dynamic>? getCachedItemDetails(String storeItemId) =>
+      _itemDetailsCache[storeItemId];
+
+  /// Cache invalidation/manual population
+  static void setCachedStoreItemDetails(
+      String storeItemId, Map<String, dynamic> data) {
+    _itemDetailsCache[storeItemId] = data;
+  }
+
+  static void clearStoreItemDetailsCache() {
+    _itemDetailsCache.clear();
+    _inFlightItemDetails.clear();
+  }
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Uuid _uuid = const Uuid();
@@ -27,13 +65,16 @@ class StoreService {
                 'id': doc.id,
                 ...doc.data(),
               })
+          .where((item) =>
+              (item['type'] == 'seatDecor' || item['type'] == 'backgroundTheme') ||
+              !_isOfficialCategory(item['category'], item['isOfficial']))
           .toList();
 
       items.sort((a, b) {
         final starA = a['starRating'] as int? ?? 1;
         final starB = b['starRating'] as int? ?? 1;
         if (starA != starB) return starB.compareTo(starA);
-        
+
         final dateA = a['createdAt'] as Timestamp?;
         final dateB = b['createdAt'] as Timestamp?;
         if (dateA == null && dateB == null) return 0;
@@ -66,6 +107,8 @@ class StoreService {
                 'id': doc.id,
                 ...doc.data(),
               })
+          .where((item) =>
+              !_isOfficialCategory(item['category'], item['isOfficial']))
           .toList();
 
       items.sort((a, b) {
@@ -92,7 +135,8 @@ class StoreService {
   /// Queries BOTH 'market_items' and 'store_items' collections and merges results.
   /// This ensures items from both old (store_items) and new (market_items) admin paths appear.
   Stream<List<Map<String, dynamic>>> getStoreItemsByTypeStream(String type) {
-    debugPrint('🏪 StoreService: Listening to $type items from both collections');
+    debugPrint(
+        '🏪 StoreService: Listening to $type items from both collections');
 
     // Keep latest snapshot from each collection
     List<Map<String, dynamic>> marketItems = [];
@@ -106,7 +150,10 @@ class StoreService {
       // Combine and deduplicate by doc id
       final seen = <String>{};
       final combined = <Map<String, dynamic>>[];
-      for (final item in <Map<String, dynamic>>[...marketItems, ...legacyItems]) {
+      for (final item in <Map<String, dynamic>>[
+        ...marketItems,
+        ...legacyItems
+      ]) {
         final id = item['id'] as String? ?? '';
         if (id.isNotEmpty && seen.add(id)) {
           combined.add(item);
@@ -124,9 +171,17 @@ class StoreService {
       return combined;
     }
 
-    List<Map<String, dynamic>> parseSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    List<Map<String, dynamic>> parseSnapshot(
+        QuerySnapshot<Map<String, dynamic>> snapshot) {
       return snapshot.docs
-          .where((doc) => doc.data()['isActive'] != false)
+          .where((doc) {
+            final data = doc.data();
+            if (data['isActive'] == false) return false;
+            if (type != 'seatDecor' && type != 'backgroundTheme' && _isOfficialCategory(data['category'], data['isOfficial'])) {
+              return false;
+            }
+            return true;
+          })
           .map((doc) => <String, dynamic>{'id': doc.id, ...doc.data()})
           .toList();
     }
@@ -167,7 +222,6 @@ class StoreService {
 
     return controller.stream;
   }
-
 
   /// Get store items by category
   Future<List<Map<String, dynamic>>> getStoreItemsByCategory(
@@ -241,7 +295,8 @@ class StoreService {
   /// Uses only a single-field 'userId' filter to avoid needing a composite index.
   /// isActive is filtered client-side.
   Stream<List<Map<String, dynamic>>> getUserStoreItemsStream(String userId) {
-    debugPrint('🏪 StoreService: Listening to user store items for user $userId');
+    debugPrint(
+        '🏪 StoreService: Listening to user store items for user $userId');
     return _firestore
         .collection(_userStoreItemsCollection)
         .where('userId', isEqualTo: userId)
@@ -266,7 +321,8 @@ class StoreService {
         if (dateB == null) return -1;
         return dateB.compareTo(dateA);
       });
-      debugPrint('🏪 StoreService: user store items stream → ${items.length} active items');
+      debugPrint(
+          '🏪 StoreService: user store items stream → ${items.length} active items');
       return items;
     });
   }
@@ -307,26 +363,45 @@ class StoreService {
   Stream<List<Map<String, dynamic>>> getUserStoreItemsByTypeStream(
       String userId, String type) {
     try {
-      debugPrint('🏪 StoreService: Listening to user items of type $type for user $userId');
-      return _firestore
+      debugPrint(
+          '🏪 StoreService: Listening to user items of type $type for user $userId');
+
+      // Support type aliases so avatarFrame/frame, entryEffect/entry_effect both match
+      List<String> types = [type];
+      if (type == 'avatarFrame' || type == 'frame') {
+        types = ['avatarFrame', 'frame'];
+      } else if (type == 'entryEffect' || type == 'entry_effect') {
+        types = ['entryEffect', 'entry_effect'];
+      } else if (type == 'backgroundTheme' || type == 'profileSkin') {
+        types = ['backgroundTheme', 'profileSkin'];
+      }
+
+      Query query = _firestore
           .collection(_userStoreItemsCollection)
           .where('userId', isEqualTo: userId)
-          .where('itemType', isEqualTo: type)
-          .where('isActive', isEqualTo: true)
-          .snapshots()
-          .map((snapshot) {
+          .where('isActive', isEqualTo: true);
+
+      if (types.length == 1) {
+        query = query.where('itemType', isEqualTo: types.first);
+      } else {
+        query = query.where('itemType', whereIn: types);
+      }
+
+      return query.snapshots().map((snapshot) {
         final rawItems = snapshot.docs
             .map((doc) => {
                   'id': doc.id,
-                  ...doc.data(),
+                  ...(doc.data() as Map<String, dynamic>),
                 })
             .toList();
         return _deduplicateItems(rawItems);
       });
     } catch (e, stackTrace) {
-      debugPrint('❌ StoreService: Error creating stream for user store items by type: $e');
+      debugPrint(
+          '❌ StoreService: Error creating stream for user store items by type: $e');
       debugPrint('❌ StoreService: Stack trace: $stackTrace');
-      throw Exception('Failed to create stream for user store items by type: $e');
+      throw Exception(
+          'Failed to create stream for user store items by type: $e');
     }
   }
 
@@ -377,10 +452,8 @@ class StoreService {
       } else if (assetData != null) {
         storeItemData = assetData;
       } else {
-        final oldDoc = await _firestore
-            .collection('store_items')
-            .doc(storeItemId)
-            .get();
+        final oldDoc =
+            await _firestore.collection('store_items').doc(storeItemId).get();
         if (oldDoc.exists) {
           storeItemData = oldDoc.data()!;
         } else {
@@ -396,8 +469,10 @@ class StoreService {
         'id': userStoreItemId,
         'userId': userId,
         'storeItemId': storeItemId,
-        'storeItemName': storeItemData['name'] ?? storeItemData['title'] ?? 'Item',
-        'itemType': storeItemData['type'] ?? storeItemData['category'] ?? 'avatarFrame',
+        'storeItemName':
+            storeItemData['name'] ?? storeItemData['title'] ?? 'Item',
+        'itemType':
+            storeItemData['type'] ?? storeItemData['category'] ?? 'avatarFrame',
         'assignedAt': FieldValue.serverTimestamp(),
         'expiresAt': expirationDays != null
             ? Timestamp.fromDate(
@@ -413,15 +488,33 @@ class StoreService {
           .set(userStoreItemData);
 
       // Also ensure Users/{userId} customization array contains item ID
-      final String itemType = storeItemData['type'] ?? storeItemData['category'] ?? '';
+      final String itemType =
+          storeItemData['type'] ?? storeItemData['category'] ?? '';
       String? fieldToUpdate;
       switch (itemType) {
-        case 'entryEffect': fieldToUpdate = 'customization.ownedEntryEffects'; break;
+        case 'entryEffect':
+          fieldToUpdate = 'customization.ownedEntryEffects';
+          break;
         case 'avatarFrame':
-        case 'frame': fieldToUpdate = 'customization.ownedFrames'; break;
-        case 'roomTheme': fieldToUpdate = 'customization.ownedRoomThemes'; break;
+        case 'frame':
+          fieldToUpdate = 'customization.ownedFrames';
+          break;
+        case 'roomTheme':
+          fieldToUpdate = 'customization.ownedRoomThemes';
+          break;
         case 'backgroundTheme':
-        case 'profileSkin': fieldToUpdate = 'customization.ownedBackgroundThemes'; break;
+        case 'profileSkin':
+          fieldToUpdate = 'customization.ownedBackgroundThemes';
+          break;
+        case 'roomProfileBackground':
+          fieldToUpdate = 'customization.ownedRoomProfileBackgrounds';
+          break;
+        case 'shortProfileTheme':
+          fieldToUpdate = 'customization.ownedShortProfileThemes';
+          break;
+        case 'roomEntry':
+          fieldToUpdate = 'customization.ownedRoomEntries';
+          break;
       }
 
       if (fieldToUpdate != null) {
@@ -445,7 +538,8 @@ class StoreService {
           assetCategory: storeItemData['type'] ?? 'Store Item',
         );
       } catch (e) {
-        debugPrint('⚠️ StoreService: Error sending assignment notification: $e');
+        debugPrint(
+            '⚠️ StoreService: Error sending assignment notification: $e');
       }
 
       debugPrint('🏪 StoreService: Successfully assigned store item to user');
@@ -496,6 +590,33 @@ class StoreService {
 
   /// Get store item details
   Future<Map<String, dynamic>?> getStoreItemDetails(String storeItemId) async {
+    if (storeItemId.trim().isEmpty) return null;
+
+    // 1. Check in-memory cache
+    if (_itemDetailsCache.containsKey(storeItemId)) {
+      return _itemDetailsCache[storeItemId];
+    }
+
+    // 2. Check in-flight requests to avoid concurrent duplicate network fetches
+    if (_inFlightItemDetails.containsKey(storeItemId)) {
+      return await _inFlightItemDetails[storeItemId];
+    }
+
+    final future = _fetchStoreItemDetails(storeItemId);
+    _inFlightItemDetails[storeItemId] = future;
+    try {
+      final res = await future;
+      if (res != null) {
+        _itemDetailsCache[storeItemId] = res;
+      }
+      return res;
+    } finally {
+      _inFlightItemDetails.remove(storeItemId);
+    }
+  }
+
+  Future<Map<String, dynamic>?> _fetchStoreItemDetails(
+      String storeItemId) async {
     try {
       debugPrint(
           '🏪 StoreService: Fetching store item details for $storeItemId');
@@ -507,23 +628,166 @@ class StoreService {
       if (doc.exists) {
         final data = doc.data()!;
         debugPrint('🏪 StoreService: Retrieved store item details');
-        return {
+        final result = {
           'id': doc.id,
           ...data,
         };
+        _itemDetailsCache[storeItemId] = result;
+        return result;
       }
 
-      final oldDoc = await _firestore
-          .collection('store_items')
-          .doc(storeItemId)
-          .get();
+      final oldDoc =
+          await _firestore.collection('store_items').doc(storeItemId).get();
 
       if (oldDoc.exists) {
         final data = oldDoc.data()!;
-        return {
+        final result = {
           'id': oldDoc.id,
           ...data,
         };
+        _itemDetailsCache[storeItemId] = result;
+        return result;
+      }
+
+      // Fallback 0: Check official_items collection
+      final officialDoc =
+          await _firestore.collection('official_items').doc(storeItemId).get();
+
+      if (officialDoc.exists) {
+        final data = officialDoc.data()!;
+        final result = {
+          'id': officialDoc.id,
+          ...data,
+        };
+        _itemDetailsCache[storeItemId] = result;
+        return result;
+      }
+
+      // Fallback 1: Check user_store_items collection by storeItemId
+      final userStoreSnap = await _firestore
+          .collection(_userStoreItemsCollection)
+          .where('storeItemId', isEqualTo: storeItemId)
+          .limit(1)
+          .get();
+      if (userStoreSnap.docs.isNotEmpty) {
+        final data = userStoreSnap.docs.first.data();
+        final rawUrl = data['imageUrl'] ??
+            data['fileUrl'] ??
+            data['thumbnailUrl'] ??
+            data['image'];
+        final result = {
+          ...data,
+          'id': storeItemId,
+          'name': data['storeItemName'] ?? data['name'] ?? 'Equipped Item',
+        };
+        if (rawUrl != null && rawUrl.toString().trim().isNotEmpty) {
+          final validRaw = rawUrl.toString().trim();
+          result['fileUrl'] = validRaw;
+          result['thumbnailUrl'] = validRaw;
+          result['imageUrl'] = validRaw;
+        }
+        _itemDetailsCache[storeItemId] = result;
+        return result;
+      }
+
+      // Fallback 2: Check VIP / SVIP configs
+      if (storeItemId.startsWith('vip_') || storeItemId.startsWith('svip_')) {
+        final isSvip = storeItemId.startsWith('svip_');
+        final levelNum = storeItemId.replaceAll(RegExp(r'[^0-9]'), '');
+        final col = isSvip ? 'svip_levels' : 'vip_levels';
+
+        final candidateDocIds = isSvip
+            ? ['svip$levelNum', 'level_$levelNum', 'svip_$levelNum', levelNum]
+            : ['vip$levelNum', 'level_$levelNum', 'vip_$levelNum', levelNum];
+
+        Map<String, dynamic>? data;
+        for (final docId in candidateDocIds) {
+          try {
+            final cfgDoc = await _firestore
+                .collection('config')
+                .doc(col)
+                .collection('levels')
+                .doc(docId)
+                .get();
+            if (cfgDoc.exists && cfgDoc.data() != null) {
+              data = cfgDoc.data()!;
+              break;
+            }
+          } catch (_) {}
+        }
+
+        if (data != null) {
+          String? extract(List<String> keys) {
+            for (final k in keys) {
+              final v = data![k];
+              if (v != null && v.toString().trim().isNotEmpty) {
+                return v.toString().trim();
+              }
+            }
+            return null;
+          }
+
+          String? url;
+          String type = 'avatarFrame';
+          String typeName = 'Frame';
+          if (storeItemId.contains('frame')) {
+            url =
+                extract(['frameMediaUrl', 'frameUrl', 'avatarFrame', 'frame']);
+            type = 'avatarFrame';
+            typeName = 'Frame';
+          } else if (storeItemId.contains('badge')) {
+            url = extract(['badgeMediaUrl', 'badgeUrl', 'badge']);
+            type = 'badge';
+            typeName = 'Badge';
+          } else if (storeItemId.contains('entry')) {
+            url = extract([
+              'entryEffectMediaUrl',
+              'entryEffectUrl',
+              'entryTagUrl',
+              'entryEffect'
+            ]);
+            type = 'entryEffect';
+            typeName = 'Entry Effect';
+          } else if (storeItemId.contains('skin') ||
+              storeItemId.contains('theme')) {
+            url = extract([
+              'profileSkinMediaUrl',
+              'profileSkinUrl',
+              'profileCardUrl',
+              'profileSkin',
+              'backgroundTheme'
+            ]);
+            type = 'backgroundTheme';
+            typeName = 'Profile Skin';
+          } else if (storeItemId.contains('nameplate') ||
+              storeItemId.contains('tag')) {
+            url = extract([
+              'nameplateMediaUrl',
+              'nameplateUrl',
+              'svipTagUrl',
+              'nameplate',
+              'svipTag'
+            ]);
+            type = 'nameplate';
+            typeName = 'Nameplate';
+          }
+
+          final result = {
+            ...data,
+            'id': storeItemId,
+            'name': '${isSvip ? "SVIP" : "VIP"} $levelNum $typeName',
+            'itemType': type,
+          };
+          if (url != null && url.toString().trim().isNotEmpty) {
+            final validUrl = url.toString().trim();
+            result['fileUrl'] = validUrl;
+            result['thumbnailUrl'] = validUrl;
+            result['imageUrl'] = validUrl;
+            result['badgeUrl'] = validUrl;
+          }
+          _itemDetailsCache[storeItemId] = result;
+          return result;
+        }
       }
 
       return null;
@@ -655,9 +919,21 @@ class StoreService {
         case 'roomProfileBackground':
           fieldName = 'customization.selectedRoomProfileBackgroundId';
           break;
-        case 'nameplate':
-          fieldName = 'customization.selectedNameplateId';
+        case 'shortProfileTheme':
+          fieldName = 'customization.selectedShortProfileThemeId';
           break;
+        case 'roomEntry':
+          fieldName = 'customization.selectedRoomEntryId';
+          break;
+        case 'nameplate':
+          await _firestore.collection('Users').doc(userId).update({
+            'customization.selectedNameplateIds':
+                FieldValue.arrayUnion([itemId]),
+            'customization.selectedNameplateId': itemId,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          debugPrint('🏪 StoreService: Successfully equipped item');
+          return true;
         case 'micRefill':
           fieldName = 'customization.selectedMicRefillId';
           break;
@@ -670,6 +946,54 @@ class StoreService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
+      if (itemType == 'avatarFrame' || itemType == 'frame') {
+        final details = await getStoreItemDetails(itemId);
+        final rawUrl = details?['fileUrl'] ??
+            details?['thumbnailUrl'] ??
+            details?['imageUrl'] ??
+            details?['image'];
+        final String? resolvedUrl = rawUrl?.toString();
+        FrameHelper.setCachedUserFrame(
+          userId: userId,
+          frameId: itemId,
+          frameUrl: resolvedUrl,
+        );
+        try {
+          if (Get.isRegistered<AuthController>()) {
+            final auth = AuthController.instance;
+            if (auth.currentUser.userId == userId) {
+              auth.currentFrameUrl.value = resolvedUrl ?? '';
+              final cust =
+                  auth.currentUser.customization ?? UserCustomization();
+              cust.selectedFrameId = itemId;
+              auth.currentUser.customization = cust;
+            }
+          }
+        } catch (_) {}
+        _syncFrameToActiveRoom(userId, itemId);
+      }
+
+      if (itemType == 'micRefill') {
+        final details = await getStoreItemDetails(itemId);
+        final rawUrl = details?['fileUrl'] ??
+            details?['thumbnailUrl'] ??
+            details?['imageUrl'] ??
+            details?['image'];
+        final String? resolvedUrl = rawUrl?.toString();
+        MicRefillHelper.setCachedUserMicRefill(userId, resolvedUrl);
+        try {
+          if (Get.isRegistered<AuthController>()) {
+            final auth = AuthController.instance;
+            if (auth.currentUser.userId == userId) {
+              final cust =
+                  auth.currentUser.customization ?? UserCustomization();
+              cust.selectedMicRefillId = itemId;
+              auth.currentUser.customization = cust;
+            }
+          }
+        } catch (_) {}
+      }
+
       debugPrint('🏪 StoreService: Successfully equipped item');
       return true;
     } catch (e, stackTrace) {
@@ -680,10 +1004,37 @@ class StoreService {
   }
 
   /// Unequip an item
-  Future<bool> unequipItem(String userId, String itemType) async {
+  Future<bool> unequipItem(String userId, String itemType,
+      [String? itemId]) async {
     try {
       debugPrint(
           '🏪 StoreService: Unequipping item of type $itemType for user $userId');
+
+      if (itemType == 'nameplate' && itemId != null && itemId.isNotEmpty) {
+        final userDoc = await _firestore.collection('Users').doc(userId).get();
+        final cust = userDoc.data()?['customization'] as Map<String, dynamic>?;
+        final List<dynamic> currentIds = cust?['selectedNameplateIds'] != null
+            ? List.from(cust!['selectedNameplateIds'])
+            : [];
+        currentIds.remove(itemId);
+        final newFirst =
+            currentIds.isNotEmpty ? currentIds.first as String : null;
+
+        final updates = <String, dynamic>{
+          'customization.selectedNameplateIds':
+              FieldValue.arrayRemove([itemId]),
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+        if (newFirst != null) {
+          updates['customization.selectedNameplateId'] = newFirst;
+        } else {
+          updates['customization.selectedNameplateId'] = FieldValue.delete();
+        }
+
+        await _firestore.collection('Users').doc(userId).update(updates);
+        debugPrint('🏪 StoreService: Successfully unequipped nameplate');
+        return true;
+      }
 
       String fieldName;
       switch (itemType) {
@@ -707,6 +1058,12 @@ class StoreService {
         case 'roomProfileBackground':
           fieldName = 'customization.selectedRoomProfileBackgroundId';
           break;
+        case 'shortProfileTheme':
+          fieldName = 'customization.selectedShortProfileThemeId';
+          break;
+        case 'roomEntry':
+          fieldName = 'customization.selectedRoomEntryId';
+          break;
         case 'nameplate':
           fieldName = 'customization.selectedNameplateId';
           break;
@@ -722,6 +1079,39 @@ class StoreService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
+      if (itemType == 'avatarFrame' || itemType == 'frame') {
+        FrameHelper.setCachedUserFrame(
+            userId: userId, frameId: null, frameUrl: null);
+        try {
+          if (Get.isRegistered<AuthController>()) {
+            final auth = AuthController.instance;
+            if (auth.currentUser.userId == userId) {
+              auth.currentFrameUrl.value = '';
+              final cust =
+                  auth.currentUser.customization ?? UserCustomization();
+              cust.selectedFrameId = null;
+              auth.currentUser.customization = cust;
+            }
+          }
+        } catch (_) {}
+        _syncFrameToActiveRoom(userId, null);
+      }
+
+      if (itemType == 'micRefill') {
+        MicRefillHelper.setCachedUserMicRefill(userId, null);
+        try {
+          if (Get.isRegistered<AuthController>()) {
+            final auth = AuthController.instance;
+            if (auth.currentUser.userId == userId) {
+              final cust =
+                  auth.currentUser.customization ?? UserCustomization();
+              cust.selectedMicRefillId = null;
+              auth.currentUser.customization = cust;
+            }
+          }
+        } catch (_) {}
+      }
+
       debugPrint('🏪 StoreService: Successfully unequipped item');
       return true;
     } catch (e, stackTrace) {
@@ -731,8 +1121,40 @@ class StoreService {
     }
   }
 
+  /// Sync equipped or unequipped frame to active minimized audio room in real time
+  void _syncFrameToActiveRoom(String userId, String? frameId) {
+    try {
+      if (Get.isRegistered<MinimizedRoomController>()) {
+        final minCtrl = MinimizedRoomController.instance;
+        if (minCtrl.hasMinimizedRoom && minCtrl.minimizedRoom != null) {
+          final room = minCtrl.minimizedRoom!;
+          final pIdx = room.participants.indexWhere((p) => p.userId == userId);
+          if (pIdx != -1) {
+            final updated = room.participants[pIdx].copyWith(frameId: frameId);
+            final newParticipants =
+                List<AudioRoomParticipant>.from(room.participants);
+            newParticipants[pIdx] = updated;
+            minCtrl.updateMinimizedRoom(
+                room.copyWith(participants: newParticipants));
+          }
+          AudioRoomsRepository()
+              .updateParticipantFrameId(
+                roomId: room.id,
+                userId: userId,
+                frameId: frameId,
+              )
+              .catchError((e) =>
+                  debugPrint('Error syncing frame to minimized room: $e'));
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [StoreService] Error syncing frame to active room: $e');
+    }
+  }
+
   /// Helper to deduplicate items by storeItemId for legacy duplicates
-  List<Map<String, dynamic>> _deduplicateItems(List<Map<String, dynamic>> items) {
+  List<Map<String, dynamic>> _deduplicateItems(
+      List<Map<String, dynamic>> items) {
     final Map<String, Map<String, dynamic>> deduplicated = {};
     for (var item in items) {
       final storeItemId = item['storeItemId'] as String?;
@@ -742,8 +1164,9 @@ class StoreService {
         } else {
           // Keep the one with the latest expiration date or permanent
           final currentExpiry = item['expiresAt'] as Timestamp?;
-          final existingExpiry = deduplicated[storeItemId]!['expiresAt'] as Timestamp?;
-          
+          final existingExpiry =
+              deduplicated[storeItemId]!['expiresAt'] as Timestamp?;
+
           if (currentExpiry == null && existingExpiry != null) {
             deduplicated[storeItemId] = item; // Permanent beats temporary
           } else if (currentExpiry != null && existingExpiry != null) {

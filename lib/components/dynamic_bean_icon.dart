@@ -8,7 +8,7 @@ class DynamicBeanIcon extends StatelessWidget {
     super.key,
     this.width = 16,
     this.height = 16,
-    this.fallbackIcon = 'assets/images/cashout.png', // Typical fallback for beans
+    this.fallbackIcon = 'assets/images/cashout.webp', // Typical fallback for beans
     this.color,
   });
 

@@ -452,6 +452,38 @@ class ToggleAllSeatsLock extends AudioRoomsEvent {
   List<Object?> get props => [roomId, hostId, isLocked];
 }
 
+/// Event to mute/unmute all mics
+class ToggleAllMicsMute extends AudioRoomsEvent {
+  final String roomId;
+  final String hostId;
+  final bool muteAll;
+
+  const ToggleAllMicsMute({
+    required this.roomId,
+    required this.hostId,
+    required this.muteAll,
+  });
+
+  @override
+  List<Object?> get props => [roomId, hostId, muteAll];
+}
+
+/// Event to ban/unban comments for all users
+class ToggleAllCommentsBan extends AudioRoomsEvent {
+  final String roomId;
+  final String hostId;
+  final bool banAll;
+
+  const ToggleAllCommentsBan({
+    required this.roomId,
+    required this.hostId,
+    required this.banAll,
+  });
+
+  @override
+  List<Object?> get props => [roomId, hostId, banAll];
+}
+
 
 /// Event to move participant to different seat
 class MoveParticipantToSeat extends AudioRoomsEvent {
@@ -647,6 +679,7 @@ class JoinAgoraChannel extends AudioRoomsEvent {
   final String? token;
   final bool isMuted;
   final bool isVideo;
+  final bool isSeated;
 
   const JoinAgoraChannel({
     required this.channelName,
@@ -658,16 +691,22 @@ class JoinAgoraChannel extends AudioRoomsEvent {
     this.token,
     this.isMuted = true, // Default to muted for new participants
     this.isVideo = false,
+    this.isSeated = false,
   });
 
   @override
   List<Object?> get props =>
-      [channelName, uid, userId, userName, userImageUrl, token, isMuted];
+      [channelName, uid, userId, userName, userImageUrl, token, isMuted, isVideo, isSeated];
 }
 
 /// Leave Agora channel
 class LeaveAgoraChannel extends AudioRoomsEvent {
-  const LeaveAgoraChannel();
+  final String? channelName;
+
+  const LeaveAgoraChannel({this.channelName});
+
+  @override
+  List<Object?> get props => [channelName];
 }
 
 /// Toggle microphone mute

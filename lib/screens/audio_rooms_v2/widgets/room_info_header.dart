@@ -4,6 +4,7 @@ import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
 import 'package:fluttericon/elusive_icons.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/top_exposure_header_pill.dart';
 
 /// Room information header widget
 class RoomInfoHeader extends StatelessWidget {
@@ -80,15 +81,30 @@ class RoomInfoHeader extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      room.name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            room.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (room.isOfficial) ...[
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.verified,
+                            color: Color(0xFF1DA1F2),
+                            size: 16,
+                          ),
+                        ],
+                      ],
                     ),
                     Text(
                       'Members: ${room.participantCount}',
@@ -101,37 +117,50 @@ class RoomInfoHeader extends StatelessWidget {
                 ),
               ),
               
-              // Right side buttons (like in screenshot)
-              Row(
+              // Right side buttons
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Share button
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Elusive.share,
-                      color: Colors.white.withValues(alpha: 0.8),
-                      size: 18,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Share / Lock button
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          (room.isGroupRoom || room.isPrivate) ? Icons.lock : Elusive.share,
+                          color: Colors.white.withValues(alpha: 0.8),
+                          size: 18,
+                        ),
+                      ),
+                      
+                      const SizedBox(width: 8),
+                      
+                      // Close button
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.close,
+                          color: Colors.white.withValues(alpha: 0.8),
+                          size: 18,
+                        ),
+                      ),
+                    ],
                   ),
-                  
-                  const SizedBox(width: 8),
-                  
-                  // Close button
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.close,
-                      color: Colors.white.withValues(alpha: 0.8),
-                      size: 18,
-                    ),
+
+                  const SizedBox(height: 6),
+
+                  TopExposureHeaderPill(
+                    currentRoomId: room.id,
                   ),
                 ],
               ),

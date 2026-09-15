@@ -33,7 +33,7 @@ abstract class UserApi {
   static Future<dynamic> createAccount({
     File? photoFile,
     required String fullname,
-   // required String username,
+    // required String username,
     required String number,
   }) async {
     try {
@@ -49,25 +49,22 @@ abstract class UserApi {
 
       // Check file
       if (photoFile != null) {
-        photoUrl = await AppHelper.uploadFile(
-          file: photoFile,
-          userId: userId,
-        );
+        photoUrl = await AppHelper.uploadFile(file: photoFile, userId: userId);
       }
 
       String generateRandomId() {
-  final random = Random();
-  int min = 1000000;     // 7 digits
-  int max = 99999999;    // 8 digits
-  return (min + random.nextInt(max - min)).toString();
-}
+        final random = Random();
+        int min = 1000000; // 7 digits
+        int max = 99999999; // 8 digits
+        return (min + random.nextInt(max - min)).toString();
+      }
 
       // Set profile info
       final User user = User(
         userId: userId,
         photoUrl: photoUrl,
         fullname: fullname,
-       // username: username,
+        // username: username,
         email: email,
         bio: 'default_bio'.trParams({'appName': AppConfig.appName}),
         deviceToken: deviceToken,
@@ -76,7 +73,7 @@ abstract class UserApi {
         isOnline: true,
         number: number,
         level: '1',
-        searchId: generateRandomId()
+        searchId: generateRandomId(),
       );
 
       // Save data
@@ -119,31 +116,40 @@ abstract class UserApi {
       }
 
       // Update backgrounds
-      List<String> backgroundUrls = retainedBackgroundUrls != null ? List.from(retainedBackgroundUrls) : [];
-      
+      List<String> backgroundUrls = retainedBackgroundUrls != null
+          ? List.from(retainedBackgroundUrls)
+          : [];
+
       if (newBackgroundFiles != null && newBackgroundFiles.isNotEmpty) {
         for (int i = 0; i < newBackgroundFiles.length; i++) {
           String newUrl = await AppHelper.uploadFile(
             file: newBackgroundFiles[i],
-            userId: '${currentUser.userId}_bg_${DateTime.now().millisecondsSinceEpoch}_$i',
+            userId:
+                '${currentUser.userId}_bg_${DateTime.now().millisecondsSinceEpoch}_$i',
           );
           backgroundUrls.add(newUrl);
         }
       }
 
-      String firstBackgroundUrl = backgroundUrls.isNotEmpty ? backgroundUrls.first : currentUser.homePageBackground;
+      String firstBackgroundUrl = backgroundUrls.isNotEmpty
+          ? backgroundUrls.first
+          : currentUser.homePageBackground;
 
       // Save data
-      await _firestore.collection('Users').doc(currentUser.userId).update({
-        'photoUrl': photoUrl,
-        'fullname': fullname,
-        'bio': bio,
-        'gender': gender,
-        'birthday': birthday,
-        'country': country,
-        'homePageBackground': firstBackgroundUrl,
-        'homePageBackgrounds': backgroundUrls,
-      }).timeout(const Duration(seconds: 15));
+      await _firestore
+          .collection('Users')
+          .doc(currentUser.userId)
+          .update({
+            'photoUrl': photoUrl,
+            'fullname': fullname,
+            'bio': bio,
+            'gender': gender,
+            'birthday': birthday,
+            'country': country,
+            'homePageBackground': firstBackgroundUrl,
+            'homePageBackgrounds': backgroundUrls,
+          })
+          .timeout(const Duration(seconds: 15));
 
       return true;
     } catch (e) {
@@ -151,13 +157,37 @@ abstract class UserApi {
     }
   }
 
-  static Future<User?> getUser(String userId) async {
+  static final Map<String, User> _userCache = {};
+
+  static void cacheUser(User user) {
+    if (user.userId.isNotEmpty) {
+      _userCache[user.userId] = user;
+    }
+  }
+
+  static void clearUserCache([String? userId]) {
+    if (userId != null) {
+      _userCache.remove(userId);
+    } else {
+      _userCache.clear();
+    }
+  }
+
+  static Future<User?> getUser(String userId, {bool forceRefresh = false}) async {
+    if (userId.isEmpty) return null;
+    if (!forceRefresh && _userCache.containsKey(userId)) {
+      return _userCache[userId];
+    }
+
     if (userId == 'official_team') {
       try {
-        final doc = await _firestore.collection('official_channels').doc('official_team').get();
+        final doc = await _firestore
+            .collection('official_channels')
+            .doc('official_team')
+            .get();
         if (doc.exists) {
           final data = doc.data()!;
-          return User(
+          final user = User(
             userId: 'official_team',
             fullname: data['name'] ?? 'imChat Team',
             photoUrl: data['logo'] ?? '',
@@ -166,6 +196,8 @@ abstract class UserApi {
             userType: 'admin',
             level: 'Max',
           );
+          _userCache['official_team'] = user;
+          return user;
         }
       } catch (e) {
         debugPrint('Error getting official team: $e');
@@ -180,10 +212,13 @@ abstract class UserApi {
 
     if (userId.startsWith('official_channel_')) {
       try {
-        final doc = await _firestore.collection('official_channels').doc(userId).get();
+        final doc = await _firestore
+            .collection('official_channels')
+            .doc(userId)
+            .get();
         if (doc.exists) {
           final data = doc.data()!;
-          return User(
+          final user = User(
             userId: userId,
             fullname: data['name'] ?? 'Official Channel',
             photoUrl: data['logo'] ?? '',
@@ -192,6 +227,8 @@ abstract class UserApi {
             userType: 'channel',
             level: 'Max',
           );
+          _userCache[userId] = user;
+          return user;
         }
       } catch (e) {
         debugPrint('Error getting official channel details for user: $e');
@@ -212,7 +249,9 @@ abstract class UserApi {
       try {
         final data = doc.data()!;
         data['userId'] = doc.id;
-        return User.fromMap(data);
+        final user = User.fromMap(data);
+        _userCache[userId] = user;
+        return user;
       } catch (e) {
         debugPrint('Error parsing user data: $e');
         // Return a minimal fallback user to prevent login loops
@@ -278,19 +317,15 @@ abstract class UserApi {
           });
     }
 
-    return _firestore
-        .collection('Users')
-        .doc(userId)
-        .snapshots()
-        .map((event) {
-          if (event.exists && event.data() != null) {
-            final data = event.data()!;
-            data['userId'] = event.id;
-            return User.fromMap(data);
-          } else {
-            return User(userId: userId);
-          }
-        });
+    return _firestore.collection('Users').doc(userId).snapshots().map((event) {
+      if (event.exists && event.data() != null) {
+        final data = event.data()!;
+        data['userId'] = event.id;
+        return User.fromMap(data);
+      } else {
+        return User(userId: userId);
+      }
+    });
   }
 
   // Check username availability in database
@@ -308,7 +343,9 @@ abstract class UserApi {
     if (result) {
       if (showMsg) {
         DialogHelper.showSnackbarMessage(
-            SnackMsgType.success, "username_success".tr);
+          SnackMsgType.success,
+          "username_success".tr,
+        );
       }
       return true;
     }
@@ -361,11 +398,7 @@ abstract class UserApi {
     }
 
     // Save data
-    await updateUserData(
-      userId: user.userId,
-      data: data,
-      isSet: true,
-    );
+    await updateUserData(userId: user.userId, data: data, isSet: true);
     // Subscribe for Push Notifications
     _firebaseMsg.subscribeToTopic('NOTIFY_USERS');
   }
@@ -378,8 +411,9 @@ abstract class UserApi {
       final ListResult listResult = await FirebaseStorage.instance
           .ref('uploads/users/${currentUser.userId}')
           .listAll();
-      final List<Future<void>> references =
-          listResult.items.map((e) => e.delete()).toList();
+      final List<Future<void>> references = listResult.items
+          .map((e) => e.delete())
+          .toList();
       // Check result
       if (references.isNotEmpty) {
         await Future.wait(references);
@@ -411,8 +445,9 @@ abstract class UserApi {
           .toList();
 
       // Delete user's groups
-      final groupFutures = userGroups
-          .map((e) => _firestore.collection('Groups').doc(e.groupId).delete());
+      final groupFutures = userGroups.map(
+        (e) => _firestore.collection('Groups').doc(e.groupId).delete(),
+      );
       if (groupFutures.isNotEmpty) {
         await Future.wait(groupFutures);
       }
@@ -438,8 +473,10 @@ abstract class UserApi {
       );
     } catch (e) {
       DialogHelper.closeDialog();
-      DialogHelper.showSnackbarMessage(SnackMsgType.error,
-          "failed_to_delete_user_account".trParams({'error': e.toString()}));
+      DialogHelper.showSnackbarMessage(
+        SnackMsgType.error,
+        "failed_to_delete_user_account".trParams({'error': e.toString()}),
+      );
     }
   }
 
@@ -534,7 +571,7 @@ abstract class UserApi {
         data: {
           'isRecording': isRecording,
           'recordingTo': receiverId,
-          'isTyping': false
+          'isTyping': false,
         },
         isSet: true,
       );
@@ -571,7 +608,7 @@ abstract class UserApi {
         data: {
           'mutedGroups': isMuted
               ? FieldValue.arrayRemove([groupId])
-              : FieldValue.arrayUnion([groupId])
+              : FieldValue.arrayUnion([groupId]),
         },
       );
       debugPrint('muteGroup() -> success');

@@ -59,8 +59,53 @@ class GameService {
     try {
       await _firestore.collection(_collectionName).doc(id).update({
         'isActive': isActive,
+        'isEnabled': isActive,
+        'status': isActive ? 'active' : 'inactive',
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // Also sync with config if built-in system game
+      if (id == 'greedy_game' || id == 'greedycat') {
+        try {
+          await _firestore.collection('config').doc('greedy_game').set({
+            'isActive': isActive,
+            'isEnabled': isActive,
+            'status': isActive ? 'active' : 'inactive',
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      } else if (id == 'fruit_wheel' || id == 'eliminateslot') {
+        try {
+          await _firestore.collection('config').doc('fruit_wheel').set({
+            'isActive': isActive,
+            'isEnabled': isActive,
+            'status': isActive ? 'active' : 'inactive',
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      } else if (id == 'pink_greedy_game' || id == 'pink_greedy' || id == 'pinkgreedy') {
+        try {
+          await _firestore.collection('config').doc('pink_greedy_game').set({
+            'isActive': isActive,
+            'isEnabled': isActive,
+            'status': isActive ? 'active' : 'inactive',
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      } else if (id == 'food_spin_game' || id == 'food_spin' || id == 'foodspin') {
+        try {
+          await _firestore.collection('config').doc('food_spin_game').set({
+            'isActive': isActive,
+            'isEnabled': isActive,
+            'status': isActive ? 'active' : 'inactive',
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      } else if (id == 'html5_greedy_market' || id == 'html5_greedy_game') {
+        try {
+          await _firestore.collection('config').doc('html5_greedy_game').set({
+            'isActive': isActive,
+            'isEnabled': isActive,
+            'status': isActive ? 'active' : 'inactive',
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      }
     } catch (e) {
       debugPrint('Error toggling game status: $e');
       rethrow;

@@ -181,7 +181,7 @@ class _ResultOverlayState extends State<ResultOverlay>
                       children: [
                         // Result emoji
                         widget.result == 'sevens'
-                            ? Image.asset('assets/images/77_icon.png', width: 44, height: 44)
+                            ? Image.asset('assets/images/77_icon.webp', width: 44, height: 44)
                             : Text(
                                 _symbolEmoji[widget.result] ?? '?',
                                 style: const TextStyle(fontSize: 44),

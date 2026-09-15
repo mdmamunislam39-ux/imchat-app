@@ -24,6 +24,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
   final _nameController = TextEditingController();
   final _creditsController = TextEditingController();
   final _categoryController = TextEditingController();
+  final _showingTimeController = TextEditingController();
   
   File? _pngFile;
   File? _svgaFile;
@@ -37,6 +38,9 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
       _nameController.text = widget.gift!.name;
       _creditsController.text = widget.gift!.credits.toString();
       _categoryController.text = widget.gift!.category;
+      if (widget.gift!.showingTimeSeconds != null) {
+        _showingTimeController.text = widget.gift!.showingTimeSeconds.toString();
+      }
     }
   }
 
@@ -45,6 +49,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
     _nameController.dispose();
     _creditsController.dispose();
     _categoryController.dispose();
+    _showingTimeController.dispose();
     super.dispose();
   }
 
@@ -53,7 +58,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
       debugPrint('📁 GiftFormDialog: Picking $type file...');
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: type == 'png' ? ['png'] : ['svga'],
+        allowedExtensions: type == 'png' ? ['png'] : ['svga', 'mp4', 'vap'],
       );
 
       if (result != null && result.files.isNotEmpty && result.files.single.path != null) {
@@ -68,7 +73,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
               debugPrint('✅ GiftFormDialog: PNG file selected: $filePath');
             } else {
               _svgaFile = file;
-              debugPrint('✅ GiftFormDialog: SVGA file selected: $filePath');
+              debugPrint('✅ GiftFormDialog: Animation file selected: $filePath');
             }
           });
         } else {
@@ -150,6 +155,10 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
       debugPrint('📝 GiftFormDialog: Gift details - Name: $name, Credits: $credits, Category: $categoryName');
       debugPrint('📁 GiftFormDialog: Files - PNG: ${_pngFile?.path}, SVGA: ${_svgaFile?.path}');
 
+      // Optional showing time
+      final showingTimeText = _showingTimeController.text.trim();
+      final int? showingTimeSeconds = showingTimeText.isNotEmpty ? int.tryParse(showingTimeText) : null;
+
       if (widget.gift == null) {
         // Add new gift
         debugPrint('➕ GiftFormDialog: Adding new gift...');
@@ -160,6 +169,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
           pngFile: _fastMode ? null : _pngFile,
           svgaFile: _fastMode ? null : _svgaFile,
           skipFileUpload: _fastMode,
+          showingTimeSeconds: showingTimeSeconds,
         );
         debugPrint('✅ GiftFormDialog: New gift added with ID: $giftId');
         
@@ -176,6 +186,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
           credits: credits,
           pngFile: _pngFile,
           svgaFile: _svgaFile,
+          showingTimeSeconds: showingTimeSeconds,
         );
         debugPrint('✅ GiftFormDialog: Gift updated successfully');
         
@@ -267,6 +278,15 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
               ),
               const SizedBox(height: 16),
 
+              // Showing Time (Seconds)
+              _buildTextField(
+                controller: _showingTimeController,
+                label: 'Showing Time in Seconds (Optional)',
+                hintText: 'e.g. 10, 30, 60 (Leave blank for default setting)',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+
               // PNG file
               _buildFilePicker(
                 label: 'PNG file',
@@ -276,9 +296,9 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
               ),
               const SizedBox(height: 16),
 
-              // SVGA file
+              // Animation file (SVGA/MP4)
               _buildFilePicker(
-                label: 'SVGA file',
+                label: 'Animation file (SVGA/MP4)',
                 file: _svgaFile,
                 type: 'svga',
                 existingUrl: widget.gift?.svgaUrl,
@@ -424,7 +444,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
                   file != null
                       ? file.path.split('/').last
                       : existingUrl != null
-                          ? 'Current file (${type.toUpperCase()})'
+                          ? 'Current file (${type == 'svga' ? 'SVGA/MP4/VAP' : 'PNG'})'
                           : 'No file chosen',
                   style: TextStyle(
                     color: file != null || existingUrl != null

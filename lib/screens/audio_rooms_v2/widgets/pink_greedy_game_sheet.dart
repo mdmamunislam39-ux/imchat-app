@@ -10,15 +10,48 @@ import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
 
 
 class PinkGreedyGameSheet extends StatefulWidget {
-  const PinkGreedyGameSheet({super.key});
+  final bool isInAudioRoom;
+  const PinkGreedyGameSheet({super.key, this.isInAudioRoom = true});
 
-  static void show(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => const PinkGreedyGameSheet(),
-    );
+  static void show(BuildContext context, {bool isInAudioRoom = true}) {
+    if (!isInAudioRoom) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (ctx) => Scaffold(
+            backgroundColor: const Color(0xFF3B0B3C),
+            body: SafeArea(
+              child: Stack(
+                children: [
+                  const PinkGreedyGameSheet(isInAudioRoom: false),
+                  Positioned(
+                    top: 10,
+                    left: 10,
+                    child: CircleAvatar(
+                      backgroundColor: Colors.black54,
+                      child: IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        onPressed: () => Navigator.of(ctx).pop(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    } else {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        barrierColor: Colors.black.withValues(alpha: 0.35),
+        builder: (context) => const SafeArea(top: false, bottom: true, child: PinkGreedyGameSheet(isInAudioRoom: true)),
+      ).then((_) {
+        WidgetsBinding.instance.scheduleFrame();
+      });
+    }
   }
 
   @override
@@ -88,7 +121,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Hotdog',
       'emoji': '🌭',
-      'image': 'assets/images/food_game/hotdog.png',
+      'image': 'assets/images/food_game/hotdog.webp',
       'win': 'x10',
       'multiplier': 10,
       'type': 'meat'
@@ -96,7 +129,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Skewer',
       'emoji': '🍢',
-      'image': 'assets/images/food_game/skewer.png',
+      'image': 'assets/images/food_game/skewer.webp',
       'win': 'x15',
       'multiplier': 15,
       'type': 'meat'
@@ -104,7 +137,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Ham',
       'emoji': '🍖',
-      'image': 'assets/images/food_game/ham.png',
+      'image': 'assets/images/food_game/ham.webp',
       'win': 'x25',
       'multiplier': 25,
       'type': 'meat'
@@ -112,7 +145,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Steak',
       'emoji': '🥩',
-      'image': 'assets/images/food_game/steak.png',
+      'image': 'assets/images/food_game/steak.webp',
       'win': 'x45',
       'multiplier': 45,
       'type': 'meat'
@@ -120,7 +153,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Carrot',
       'emoji': '🥕',
-      'image': 'assets/images/food_game/carrot.png',
+      'image': 'assets/images/food_game/carrot.webp',
       'win': 'x5',
       'multiplier': 5,
       'type': 'veg'
@@ -128,7 +161,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Corn',
       'emoji': '🌽',
-      'image': 'assets/images/food_game/corn.png',
+      'image': 'assets/images/food_game/corn.webp',
       'win': 'x5',
       'multiplier': 5,
       'type': 'veg'
@@ -136,7 +169,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Cabbage',
       'emoji': '🥬',
-      'image': 'assets/images/food_game/cabbage.png',
+      'image': 'assets/images/food_game/cabbage.webp',
       'win': 'x5',
       'multiplier': 5,
       'type': 'veg'
@@ -144,7 +177,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     {
       'name': 'Tomato',
       'emoji': '🍅',
-      'image': 'assets/images/food_game/tomato.png',
+      'image': 'assets/images/food_game/tomato.webp',
       'win': 'x5',
       'multiplier': 5,
       'type': 'veg'
@@ -326,7 +359,6 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
       },
     );
   }
-
   void _startBlinking() {
     _blinkTimer?.cancel();
     _blinkTimer = Timer.periodic(const Duration(milliseconds: 250), (t) {
@@ -336,17 +368,40 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
     });
   }
 
+  int _calculateWinningResult(Map<String, dynamic> config) {
+    if (config['isCustomScheduled'] == true && config['customItem'] != null) {
+      final customName = config['customItem'].toString().trim().toLowerCase();
+      if (customName == 'pizza') return -2;
+      if (customName == 'salad') return -3;
+      final idx = items.indexWhere((item) => item['name'].toString().toLowerCase() == customName);
+      if (idx != -1) return idx;
+    }
+
+    final num ratioNum = config['winRatio'] ?? 50;
+    final int winRatio = ratioNum > 1 ? ratioNum.toInt() : (ratioNum * 100).toInt();
+    final randRoll = Random().nextInt(100);
+
+    if (randRoll < winRatio) {
+      return Random().nextInt(items.length);
+    } else {
+      final bonusRoll = Random().nextInt(10);
+      if (bonusRoll == 0) return -2;
+      if (bonusRoll == 1) return -3;
+      return Random().nextInt(items.length);
+    }
+  }
+
   Future<void> _advanceRoundInDatabase() async {
     try {
       final ref = FirebaseDatabase.instance.ref('pink_greedy_game/current_round');
       final snap = await ref.get();
-      final now = DateTime.now().millisecondsSinceEpoch;
+      final now = DateTime.now().millisecondsSinceEpoch + _serverTimeOffset;
 
       if (!snap.exists || snap.value == null) {
         await ref.set({
           'roundNumber': 1001,
           'phase': 'betting',
-          'phaseEndTime': now + 15000,
+          'phaseEndTime': now + 30000,
           'result': 'PENDING',
           'dailyRoundDate': DateTime.now().toString().split(' ').first,
         });
@@ -359,21 +414,26 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
       final phaseEndTime = (data['phaseEndTime'] as num?)?.toInt() ?? 0;
 
       // Ensure server time has elapsed before forcing phase change
-      if (now < phaseEndTime - 500) return;
+      if (phaseEndTime > 0 && now < phaseEndTime - 500) return;
 
       if (currentPhase == 'betting') {
-        final randResult = Random().nextInt(8);
+        final randResult = _calculateWinningResult(greedyConfig);
         await ref.update({
           'phase': 'spinning',
           'result': randResult,
-          'phaseEndTime': now + 10000,
+          'phaseEndTime': now + 3000,
+        });
+      } else if (currentPhase == 'spinning') {
+        await ref.update({
+          'phase': 'result',
+          'phaseEndTime': now + 4000,
         });
       } else {
         await ref.update({
           'roundNumber': currentRoundNumber + 1,
           'phase': 'betting',
           'result': 'PENDING',
-          'phaseEndTime': now + 15000,
+          'phaseEndTime': now + 30000,
           'dailyRoundDate': DateTime.now().toString().split(' ').first,
         });
         await ref.child('bets').remove();
@@ -384,6 +444,9 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
   }
 
   void startGlobalTimer() {
+    timer?.cancel();
+    roundSub?.cancel();
+
     roundSub = FirebaseDatabase.instance
         .ref('pink_greedy_game/current_round')
         .onValue
@@ -394,7 +457,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
 
       setState(() {
         _currentPhase = data['phase'] ?? 'betting';
-        _phaseEndTime = data['phaseEndTime'] ?? 0;
+        _phaseEndTime = (data['phaseEndTime'] as num?)?.toInt() ?? 0;
 
         bool wasZero = roundNumber == 0;
         if (roundNumber != (data['roundNumber'] ?? 0)) {
@@ -434,33 +497,32 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
 
     timer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) return;
+      if (_phaseEndTime == 0) return;
+
+      int currentServerTime = DateTime.now().millisecondsSinceEpoch + _serverTimeOffset;
+      int newTimeLeft = max(0, ((_phaseEndTime - currentServerTime) / 1000).ceil());
+
       setState(() {
-        int currentServerTime = DateTime.now().millisecondsSinceEpoch + _serverTimeOffset;
-        int newTimeLeft = max(0, (_phaseEndTime - currentServerTime) ~/ 1000);
-        
-        if (newTimeLeft == 0) {
-          if (!_isTickingBackend) {
-            _isTickingBackend = true;
-            FirebaseFunctions.instance.httpsCallable('tickPinkGreedyGame').call().then((_) {
-              Future.delayed(const Duration(seconds: 2), () {
-                if (mounted) _isTickingBackend = false;
-              });
-            }).catchError((e) {
-              debugPrint("Pink Greedy Tick Error: $e");
-              _advanceRoundInDatabase();
-              Future.delayed(const Duration(seconds: 2), () {
-                if (mounted) _isTickingBackend = false;
-              });
-            });
-          } else {
-            _advanceRoundInDatabase();
-          }
-        }
-        
         timeLeft = newTimeLeft;
       });
-    });
 
+      if (newTimeLeft == 0) {
+        if (!_isTickingBackend) {
+          _isTickingBackend = true;
+          FirebaseFunctions.instance.httpsCallable('tickPinkGreedyGame').call().then((_) {
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) _isTickingBackend = false;
+            });
+          }).catchError((e) {
+            debugPrint("Pink Greedy Tick Error: $e");
+            _advanceRoundInDatabase();
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) _isTickingBackend = false;
+            });
+          });
+        }
+      }
+    });
   }
 
   void _loadUserBets() {
@@ -487,6 +549,8 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
   }
 
   void startSpin(int finalResult) {
+    if (_spinController.isAnimating) return;
+
     int winningIndex = -1;
     int bonusType = -1;
     if (finalResult >= 0) {
@@ -500,10 +564,12 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
 
     _winningIndex = winningIndex;
     _bonusType = bonusType;
-    _spinController.forward(from: 0);
+    _lastPassedItem = -1;
+    _spinController.reset();
+    _spinController.forward();
   }
 
-  Future<void> _handleWinLogic(int finalResult) async {
+  void _handleWinLogic(int finalResult) {
     int prize = 0;
     int bet = 0;
     int totalBetPlaced = userBets.values.fold(0, (acc, b) => acc + b);
@@ -522,37 +588,41 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
       if (bet > 0) prize = bet * 5;
     }
 
-    if (prize > 0) {
-      try {
-        final currentUser = AuthController.instance.currentUser;
-        final todayDate = DateTime.now().toString().split(' ').first;
-        final leaderboardRef = FirebaseFirestore.instance
-            .collection('pink_greedy_game_leaderboard')
-            .doc('daily')
-            .collection(todayDate)
-            .doc(currentUser.userId);
-
-        await leaderboardRef.set({
-          'userId': currentUser.userId,
-          'username': currentUser.fullname,
-          'profilePic': currentUser.photoUrl,
-          'totalWon': FieldValue.increment(prize),
-          'lastUpdated': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-
-        await FirebaseFirestore.instance
-            .collection('Users')
-            .doc(currentUser.userId)
-            .update({
-          'diamonds': FieldValue.increment(prize),
-        });
-      } catch (e) {
-        debugPrint('Win logic update error: $e');
-      }
-    }
-
+    // Show result dialog immediately so UI never blocks/hangs waiting for network
     if (mounted) {
       showResultDialog(finalResult, totalBetPlaced, prize);
+    }
+
+    // Process database & wallet updates asynchronously in background
+    if (prize > 0) {
+      Future(() async {
+        try {
+          final currentUser = AuthController.instance.currentUser;
+          final todayDate = DateTime.now().toString().split(' ').first;
+          final leaderboardRef = FirebaseFirestore.instance
+              .collection('pink_greedy_game_leaderboard')
+              .doc('daily')
+              .collection(todayDate)
+              .doc(currentUser.userId);
+
+          await leaderboardRef.set({
+            'userId': currentUser.userId,
+            'username': currentUser.fullname,
+            'profilePic': currentUser.photoUrl,
+            'totalWon': FieldValue.increment(prize),
+            'lastUpdated': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+
+          await FirebaseFirestore.instance
+              .collection('Users')
+              .doc(currentUser.userId)
+              .update({
+            'diamonds': FieldValue.increment(prize),
+          });
+        } catch (e) {
+          debugPrint('Win logic update error: $e');
+        }
+      });
     }
   }
 
@@ -633,6 +703,127 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
         throw e;
       });
     }
+  }
+
+  void _showHowToPlayRules() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        decoration: const BoxDecoration(
+          color: Color(0xFF4A0028),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.white30,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Text(
+              'How to play',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildRuleCard(
+                      '1. Choose the amount and the food of your bet.',
+                      'Select your chip amount and tap the food items to place your bets.',
+                    ),
+                    const SizedBox(height: 12),
+                    _buildRuleCard(
+                      '2. The time for choosing is 30 seconds each round and the winners will be announced after betting.',
+                      'You have 30 seconds to place bets each round. After 30s, the wheel spins to reveal the winner.',
+                    ),
+                    const SizedBox(height: 12),
+                    _buildRuleCard(
+                      '3. All users choosing the correct food can win the corresponding diamonds.',
+                      'If the wheel lands on your selected food, you receive the winning multiplier payout instantly!',
+                    ),
+                    const SizedBox(height: 12),
+                    _buildRuleCard(
+                      '4. Each user can choose and bet on up to 6 kinds of food each round, with no upper limit on the bet amount.',
+                      'You can pick up to 6 different food items per round with no max limit on total bet diamonds.',
+                    ),
+                    const SizedBox(height: 12),
+                    _buildRuleCard(
+                      '5. Prize Pool & Special Pizza / Salad Rules',
+                      'If Salad is opened, all players who bet on any vegetable (Carrot, Corn, Cabbage, Tomato) win! If Pizza is opened, all players who bet on any meat (Hotdog, Skewer, Ham, Steak) win!',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.pinkAccent,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Got it!',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRuleCard(String title, String desc) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.black38,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.pinkAccent.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.pinkAccent,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            desc,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> placeBet(int index) async {
@@ -799,8 +990,8 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
                                   ))
                             : Image.asset(
                                 finalResult == -2
-                                    ? 'assets/images/food_game/pizza.png'
-                                    : 'assets/images/food_game/salad.png',
+                                    ? 'assets/images/food_game/pizza.webp'
+                                    : 'assets/images/food_game/salad.webp',
                                 width: 65,
                                 height: 65,
                                 errorBuilder: (context, error, stackTrace) =>
@@ -1130,26 +1321,26 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
   String? _getFoodImageFromEmoji(String emoji) {
     switch (emoji) {
       case '🍕':
-        return 'assets/images/food_game/pizza.png';
+        return 'assets/images/food_game/pizza.webp';
       case '🥗':
-        return 'assets/images/food_game/salad.png';
+        return 'assets/images/food_game/salad.webp';
       case '🌭':
-        return 'assets/images/food_game/hotdog.png';
+        return 'assets/images/food_game/hotdog.webp';
       case '🍢':
-        return 'assets/images/food_game/skewer.png';
+        return 'assets/images/food_game/skewer.webp';
       case '🍗':
       case '🍖':
-        return 'assets/images/food_game/ham.png';
+        return 'assets/images/food_game/ham.webp';
       case '🥩':
-        return 'assets/images/food_game/steak.png';
+        return 'assets/images/food_game/steak.webp';
       case '🥕':
-        return 'assets/images/food_game/carrot.png';
+        return 'assets/images/food_game/carrot.webp';
       case '🌽':
-        return 'assets/images/food_game/corn.png';
+        return 'assets/images/food_game/corn.webp';
       case '🥬':
-        return 'assets/images/food_game/cabbage.png';
+        return 'assets/images/food_game/cabbage.webp';
       case '🍅':
-        return 'assets/images/food_game/tomato.png';
+        return 'assets/images/food_game/tomato.webp';
       default:
         return null;
     }
@@ -1157,7 +1348,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
 
   @override
   Widget build(BuildContext context) {
-    final double sheetHeight = MediaQuery.of(context).size.height * 0.9;
+    final double sheetHeight = MediaQuery.of(context).size.height * (widget.isInAudioRoom ? 0.75 : 1.0);
     return SizedBox(
       key: _sheetKey,
       height: sheetHeight,
@@ -1276,7 +1467,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
               fontFamily: 'serif',
             ),
           ),
-          _buildIconButton(Icons.help_outline, () {}),
+          _buildIconButton(Icons.help_outline, _showHowToPlayRules),
         ],
       ),
     );
@@ -1308,7 +1499,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
           children: [
             // Background Ferris Wheel Image
             Image.asset(
-              'assets/images/pink_wheel_bg_new.png',
+              'assets/images/pink_wheel_bg_new.webp',
               width: 450,
               height: 450,
               fit: BoxFit.contain,
@@ -1542,7 +1733,7 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
           Expanded(
             child: Transform.translate(
               offset: const Offset(0, 10),
-              child: Image.asset('assets/images/pink_game_center_image.png',
+              child: Image.asset('assets/images/pink_game_center_image.webp',
                   fit: BoxFit.fitWidth),
             ),
           ),
@@ -1714,8 +1905,8 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
             alignment: Alignment.center,
             child: Image.asset(
               name == 'Pizza'
-                  ? 'assets/images/food_game/pizza.png'
-                  : 'assets/images/food_game/salad.png',
+                  ? 'assets/images/food_game/pizza.webp'
+                  : 'assets/images/food_game/salad.webp',
               width: 55,
               height: 55,
               errorBuilder: (context, error, stackTrace) =>
@@ -1745,17 +1936,17 @@ class _PinkGreedyGameSheetState extends State<PinkGreedyGameSheet>
   String _getChipImage(int amount) {
     switch (amount) {
       case 100:
-        return 'assets/images/chip_100.png';
+        return 'assets/images/chip_100.webp';
       case 1000:
-        return 'assets/images/chip_1k.png';
+        return 'assets/images/chip_1k.webp';
       case 10000:
-        return 'assets/images/chip_10k.png';
+        return 'assets/images/chip_10k.webp';
       case 50000:
-        return 'assets/images/chip_50k.png';
+        return 'assets/images/chip_50k.webp';
       case 100000:
-        return 'assets/images/chip_100k.png';
+        return 'assets/images/chip_100k.webp';
       default:
-        return 'assets/images/chip_100.png';
+        return 'assets/images/chip_100.webp';
     }
   }
 

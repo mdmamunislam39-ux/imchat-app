@@ -1,70 +1,297 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+
 <head>
   <meta charset="utf-8">
-  <title>imChat - Join Room</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>imChat - Join & Explore</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#7C3AED">
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8f9fa; }
-    .container { text-align: center; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 400px; width: 90%; }
-    h1 { color: #333; margin-bottom: 10px; font-size: 24px; }
-    p { color: #666; margin-bottom: 20px; line-height: 1.5; }
-    .btn { display: inline-block; background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; margin-bottom: 10px; width: 80%; }
-    .btn-secondary { background-color: #6c757d; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(135deg, #0F0C20 0%, #1A103C 50%, #0D091A 100%);
+      color: #FFFFFF;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 24px;
+      padding: 36px 28px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 0 40px rgba(124, 58, 237, 0.2);
+      animation: fadeIn 0.5s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(15px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .logo-container {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 20px;
+      background: linear-gradient(135deg, #8B5CF6, #EC4899);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(139, 92, 246, 0.4);
+    }
+
+    .logo-icon {
+      font-size: 40px;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg, #FFFFFF, #E2E8F0);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 15px;
+      color: rgba(255, 255, 255, 0.7);
+      line-height: 1.5;
+      margin-bottom: 28px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      background: rgba(139, 92, 246, 0.2);
+      border: 1px solid rgba(139, 92, 246, 0.4);
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #C4B5FD;
+      margin-bottom: 24px;
+    }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 16px;
+      border-radius: 16px;
+      font-size: 16px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      cursor: pointer;
+      border: none;
+      outline: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #7C3AED, #A855F7);
+      color: #FFFFFF;
+      box-shadow: 0 10px 25px rgba(124, 58, 237, 0.4);
+      margin-bottom: 14px;
+    }
+
+    .btn-primary:active {
+      transform: scale(0.98);
+      box-shadow: 0 5px 15px rgba(124, 58, 237, 0.3);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: #FFFFFF;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-secondary:active {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .footer-note {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 20px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
   </style>
 </head>
+
 <body>
-  <div class="container">
-    <h1>Join imChat</h1>
-    <p>You've been invited to join a room! If the app didn't open automatically, please install it below.</p>
-    <a href="market://details?id=com.imchat" class="btn" id="android-btn" style="display:none;">Download on Google Play</a>
-    <a href="https://apps.apple.com/app/id123456789" class="btn" id="ios-btn" style="display:none;">Download on App Store</a>
-    <p style="font-size: 12px; margin-top: 20px; color: #999;">If you already have the app installed, <a href="#" id="retry-btn">click here to try opening it again</a>.</p>
+  <div class="card">
+    <div class="logo-container">
+      <span class="logo-icon">💬</span>
+    </div>
+
+    <h1 id="title-text">Opening in imChat...</h1>
+
+    <div class="badge" id="type-badge">
+      <span id="badge-dot">●</span>
+      <span id="badge-text">Redirecting to App</span>
+    </div>
+
+    <p class="subtitle" id="sub-text">
+      Please wait while we redirect you to the imChat application.
+    </p>
+
+    <!-- Primary Open Button -->
+    <a href="#" class="btn btn-primary" id="open-app-btn" onclick="triggerOpenApp(event)">
+      <span class="spinner" id="btn-spinner"></span>
+      <span id="btn-label">Open in App</span>
+    </a>
+
+    <!-- Download fallback -->
+    <a href="https://play.google.com/store/apps/details?id=com.imchatapp" class="btn btn-secondary" id="download-btn"
+      style="display:none;">
+      <span>📲 Install imChat App</span>
+    </a>
+
+    <p class="footer-note">
+      Already have the app? Tap "Open in App" above.
+    </p>
   </div>
 
   <script>
-    function getMobileOperatingSystem() {
-      var userAgent = navigator.userAgent || navigator.vendor || window.opera;
-      if (/windows phone/i.test(userAgent)) return "Windows Phone";
-      if (/android/i.test(userAgent)) return "Android";
-      if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) return "iOS";
-      return "unknown";
+    function getOS() {
+      var ua = navigator.userAgent || navigator.vendor || window.opera;
+      if (/android/i.test(ua)) return "Android";
+      if (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) return "iOS";
+      return "Desktop";
     }
 
-    var os = getMobileOperatingSystem();
-    var currentUrl = window.location.href;
-    var path = window.location.pathname;
+    var os = getOS();
+    var currentUrl = new URL(window.location.href);
+    var path = currentUrl.pathname;
+    var params = currentUrl.searchParams;
+
+    // Parse type and target ID
+    var targetType = 'room';
+    var targetId = '';
+
+    var pathParts = path.split('/').filter(function (p) { return p.length > 0; });
+    if (pathParts.length >= 2) {
+      targetType = pathParts[0].toLowerCase();
+      targetId = pathParts[1];
+    } else if (pathParts.length === 1) {
+      targetType = 'room';
+      targetId = pathParts[0];
+    }
+
+    // Check query params fallback
+    if (!targetId) {
+      if (params.get('roomId')) { targetType = 'room'; targetId = params.get('roomId'); }
+      else if (params.get('postId')) { targetType = 'post'; targetId = params.get('postId'); }
+      else if (params.get('eventId')) { targetType = 'event'; targetId = params.get('eventId'); }
+      else if (params.get('id')) { targetId = params.get('id'); }
+    }
+
+    // Update UI text based on target
+    var badgeText = document.getElementById('badge-text');
+    var titleText = document.getElementById('title-text');
+    if (targetType === 'room') {
+      badgeText.innerText = 'Voice Room';
+      titleText.innerText = 'Join Voice Room';
+    } else if (targetType === 'post') {
+      badgeText.innerText = 'Post';
+      titleText.innerText = 'View Post';
+    } else if (targetType === 'event') {
+      badgeText.innerText = 'Event';
+      titleText.innerText = 'View Event';
+    }
+
+    // Build custom URIs
+    var targetRoute = targetId ? (targetType + '/' + targetId) : '';
+    var customSchemeUrl = targetRoute ? ('imchat://' + targetRoute) : 'imchat://';
+    var fallbackSchemeUrl = targetRoute ? ('imchatapp://' + targetRoute) : 'imchatapp://';
+    var androidIntentUrl = 'intent://' + targetRoute + '#Intent;scheme=imchat;package=com.imchatapp;end';
+
+    var openBtn = document.getElementById('open-app-btn');
+    var downloadBtn = document.getElementById('download-btn');
+    var btnSpinner = document.getElementById('btn-spinner');
 
     if (os === "Android") {
-      document.getElementById('android-btn').style.display = 'inline-block';
-      // Attempt to open the app intent
-      var intentUrl = "intent://" + window.location.host + path + "#Intent;scheme=https;package=com.imchat;end";
-      document.getElementById('retry-btn').href = intentUrl;
-      
-      // Auto redirect to intent
-      setTimeout(function() {
-        window.location.href = intentUrl;
-      }, 500);
-
-      // If intent fails after 2 seconds, redirect to Play Store
-      setTimeout(function() {
-        if(document.hasFocus()) {
-           window.location.href = "market://details?id=com.imchat";
-        }
-      }, 2500);
-
+      openBtn.href = androidIntentUrl;
+      downloadBtn.href = "https://play.google.com/store/apps/details?id=com.imchatapp";
     } else if (os === "iOS") {
-      document.getElementById('ios-btn').style.display = 'inline-block';
-      document.getElementById('retry-btn').href = currentUrl;
-      
-      setTimeout(function() {
-        window.location.href = "https://apps.apple.com/app/id123456789";
-      }, 2500);
+      openBtn.href = customSchemeUrl;
+      downloadBtn.href = "https://apps.apple.com/app/id123456789";
     } else {
-      // Desktop fallback
-      document.getElementById('android-btn').style.display = 'inline-block';
-      document.getElementById('ios-btn').style.display = 'inline-block';
+      openBtn.href = customSchemeUrl;
+      downloadBtn.href = "https://play.google.com/store/apps/details?id=com.imchatapp";
     }
+
+    function triggerOpenApp(e) {
+      if (e) e.preventDefault();
+
+      if (os === "Android") {
+        // Try Intent first, fallback to custom scheme
+        window.location.href = androidIntentUrl;
+        setTimeout(function () {
+          window.location.href = customSchemeUrl;
+        }, 300);
+      } else {
+        window.location.href = customSchemeUrl;
+        setTimeout(function () {
+          window.location.href = fallbackSchemeUrl;
+        }, 300);
+      }
+    }
+
+    // Automatically trigger app open on page load
+    setTimeout(function () {
+      triggerOpenApp();
+    }, 100);
+
+    // Show download button after 2.5s if still on page
+    setTimeout(function () {
+      if (btnSpinner) btnSpinner.style.display = 'none';
+      if (downloadBtn) downloadBtn.style.display = 'flex';
+    }, 2500);
   </script>
 </body>
+
 </html>

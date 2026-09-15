@@ -13,6 +13,7 @@ import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/services/push_notification_service.dart';
 import 'package:chat_messenger/screens/messages/controllers/message_controller.dart';
+import 'package:chat_messenger/tabs/groups/controllers/group_controller.dart';
 import 'package:get/get.dart';
 
 abstract class GroupApi {
@@ -55,6 +56,15 @@ abstract class GroupApi {
         senderId: admin.userId,
       );
 
+      // Build Unique Members List (deduplicate creator and members)
+      final Map<String, User> uniqueMap = {admin.userId: admin};
+      for (final m in members) {
+        if (m.userId.isNotEmpty) {
+          uniqueMap[m.userId] = m;
+        }
+      }
+      final List<User> allUniqueMembers = uniqueMap.values.toList();
+
       // Build Group Instance
       final Group group = Group(
         groupId: groupId,
@@ -62,7 +72,7 @@ abstract class GroupApi {
         photoUrl: photoUrl,
         name: name,
         description: description,
-        members: [admin, ...members],
+        members: allUniqueMembers,
         lastMsg: createdGroupMsg,
         isBroadcast: isBroadcast,
       );
@@ -355,6 +365,17 @@ abstract class GroupApi {
     bool byAdmin = false,
   }) async {
     try {
+      if (byAdmin) {
+        final String currentUserId = AuthController.instance.currentUser.userId;
+        final bool isCurrentOwner = group.isOwner(currentUserId);
+        final bool isTargetOwner = group.isOwner(memberId);
+        final bool isTargetAdmin = group.isAdmin(memberId);
+
+        if (isTargetOwner || (!isCurrentOwner && isTargetAdmin)) {
+          return;
+        }
+      }
+
       // Update message
       final Message message = Message(
         msgId: AppHelper.generateID,
@@ -408,6 +429,15 @@ abstract class GroupApi {
         senderId: admin.userId,
       );
 
+      // Update local in-memory group state immediately
+      if (isAdd) {
+        if (!group.adminMembers.contains(member.userId)) {
+          group.adminMembers.add(member.userId);
+        }
+      } else {
+        group.adminMembers.remove(member.userId);
+      }
+
       // Update the group details
       group.lastMsg = updateMsg;
       final Map<String, dynamic> data = group.toUpdateMap();
@@ -416,8 +446,12 @@ abstract class GroupApi {
           : FieldValue.arrayRemove([member.userId]);
       data['updatedBy'] = admin.userId;
 
-      // Save last message
-      MessageApi.saveGroupMessage(group, data: data);
+      // Save last message to Firestore
+      await MessageApi.saveGroupMessage(group, data: data);
+
+      if (Get.isRegistered<GroupController>()) {
+        Get.find<GroupController>().selectedGroup.refresh();
+      }
 
       DialogHelper.showSnackbarMessage(
         SnackMsgType.success,

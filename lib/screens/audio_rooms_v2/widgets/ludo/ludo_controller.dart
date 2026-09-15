@@ -71,6 +71,9 @@ class LudoController extends GetxController {
       _skipTurn();
     } else if (isHost && elapsed > 32000) {
       _skipTurn();
+    } else if (elapsed > 35000) {
+      // Fallback: If neither active player nor host skipped (e.g. host disconnected), any client can skip
+      _skipTurn();
     }
   }
 
@@ -84,11 +87,45 @@ class LudoController extends GetxController {
     _syncState(newState);
   }
 
-  Future<void> joinGame(String userId, LudoColor color) async {
+  Future<void> startGame() async {
+    final newState = gameState.value.copyWith(
+      isStarted: true,
+      lastTurnStartTime: DateTime.now().millisecondsSinceEpoch,
+    );
+    await _syncState(newState);
+  }
+
+  Future<void> leaveGame(LudoColor color) async {
+    final Map<LudoColor, String?> newPlayers = Map.from(gameState.value.players);
+    newPlayers[color] = null;
+    final Map<LudoColor, String?> newNames = Map.from(gameState.value.playerNames);
+    newNames[color] = null;
+    final Map<LudoColor, String?> newAvatars = Map.from(gameState.value.playerAvatars);
+    newAvatars[color] = null;
+
+    final newState = gameState.value.copyWith(
+      players: newPlayers,
+      playerNames: newNames,
+      playerAvatars: newAvatars,
+    );
+    await _syncState(newState);
+  }
+
+  Future<void> joinGame(String userId, LudoColor color, {String? name, String? avatar}) async {
     final Map<LudoColor, String?> newPlayers = Map.from(gameState.value.players);
     newPlayers[color] = userId;
     
-    final newState = gameState.value.copyWith(players: newPlayers);
+    final Map<LudoColor, String?> newNames = Map.from(gameState.value.playerNames);
+    if (name != null) newNames[color] = name;
+
+    final Map<LudoColor, String?> newAvatars = Map.from(gameState.value.playerAvatars);
+    if (avatar != null) newAvatars[color] = avatar;
+    
+    final newState = gameState.value.copyWith(
+      players: newPlayers,
+      playerNames: newNames,
+      playerAvatars: newAvatars,
+    );
     await _syncState(newState);
   }
 

@@ -14,11 +14,19 @@ class StoryVideo {
   });
 
   factory StoryVideo.fromMap(Map<String, dynamic> data) {
+    DateTime parsedCreatedAt;
+    if (data['createdAt'] is int) {
+      parsedCreatedAt =
+          DateTime.fromMillisecondsSinceEpoch(data['createdAt'] as int);
+    } else {
+      parsedCreatedAt = DateTime.now();
+    }
+
     return StoryVideo(
-      videoUrl: data['videoUrl'] as String,
-      thumbnailUrl: data['thumbnailUrl'] as String,
+      videoUrl: data['videoUrl']?.toString() ?? '',
+      thumbnailUrl: data['thumbnailUrl']?.toString() ?? '',
       seenBy: SeenBy.seenByFrom(data['seenBy']),
-      createdAt: DateTime.fromMillisecondsSinceEpoch(data['createdAt'] as int),
+      createdAt: parsedCreatedAt,
     );
   }
 
@@ -31,10 +39,11 @@ class StoryVideo {
     };
   }
 
-  static List<StoryVideo> videosFrom(List listOfMaps) {
-    final videos = List<Map<String, dynamic>>.from(listOfMaps);
-    return List<StoryVideo>.from(
-      videos.map((item) => StoryVideo.fromMap(item)),
-    );
+  static List<StoryVideo> videosFrom(dynamic listOfMaps) {
+    if (listOfMaps == null || listOfMaps is! List) return [];
+    return listOfMaps
+        .whereType<Map>()
+        .map((item) => StoryVideo.fromMap(Map<String, dynamic>.from(item)))
+        .toList();
   }
 }

@@ -17,21 +17,31 @@ class EncryptHelper {
   static String decrypt(String encryptedText, String key) {
     if (encryptedText.isEmpty) return encryptedText;
 
-    final List<String> parts = encryptedText.split(':');
-    if (parts.length != 2) {
+    try {
+      final List<String> parts = encryptedText.split(':');
+      if (parts.length != 2) {
+        return encryptedText;
+      }
+
+      final String encodedIv = parts[0];
+      final String encodedText = parts[1];
+
+      // Base64 representation of a 16-byte IV is always 24 characters
+      if (encodedIv.length != 24) {
+        return encryptedText;
+      }
+
+      final iv = IV.fromBase64(encodedIv);
+      final keyString = key.length >= 32 ? key.substring(0, 32) : key.padRight(32, '0');
+      final encrypter = Encrypter(AES(Key.fromUtf8(keyString)));
+
+      return encrypter.decrypt64(encodedText, iv: iv);
+    } catch (_) {
+      // If decryption fails, it was plain text or couldn't be decrypted
       return encryptedText;
     }
-
-    final String encodedIv = parts[0];
-    final String encodedText = parts[1];
-
-    final iv = IV.fromBase64(encodedIv);
-    final encrypter = Encrypter(AES(Key.fromUtf8(key.substring(0, 32))));
-
-    return encrypter.decrypt64(encodedText, iv: iv);
   }
 }
-
 
 // import 'package:encrypt/encrypt.dart';
 

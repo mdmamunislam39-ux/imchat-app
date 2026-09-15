@@ -133,10 +133,13 @@ The largest and most complex feature. Uses BLoC pattern (not GetX) with a reposi
 ### Agora Configuration
 
 - Channel profile: `channelProfileLiveBroadcasting`
-- Audio scenario: `audioScenarioChatroom`
-- All participants join as `clientRoleBroadcaster` (not audience)
-- New participants join muted by default
-- Volume indication: 200ms interval, threshold of 10 for "speaking" state
+- Audio scenario: `audioScenarioGameStreaming`
+- Audience joins as `clientRoleAudience` (listening only, no microphone permission prompted)
+- Seated participants switch to `clientRoleBroadcaster`
+- Microphone is published only when `isSeated && !isMuted && micPermissionGranted`
+- Instant 0ms mute/unmute switching without leaving channel or recreating engine
+- Complete session teardown via `leaveChannelAndRelease` on room leave/switch prevents cross-room audio and listener leaks
+- Volume indication: 200ms interval for fluid voice ripple animations
 - Token auto-renewal on `TokenPrivilegeWillExpire` event
 - Background music: when playing, mic capture volume set to 0 instead of hard-muting the audio stream
 

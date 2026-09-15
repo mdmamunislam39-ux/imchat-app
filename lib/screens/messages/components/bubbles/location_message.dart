@@ -21,7 +21,7 @@ class LocationMessage extends StatelessWidget {
           aspectRatio: 4 / 3,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.asset('assets/icons/map_icon.png'),
+            child: Image.asset('assets/icons/map_icon.webp'),
           ),
         ),
       ),

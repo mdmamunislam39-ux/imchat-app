@@ -8,6 +8,7 @@ class EntranceEffect {
   final String effectId;
   final String effectUrl;
   final DateTime timestamp;
+  final String type; // 'entryEffect' or 'roomEntry'
 
   EntranceEffect({
     required this.userId,
@@ -16,6 +17,7 @@ class EntranceEffect {
     required this.effectId,
     required this.effectUrl,
     required this.timestamp,
+    required this.type,
   });
 
   factory EntranceEffect.fromJson(Map<String, dynamic> json) {
@@ -29,6 +31,7 @@ class EntranceEffect {
           ? (json['timestamp'] as Timestamp).toDate()
           : DateTime.parse(
               json['timestamp'] ?? DateTime.now().toIso8601String()),
+      type: json['type'] ?? 'entryEffect',
     );
   }
 
@@ -40,6 +43,7 @@ class EntranceEffect {
       'effectId': effectId,
       'effectUrl': effectUrl,
       'timestamp': Timestamp.fromDate(timestamp),
+      'type': type,
     };
   }
 }

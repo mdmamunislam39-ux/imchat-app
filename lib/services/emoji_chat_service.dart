@@ -129,19 +129,21 @@ class EmojiChatService {
     String? userAvatar,
     required int rolledNumber,
     String? senderLevelBadgeUrl,
+    String diceStyle = 'classic',
   }) async {
     try {
       if (BanService.isChatBanned(AuthController.instance.currentUser)) {
         Get.snackbar('Chat Banned', 'You are temporarily banned from sending messages.', snackPosition: SnackPosition.BOTTOM);
         return;
       }
-      debugPrint('🎲 [EmojiChatService] Sending dice message');
-      
+      debugPrint('🎲 [EmojiChatService] Sending dice message ($diceStyle)');
+
+      final bool isBlue = diceStyle == 'blue';
       final diceEmoji = EmojiItem(
-        id: 'local_dice_action',
-        name: 'dice_$rolledNumber',
-        displayName: 'Dice $rolledNumber',
-        emojiUrl: 'local_dice:$rolledNumber',
+        id: isBlue ? 'local_blue_dice_action' : 'local_dice_action',
+        name: isBlue ? 'blue_dice_$rolledNumber' : 'dice_$rolledNumber',
+        displayName: isBlue ? 'Blue Dice $rolledNumber' : 'Dice $rolledNumber',
+        emojiUrl: isBlue ? 'local_blue_dice:$rolledNumber' : 'local_dice:$rolledNumber',
         categoryId: 'activity',
         order: 0,
       );
@@ -249,6 +251,53 @@ class EmojiChatService {
           .set(giftMessage.toJson());
     } catch (e) {
       debugPrint('❌ [EmojiChatService] Error sending gift message: $e');
+    }
+  }
+
+  /// Send a lucky win notification to chat
+  static Future<void> sendLuckyWinMessage({
+    required String roomId,
+    required String userId,
+    required String username,
+    String? userAvatar,
+    required String giftName,
+    required int multiplier,
+    required int wonDiamonds,
+    String? giftImageUrl,
+  }) async {
+    try {
+      debugPrint('🎉 [EmojiChatService] Sending Lucky Win message: $username won ${multiplier}x ($wonDiamonds diamonds)');
+
+      final messageId = _firestore
+          .collection('audio_rooms_v2')
+          .doc(roomId)
+          .collection('chat')
+          .doc()
+          .id;
+
+      final message = '🎉 $username opened $giftName and WON ${multiplier}x Multiplier! (+$wonDiamonds 💎)';
+
+      final luckyMessage = EmojiChatMessage(
+        id: messageId,
+        userId: userId,
+        username: username,
+        userAvatar: userAvatar,
+        message: message,
+        messageType: EmojiMessageType.rouletteResult,
+        timestamp: DateTime.now(),
+        roomId: roomId,
+        giftImageUrl: giftImageUrl,
+        giftCredits: wonDiamonds,
+      );
+
+      await _firestore
+          .collection('audio_rooms_v2')
+          .doc(roomId)
+          .collection('chat')
+          .doc(messageId)
+          .set(luckyMessage.toJson());
+    } catch (e) {
+      debugPrint('❌ [EmojiChatService] Error sending lucky win message: $e');
     }
   }
 

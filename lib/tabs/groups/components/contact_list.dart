@@ -48,7 +48,7 @@ class ContactList extends GetView<CreateGroupController> {
                 style: TextStyle(
                     color: controller.isSelected(user) ? primaryColor : null),
               ),
-              subtitle: Text('@${user.number}'),
+              subtitle: Text(user.searchId.isNotEmpty ? 'ID: ${user.searchId}' : 'ID: ${user.userId}'),
               tileColor: controller.isSelected(user)
                   ? primaryColor.withValues(alpha: 0.10)
                   : null,

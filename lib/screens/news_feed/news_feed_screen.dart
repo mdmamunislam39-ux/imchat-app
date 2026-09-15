@@ -13,6 +13,7 @@ import 'package:chat_messenger/components/rich_text_viewer.dart';
 import 'package:chat_messenger/services/news_feed_service.dart';
 import 'package:chat_messenger/services/follow_service.dart';
 import 'package:chat_messenger/services/deep_link_service.dart';
+import 'package:chat_messenger/services/social_affinity_service.dart';
 import 'package:chat_messenger/helpers/nameplate_helper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
@@ -26,6 +27,12 @@ import 'package:share_plus/share_plus.dart';
 
 import 'post_comments_sheet.dart';
 import 'post_reactions_summary_bar.dart';
+import 'widgets/fb_reaction_picker.dart';
+import 'widgets/moment_ad_widget.dart';
+import 'widgets/inline_video_player.dart';
+import 'moment_reels_screen.dart';
+
+
 
 class NewsFeedScreen extends StatefulWidget {
   const NewsFeedScreen({super.key});
@@ -42,10 +49,12 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
   DocumentSnapshot? _lastDocument;
   StreamSubscription? _feedSubscription;
   final String _currentUserId = AuthController.instance.currentUser.userId;
+  String _selectedFeedTab = 'Latest'; // 'Latest', 'Trending', 'Followers'
 
   @override
   void initState() {
     super.initState();
+    SocialAffinityService().init(_currentUserId);
     _setupRealtimeFeed();
     _scrollController.addListener(_scrollListener);
   }
@@ -59,7 +68,8 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
   }
 
   void _scrollListener() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
       _loadMorePosts();
     }
   }
@@ -74,25 +84,56 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
       _hasMore = true;
     });
 
+    final isTrending = _selectedFeedTab == 'Trending';
+    // Always query by createdAt to ensure legacy posts and posts without explicit trendingScore are included
     _feedSubscription = FirebaseFirestore.instance
         .collection('news_feed_posts')
         .orderBy('createdAt', descending: true)
-        .limit(10)
+        .limit(isTrending ? 40 : 20)
         .snapshots()
         .listen((snapshot) {
       if (snapshot.docs.isNotEmpty) {
         _lastDocument = snapshot.docs.last;
       }
-      
-      final updatedPosts = snapshot.docs
+
+      var updatedPosts = snapshot.docs
           .map((doc) => NewsFeedPost.fromFirestore(doc))
           .where((post) => !post.isDeleted)
           .toList();
-          
-      // Local sort to keep pinned posts on top
+
+      // If Followers tab is active, filter posts by followers/following/my posts
+      if (_selectedFeedTab == 'Followers') {
+        final affinity = SocialAffinityService();
+        final allowedUsers = {
+          ...affinity.followingIds,
+          ...affinity.followerIds,
+          _currentUserId,
+        };
+        updatedPosts = updatedPosts.where((post) => allowedUsers.contains(post.userId)).toList();
+      }
+
+      // Local sort with Social Affinity Boost & Dynamic Calculated Trending Score in Trending mode
+      final affinity = SocialAffinityService();
       updatedPosts.sort((a, b) {
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
+        if (isTrending) {
+          final scoreA = affinity.calculateBoostedScore(
+            a.calculatedTrendingScore,
+            a.userId,
+            itemUniqueId: a.id,
+            likes10m: a.likeCount,
+            messages10m: a.commentCount,
+          );
+          final scoreB = affinity.calculateBoostedScore(
+            b.calculatedTrendingScore,
+            b.userId,
+            itemUniqueId: b.id,
+            likes10m: b.likeCount,
+            messages10m: b.commentCount,
+          );
+          return scoreB.compareTo(scoreA);
+        }
         return b.createdAt.compareTo(a.createdAt);
       });
 
@@ -137,9 +178,8 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
       }
 
       _lastDocument = snap.docs.last;
-      final newPosts = snap.docs
-          .map((doc) => NewsFeedPost.fromFirestore(doc))
-          .toList();
+      final newPosts =
+          snap.docs.map((doc) => NewsFeedPost.fromFirestore(doc)).toList();
 
       if (mounted) {
         setState(() {
@@ -163,6 +203,51 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     }
   }
 
+  Widget _buildFeedTabChip(String label, String value, bool isDarkMode) {
+    final isSelected = _selectedFeedTab == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          if (_selectedFeedTab != value) {
+            setState(() {
+              _selectedFeedTab = value;
+            });
+            _setupRealtimeFeed();
+          }
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isSelected
+                ? (value == 'Trending'
+                    ? Colors.orange
+                    : (value == 'Followers' ? Colors.lightBlue : primaryColor))
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(17),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : [],
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : (isDarkMode ? Colors.white60 : Colors.black54),
+              fontSize: 12,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleRefresh() async {
     _setupRealtimeFeed();
   }
@@ -173,50 +258,78 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: isDarkMode ? const Color(0xFF0F0F1A) : const Color(0xFFF3F4F6),
+      backgroundColor:
+          isDarkMode ? const Color(0xFF0F0F1A) : const Color(0xFFF3F4F6),
       body: RefreshIndicator(
         onRefresh: _handleRefresh,
         color: primaryColor,
         child: CustomScrollView(
           controller: _scrollController,
-          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+          physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics()),
           slivers: [
             // Top App Bar
             SliverToBoxAdapter(
               child: Container(
                 color: isDarkMode ? Colors.black : Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Shimmer.fromColors(
-                      baseColor: Colors.lightBlue,
-                      highlightColor: isDarkMode ? Colors.white : Colors.lightBlueAccent.shade100,
-                      child: Text(
-                        'imChat Moment',
-                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.lightBlue,
-                            ),
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () => Get.to(() => const PostCreationScreen()),
-                      icon: Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: primaryColor.withValues(alpha: 0.1),
-                          shape: BoxShape.circle,
+                    // Header Bar (Title + Add Button)
+                    Row(
+                      children: [
+                        Shimmer.fromColors(
+                          baseColor: Colors.lightBlue,
+                          highlightColor: isDarkMode
+                              ? Colors.white
+                              : Colors.lightBlueAccent.shade100,
+                          child: Text(
+                            'imChat Moment',
+                            style:
+                                Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.lightBlue,
+                                    ),
+                          ),
                         ),
-                        child: const Icon(Icons.add, color: primaryColor),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () => Get.to(() => const PostCreationScreen()),
+                          icon: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: primaryColor.withValues(alpha: 0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.add, color: primaryColor),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
+                    // Filter Tabs Row (Latest | Trending 🔥 | Followers 👥)
+                    Container(
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: isDarkMode ? const Color(0xFF1E1E2C) : Colors.grey[200],
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.all(3),
+                      child: Row(
+                        children: [
+                          _buildFeedTabChip('Latest', 'Latest', isDarkMode),
+                          _buildFeedTabChip('Trending 🔥', 'Trending', isDarkMode),
+                          _buildFeedTabChip('Followers 👥', 'Followers', isDarkMode),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-
-
 
             // Share what's on mind section
             SliverToBoxAdapter(
@@ -236,15 +349,20 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                       child: GestureDetector(
                         onTap: () => Get.to(() => const PostCreationScreen()),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
                           decoration: BoxDecoration(
-                            color: isDarkMode ? const Color(0xFF1E1E2F) : Colors.grey[200],
+                            color: isDarkMode
+                                ? const Color(0xFF1E1E2F)
+                                : Colors.grey[200],
                             borderRadius: BorderRadius.circular(24),
                           ),
                           child: Text(
                             "What's on your mind, ${currentUser.fullname.split(' ').first}?",
                             style: TextStyle(
-                              color: isDarkMode ? Colors.white60 : Colors.grey[600],
+                              color: isDarkMode
+                                  ? Colors.white60
+                                  : Colors.grey[600],
                               fontSize: 14,
                             ),
                           ),
@@ -254,7 +372,8 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                     const SizedBox(width: 12),
                     IconButton(
                       icon: const Icon(IconlyLight.image, color: Colors.green),
-                      onPressed: () => Get.to(() => const PostCreationScreen(autoPickMedia: true)),
+                      onPressed: () => Get.to(
+                          () => const PostCreationScreen(autoPickMedia: true)),
                     ),
                   ],
                 ),
@@ -272,11 +391,13 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.warning_amber_rounded, size: 60, color: Colors.grey[400]),
+                              Icon(Icons.warning_amber_rounded,
+                                  size: 60, color: Colors.grey[400]),
                               const SizedBox(height: 12),
                               Text(
                                 'No posts yet',
-                                style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                                style: TextStyle(
+                                    color: Colors.grey[500], fontSize: 16),
                               ),
                             ],
                           ),
@@ -288,22 +409,37 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                             if (index == _posts.length) {
                               return _hasMore
                                   ? const Padding(
-                                      padding: EdgeInsets.symmetric(vertical: 24),
+                                      padding:
+                                          EdgeInsets.symmetric(vertical: 24),
                                       child: Center(child: LoadingIndicator()),
                                     )
                                   : Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 24),
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 24),
                                       child: Center(
                                         child: Text(
                                           'You have seen all updates',
-                                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                                          style: TextStyle(
+                                              color: Colors.grey[500],
+                                              fontSize: 12),
                                         ),
                                       ),
                                     );
                             }
 
                             final post = _posts[index];
-                            return _buildPostCard(context, post, isDarkMode);
+                            final cardWidget = _buildPostCard(context, post, isDarkMode);
+
+                            if (index > 0 && index % 4 == 0) {
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  cardWidget,
+                                  const MomentAdWidget(),
+                                ],
+                              );
+                            }
+                            return cardWidget;
                           },
                           childCount: _posts.length + 1,
                         ),
@@ -314,8 +450,10 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     );
   }
 
-  Widget _buildPostCard(BuildContext context, NewsFeedPost post, bool isDarkMode) {
+  Widget _buildPostCard(
+      BuildContext context, NewsFeedPost post, bool isDarkMode) {
     final isOwnPost = post.userId == _currentUserId;
+    final GlobalKey likeBtnKey = GlobalKey();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -323,6 +461,33 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (post.isNotice)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.purple.shade700, Colors.blue.shade600],
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.campaign, color: Colors.amberAccent, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      post.noticeTitle ?? 'OFFICIAL NOTICE',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.push_pin, color: Colors.amberAccent, size: 16),
+                ],
+              ),
+            ),
           RealtimePostHeader(
             post: post,
             currentUserId: _currentUserId,
@@ -341,18 +506,22 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                 style: TextStyle(
                   fontSize: 14.5,
                   height: 1.4,
-                  color: isDarkMode ? Colors.white.withValues(alpha: 0.95) : Colors.black87,
+                  color: isDarkMode
+                      ? Colors.white.withValues(alpha: 0.95)
+                      : Colors.black87,
                 ),
               ),
             ),
 
           // Post Media Attachments
-          if (post.media.isNotEmpty)
-            _buildMediaGallery(post),
+          if (post.media.isNotEmpty) _buildMediaGallery(post),
 
           // Footer metrics counters
           StreamBuilder<DocumentSnapshot>(
-            stream: FirebaseFirestore.instance.collection('news_feed_posts').doc(post.id).snapshots(),
+            stream: FirebaseFirestore.instance
+                .collection('news_feed_posts')
+                .doc(post.id)
+                .snapshots(),
             builder: (context, snapshot) {
               List<dynamic> likedBy = post.likedBy;
               Map<String, dynamic> reactionsMap = post.reactions;
@@ -367,9 +536,12 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
               final dynamic userReactionData = reactionsMap[_currentUserId];
               ReactionType? userReaction;
               if (userReactionData != null) {
-                final String reactionValue = userReactionData is String ? userReactionData : (userReactionData['reaction'] ?? '');
+                final String reactionValue = userReactionData is String
+                    ? userReactionData
+                    : (userReactionData['reaction'] ?? '');
                 try {
-                  userReaction = ReactionType.values.firstWhere((e) => e.name == reactionValue);
+                  userReaction = ReactionType.values
+                      .firstWhere((e) => e.name == reactionValue);
                 } catch (_) {}
               }
 
@@ -380,114 +552,142 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                     isDarkMode: isDarkMode,
                   ),
 
-          const Divider(height: 1, thickness: 0.5),
+                  const Divider(height: 1, thickness: 0.5),
 
-          // Footer Action Buttons
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                // React / Like Button with Reaction menu support
-                Expanded(
-                  child: GestureDetector(
-                    onLongPress: () => _showReactionsPanel(context, post),
-                    child: InkWell(
-                      onTap: () => NewsFeedService.toggleLike(postId: post.id, userId: _currentUserId),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              hasLiked ? Icons.thumb_up : IconlyLight.heart,
-                              size: 20,
-                              color: hasLiked
-                                  ? (userReaction == null ? Colors.blue : _getReactionColor(userReaction))
-                                  : (isDarkMode ? Colors.white60 : Colors.grey[600]),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              hasLiked ? (userReaction?.label ?? 'Like') : 'Like',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13,
-                                color: hasLiked
-                                    ? (userReaction == null ? Colors.blue : _getReactionColor(userReaction))
-                                    : (isDarkMode ? Colors.white60 : Colors.grey[600]),
+                  // Footer Action Buttons
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        // React / Like Button with Reaction menu support
+                        Expanded(
+                          child: GestureDetector(
+                            key: likeBtnKey,
+                            onLongPress: () {
+                              FbReactionPickerOverlay.show(
+                                context,
+                                targetKey: likeBtnKey,
+                                onReactionSelected: (react) {
+                                  NewsFeedService.setReaction(
+                                    postId: post.id,
+                                    userId: _currentUserId,
+                                    reaction: react,
+                                  );
+                                },
+                              );
+                            },
+                            child: InkWell(
+                              onTap: () => NewsFeedService.toggleLike(
+                                  postId: post.id, userId: _currentUserId),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 10),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _buildFooterReactionIcon(
+                                      hasLiked,
+                                      userReaction,
+                                      isDarkMode,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      hasLiked
+                                          ? (userReaction?.label ?? 'Like')
+                                          : 'Like',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13,
+                                        color: hasLiked
+                                            ? (userReaction == null
+                                                ? const Color(0xFF1877F2)
+                                                : _getReactionColor(
+                                                    userReaction))
+                                            : (isDarkMode
+                                                ? Colors.white60
+                                                : Colors.grey[600]),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
-                  ),
-                ),
 
-                // Comment Button
-                Expanded(
-                  child: InkWell(
-                    onTap: () => _showCommentsSheet(context, post),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            IconlyLight.chat,
-                            size: 20,
-                            color: isDarkMode ? Colors.white60 : Colors.grey[600],
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Comment',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                              color: isDarkMode ? Colors.white60 : Colors.grey[600],
+                        // Comment Button
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => _showCommentsSheet(context, post),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    IconlyLight.chat,
+                                    size: 20,
+                                    color: isDarkMode
+                                        ? Colors.white60
+                                        : Colors.grey[600],
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Comment',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                      color: isDarkMode
+                                          ? Colors.white60
+                                          : Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+                        ),
 
-                // Share Button
-                Expanded(
-                  child: InkWell(
-                    onTap: () => _sharePost(post),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            IconlyLight.send,
-                            size: 20,
-                            color: isDarkMode ? Colors.white60 : Colors.grey[600],
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Share',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                              color: isDarkMode ? Colors.white60 : Colors.grey[600],
+                        // Share Button
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => _sharePost(post),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    IconlyLight.send,
+                                    size: 20,
+                                    color: isDarkMode
+                                        ? Colors.white60
+                                        : Colors.grey[600],
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Share',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                      color: isDarkMode
+                                          ? Colors.white60
+                                          : Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              );
+            },
           ),
         ],
-      );
-    },
-  ),
-],
       ),
     );
   }
@@ -498,15 +698,34 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     final mediaList = post.media;
 
     if (mediaList.length == 1) {
+      final media = mediaList.first;
+
+      if (media.type == 'video') {
+        return InlineNewsFeedVideoPlayer(
+          videoUrl: media.url,
+          thumbnailUrl: media.thumbnailUrl,
+          onTapFullReels: () => _openReelsViewer(post),
+        );
+      }
+
+      // Facebook-style constrained photo container (4:5 aspect ratio bound)
       return GestureDetector(
         onTap: () => Get.to(() => PostMediaViewer(mediaList: mediaList)),
-        child: AspectRatio(
-          aspectRatio: mediaList.first.aspectRatio ?? 16 / 9,
-          child: Hero(
-            tag: 'media_${post.id}',
-            child: Container(
-              color: Colors.black,
-              child: SizedBox.expand(child: _buildMediaItem(mediaList.first)),
+        child: Container(
+          constraints: const BoxConstraints(maxHeight: 420),
+          width: double.infinity,
+          color: Colors.black,
+          child: AspectRatio(
+            aspectRatio: (media.aspectRatio ?? 4 / 3).clamp(0.75, 1.78),
+            child: Hero(
+              tag: 'media_${post.id}',
+              child: Image.network(
+                media.url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image, color: Colors.white54, size: 48),
+                ),
+              ),
             ),
           ),
         ),
@@ -516,29 +735,45 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: AspectRatio(
-        aspectRatio: 1.0, 
+        aspectRatio: 1.0,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: _buildGridContent(mediaList),
+          child: _buildGridContent(post, mediaList),
         ),
       ),
     );
   }
 
-  Widget _buildGridContent(List<PostMedia> mediaList) {
+  void _openReelsViewer(NewsFeedPost targetPost) {
+    final videoPosts = _posts.where((p) => p.media.any((m) => m.type == 'video')).toList();
+    final targetIndex = videoPosts.indexWhere((p) => p.id == targetPost.id);
+    Get.to(() => MomentReelsScreen(
+          videoPosts: videoPosts.isNotEmpty ? videoPosts : [targetPost],
+          initialIndex: targetIndex < 0 ? 0 : targetIndex,
+        ));
+  }
+
+  Widget _buildGridContent(NewsFeedPost post, List<PostMedia> mediaList) {
     final len = mediaList.length;
     const spacing = 4.0;
-    
+
     Widget buildGridItem(int index) {
+      final isVideo = mediaList[index].type == 'video';
       return GestureDetector(
-        onTap: () => Get.to(() => PostMediaViewer(mediaList: mediaList, initialIndex: index)),
+        onTap: () {
+          if (isVideo) {
+            _openReelsViewer(post);
+          } else {
+            Get.to(() => PostMediaViewer(mediaList: mediaList, initialIndex: index));
+          }
+        },
         child: Container(
           color: Colors.grey[300],
           child: SizedBox.expand(child: _buildMediaItem(mediaList[index])),
         ),
       );
     }
-    
+
     if (len == 2) {
       return Row(
         children: [
@@ -548,7 +783,7 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
         ],
       );
     }
-    
+
     if (len == 3) {
       return Row(
         children: [
@@ -566,7 +801,7 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
         ],
       );
     }
-    
+
     return Column(
       children: [
         Expanded(
@@ -591,7 +826,8 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                     buildGridItem(3),
                     if (len > 4)
                       GestureDetector(
-                        onTap: () => Get.to(() => PostMediaViewer(mediaList: mediaList, initialIndex: 3)),
+                        onTap: () => Get.to(() => PostMediaViewer(
+                            mediaList: mediaList, initialIndex: 3)),
                         child: Container(
                           color: Colors.black54,
                           alignment: Alignment.center,
@@ -656,32 +892,69 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     );
   }
 
+  Widget _buildFooterReactionIcon(
+      bool hasLiked, ReactionType? userReaction, bool isDarkMode) {
+    if (!hasLiked) {
+      return Icon(
+        Icons.thumb_up_outlined,
+        size: 19,
+        color: isDarkMode ? Colors.white60 : Colors.grey[600],
+      );
+    }
+
+    if (userReaction == ReactionType.love) {
+      return Container(
+        width: 20,
+        height: 20,
+        decoration: const BoxDecoration(
+          color: Color(0xFFE41E3F),
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: const Icon(Icons.favorite, color: Colors.white, size: 12),
+      );
+    }
+
+    if (userReaction == ReactionType.like || userReaction == null) {
+      return const Icon(
+        Icons.thumb_up_rounded,
+        size: 19,
+        color: Color(0xFF1877F2),
+      );
+    }
+
+    return Text(
+      userReaction.emoji,
+      style: const TextStyle(fontSize: 16),
+    );
+  }
+
   Color _getReactionColor(ReactionType reaction) {
     switch (reaction) {
       case ReactionType.like:
-        return Colors.blue;
+        return const Color(0xFF1877F2); // Facebook Blue
       case ReactionType.love:
-        return Colors.red;
+        return const Color(0xFFE41E3F); // Facebook Red Love
       case ReactionType.haha:
       case ReactionType.wow:
       case ReactionType.sad:
-        return Colors.amber;
+        return const Color(0xFFF7B125); // Facebook Yellow
       case ReactionType.angry:
-        return const Color(0xFFFF4500);
+        return const Color(0xFFE94B35); // Facebook Angry Red/Orange
     }
   }
 
-  void _showPostOptions(BuildContext context, NewsFeedPost post, bool isOwnPost) {
+  void _showPostOptions(
+      BuildContext context, NewsFeedPost post, bool isOwnPost) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) {
         final isDark = Theme.of(context).brightness == Brightness.dark;
-        return Container(
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF161622) : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
+        return Material(
+          color: isDark ? const Color(0xFF161622) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          clipBehavior: Clip.antiAlias,
           child: SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -715,7 +988,8 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                   ),
                 ] else ...[
                   ListTile(
-                    leading: const Icon(IconlyLight.addUser, color: Colors.green),
+                    leading:
+                        const Icon(IconlyLight.addUser, color: Colors.green),
                     title: const Text('Follow User'),
                     onTap: () {
                       Get.back();
@@ -723,16 +997,12 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                     },
                   ),
                   ListTile(
-                    leading: const Icon(Icons.report_problem_outlined, color: Colors.orange),
+                    leading: const Icon(Icons.report_problem_outlined,
+                        color: Colors.orange),
                     title: const Text('Report Post'),
                     onTap: () {
                       Get.back();
-                      Get.snackbar(
-                        'Reported',
-                        'Thank you for reporting. We will review this post.',
-                        backgroundColor: Colors.black.withValues(alpha: 0.7),
-                        colorText: Colors.white,
-                      );
+                      _showReportDialog(context, post);
                     },
                   ),
                 ],
@@ -754,42 +1024,81 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     );
   }
 
-  void _showReactionsPanel(BuildContext context, NewsFeedPost post) {
+  void _showReportDialog(BuildContext context, NewsFeedPost post) {
+    final reasons = [
+      'Spam or Unwanted Ads',
+      'Harassment or Hate Speech',
+      'Inappropriate / Nudity Content',
+      'False Information / Fake News',
+      'Violence or Dangerous Behavior',
+      'Other Reason',
+    ];
+    String selectedReason = reasons.first;
+
     showDialog(
       context: context,
-      builder: (context) => Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.95),
-            borderRadius: BorderRadius.circular(30),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: ReactionType.values.map((react) {
-              return GestureDetector(
-                onTap: () {
-                  Navigator.pop(context);
-                  NewsFeedService.setReaction(
-                    postId: post.id,
-                    userId: _currentUserId,
-                    reaction: react,
+      builder: (context) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              backgroundColor: isDark ? const Color(0xFF161622) : Colors.white,
+              title: Text(
+                'Report Post',
+                style: TextStyle(color: isDark ? Colors.white : Colors.black),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: reasons.map((reason) {
+                  return RadioListTile<String>(
+                    title: Text(
+                      reason,
+                      style: TextStyle(
+                        color: isDark ? Colors.white : Colors.black,
+                        fontSize: 13,
+                      ),
+                    ),
+                    value: reason,
+                    groupValue: selectedReason,
+                    onChanged: (val) {
+                      if (val != null) setStateDialog(() => selectedReason = val);
+                    },
                   );
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Text(
-                    react.emoji,
-                    style: const TextStyle(fontSize: 28),
-                  ),
+                }).toList(),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
                 ),
-              );
-            }).toList(),
-          ),
-        ),
-      ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                  onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    Navigator.pop(context);
+                    await NewsFeedService.reportPost(
+                      postId: post.id,
+                      reporterId: _currentUserId,
+                      reason: selectedReason,
+                    );
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Report Submitted. Thank you for reporting. Admin will review this post.'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                  },
+                  child: const Text('Submit Report'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
+
+
 
   Future<void> _sharePost(NewsFeedPost post) async {
     final link = DeepLinkService.generatePostLink(post.id);
@@ -798,13 +1107,13 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 20),
-          child: Column(
+        return Material(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
@@ -821,7 +1130,8 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                   backgroundColor: primaryColor.withValues(alpha: 0.1),
                   child: const Icon(Icons.copy_rounded, color: primaryColor),
                 ),
-                title: const Text('Copy Link', style: TextStyle(fontWeight: FontWeight.bold)),
+                title: const Text('Copy Link',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: const Text('Copy post link to clipboard'),
                 onTap: () {
                   Clipboard.setData(ClipboardData(text: link));
@@ -840,24 +1150,26 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                   backgroundColor: Colors.blue.withValues(alpha: 0.1),
                   child: const Icon(Icons.share_rounded, color: Colors.blue),
                 ),
-                title: const Text('Invite / Share', style: TextStyle(fontWeight: FontWeight.bold)),
+                title: const Text('Invite / Share',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: const Text('Share post via other apps'),
                 onTap: () async {
                   Navigator.pop(context); // close bottom sheet
                   await NewsFeedService.incrementShareCount(post.id);
                   SharePlus.instance.share(
                     ShareParams(
-                      text: 'Check out this post from ${post.userName} on imChat:\n\n"${post.content}"\n\nLink: $link'
-                    ),
+                        text:
+                            'Check out this post from ${post.userName} on imChat:\n\n"${post.content}"\n\nLink: $link'),
                   );
                 },
               ),
               const SizedBox(height: 20),
             ],
           ),
-        );
-      },
-    );
+        ),
+      );
+    },
+  );
   }
 
   void _editPostCaption(NewsFeedPost post) {
@@ -911,7 +1223,8 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
         return AlertDialog(
           backgroundColor: isDark ? const Color(0xFF161622) : Colors.white,
           title: const Text('Delete Post'),
-          content: const Text('Are you sure you want to permanently delete this post?'),
+          content: const Text(
+              'Are you sure you want to permanently delete this post?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -935,10 +1248,10 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
     final user = await UserApi.getUser(userId);
     if (user != null) {
       Get.to(() => ProfilePageForRoom(
-        userID: user.userId,
-        userName: user.fullname,
-        userImage: user.photoUrl,
-      ));
+            userID: user.userId,
+            userName: user.fullname,
+            userImage: user.photoUrl,
+          ));
     } else {
       Get.snackbar(
         'Error',
@@ -971,7 +1284,10 @@ class RealtimePostHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('Users').doc(post.userId).snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('Users')
+          .doc(post.userId)
+          .snapshots(),
       builder: (context, userSnapshot) {
         String userName = post.userName;
         bool isVerified = post.isVerified;
@@ -980,7 +1296,7 @@ class RealtimePostHeader extends StatelessWidget {
         int userLevel = post.userLevel ?? 1;
         int? sendingLevelNum;
         int? receivingLevelNum;
-        String? selectedNameplateId;
+        List<String> selectedNameplateIds = [];
 
         if (userSnapshot.hasData && userSnapshot.data!.exists) {
           final data = userSnapshot.data!.data() as Map<String, dynamic>;
@@ -996,9 +1312,14 @@ class RealtimePostHeader extends StatelessWidget {
           }
           final levelStr = data['level'] ?? '1';
           userLevel = int.tryParse(levelStr.toString()) ?? userLevel;
-          
+
           final customization = data['customization'] as Map<String, dynamic>?;
-          selectedNameplateId = customization?['selectedNameplateId'] as String?;
+          if (customization?['selectedNameplateIds'] != null) {
+            selectedNameplateIds = (customization!['selectedNameplateIds'] as List).whereType<String>().toList();
+          } else if (customization?['selectedNameplateId'] != null &&
+              (customization!['selectedNameplateId'] as String).isNotEmpty) {
+            selectedNameplateIds = [customization['selectedNameplateId'] as String];
+          }
         }
 
         return Padding(
@@ -1038,47 +1359,108 @@ class RealtimePostHeader extends StatelessWidget {
                         if (isVerified)
                           const Padding(
                             padding: EdgeInsets.only(left: 4),
-                            child: Icon(Icons.verified, color: Colors.blue, size: 16),
+                            child: Icon(Icons.verified,
+                                color: Colors.blue, size: 16),
                           ),
-                        if (userLevelBadgeUrl != null && userLevelBadgeUrl.isNotEmpty)
+                        if (userLevelBadgeUrl != null &&
+                            userLevelBadgeUrl.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(left: 4),
                             child: Image.network(
                               userLevelBadgeUrl,
                               width: 22,
                               height: 22,
-                              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
                             ),
                           ),
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        if (sendingLevelNum != null)
-                          _buildSingleLevelBadge('sending_config', sendingLevelNum),
-
-                        if (receivingLevelNum != null)
-                          _buildSingleLevelBadge('receiving_config', receivingLevelNum),
-
-                        if (selectedNameplateId != null && selectedNameplateId.isNotEmpty)
-                          FutureBuilder<String?>(
-                            future: NameplateHelper.getNameplateUrl(selectedNameplateId),
-                            builder: (context, snapshot) {
-                              if (snapshot.hasData && snapshot.data!.isNotEmpty) {
-                                return CachedNetworkImage(
-                                  imageUrl: snapshot.data!,
-                                  height: 18,
-                                  fit: BoxFit.contain,
-                                );
-                              }
-                              return const SizedBox.shrink();
-                            },
-                          ),
-                      ],
+                    FutureBuilder<List<String>>(
+                      future: selectedNameplateIds.isNotEmpty
+                          ? NameplateHelper.getNameplateUrls(selectedNameplateIds)
+                          : Future.value(<String>[]),
+                      builder: (context, npSnapshot) {
+                        final nameplateUrls = npSnapshot.data ?? [];
+                        final hasLevels = sendingLevelNum != null || receivingLevelNum != null;
+                        if (!hasLevels && nameplateUrls.isEmpty) return const SizedBox.shrink();
+                        // chunk nameplates 5 per row
+                        final npRows = <List<String>>[];
+                        for (int i = 0; i < nameplateUrls.length; i += 5) {
+                          npRows.add(nameplateUrls.sublist(i, (i + 5).clamp(0, nameplateUrls.length)));
+                        }
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Level badges row
+                            if (hasLevels)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (sendingLevelNum != null)
+                                    StreamBuilder<DocumentSnapshot>(
+                                      stream: FirebaseFirestore.instance
+                                          .collection('level_configurations')
+                                          .doc('sending_config')
+                                          .snapshots(),
+                                      builder: (ctx, snap) {
+                                        if (!snap.hasData || !snap.data!.exists) return const SizedBox.shrink();
+                                        final lvls = (snap.data!.data() as Map?)?['levels'] as List?;
+                                        if (lvls == null) return const SizedBox.shrink();
+                                        final entry = lvls.cast<Map>().firstWhere(
+                                          (l) => l['levelNumber']?.toString() == sendingLevelNum.toString(),
+                                          orElse: () => {},
+                                        );
+                                        final imgUrl = entry['imageUrl'] as String?;
+                                        if (imgUrl == null || imgUrl.isEmpty) return const SizedBox.shrink();
+                                        return Padding(
+                                          padding: const EdgeInsets.only(right: 4),
+                                          child: CachedNetworkImage(imageUrl: imgUrl, height: 18, fit: BoxFit.contain),
+                                        );
+                                      },
+                                    ),
+                                  if (receivingLevelNum != null)
+                                    StreamBuilder<DocumentSnapshot>(
+                                      stream: FirebaseFirestore.instance
+                                          .collection('level_configurations')
+                                          .doc('receiving_config')
+                                          .snapshots(),
+                                      builder: (ctx, snap) {
+                                        if (!snap.hasData || !snap.data!.exists) return const SizedBox.shrink();
+                                        final lvls = (snap.data!.data() as Map?)?['levels'] as List?;
+                                        if (lvls == null) return const SizedBox.shrink();
+                                        final entry = lvls.cast<Map>().firstWhere(
+                                          (l) => l['levelNumber']?.toString() == receivingLevelNum.toString(),
+                                          orElse: () => {},
+                                        );
+                                        final imgUrl = entry['imageUrl'] as String?;
+                                        if (imgUrl == null || imgUrl.isEmpty) return const SizedBox.shrink();
+                                        return CachedNetworkImage(imageUrl: imgUrl, height: 18, fit: BoxFit.contain);
+                                      },
+                                    ),
+                                ],
+                              ),
+                            // Nameplate rows (max 5 per row, height 14)
+                            ...npRows.map((rowItems) => Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: rowItems.map((url) => Padding(
+                                  padding: const EdgeInsets.only(right: 4),
+                                  child: CachedNetworkImage(
+                                    imageUrl: url,
+                                    height: 14,
+                                    fit: BoxFit.contain,
+                                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                                  ),
+                                )).toList(),
+                              ),
+                            )),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -1086,7 +1468,8 @@ class RealtimePostHeader extends StatelessWidget {
                         Text(
                           post.timeAgo,
                           style: TextStyle(
-                            color: isDarkMode ? Colors.white54 : Colors.grey[500],
+                            color:
+                                isDarkMode ? Colors.white54 : Colors.grey[500],
                             fontSize: 11,
                           ),
                         ),
@@ -1110,39 +1493,12 @@ class RealtimePostHeader extends StatelessWidget {
                 const SizedBox(width: 4),
               ],
               IconButton(
-                icon: Icon(Icons.more_horiz, color: isDarkMode ? Colors.white60 : Colors.grey[600]),
+                icon: Icon(Icons.more_horiz,
+                    color: isDarkMode ? Colors.white60 : Colors.grey[600]),
                 onPressed: onOptionsTap,
               ),
             ],
           ),
-        );
-      },
-    );
-  }
-
-  Widget _buildSingleLevelBadge(String configDoc, int levelNumber) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('level_configurations').doc(configDoc).snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData || !snapshot.data!.exists) return const SizedBox.shrink();
-        final data = snapshot.data!.data() as Map<String, dynamic>?;
-        if (data == null || data['levels'] == null) return const SizedBox.shrink();
-        
-        final levels = List<Map<String, dynamic>>.from(data['levels']);
-        String? imageUrl;
-        for (final lvl in levels) {
-          if (lvl['levelNumber']?.toString() == levelNumber.toString()) {
-            imageUrl = lvl['imageUrl'] as String?;
-            break;
-          }
-        }
-        
-        if (imageUrl == null || imageUrl.isEmpty) return const SizedBox.shrink();
-        
-        return CachedNetworkImage(
-          imageUrl: imageUrl,
-          height: 18,
-          fit: BoxFit.contain,
         );
       },
     );

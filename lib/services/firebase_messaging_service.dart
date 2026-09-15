@@ -202,14 +202,10 @@ abstract class FirebaseMessagingService {
           Get.offNamed(AppRoutes.voiceCall, arguments: {'call': callObj});
         }
         
-        // Handle Firestore update in background
-        FirebaseFirestore.instance.collection('Calls').doc(callerId).get().then((docSnapshot) {
-          if (docSnapshot.exists) {
-            docSnapshot.reference.update({
-              'state': 'running'
-            });
-          }
-        });
+        // Handle Firestore update immediately
+        FirebaseFirestore.instance.collection('Calls').doc(callerId).update({
+          'state': 'running',
+        }).catchError((_) {});
       }
     } catch (e) {
       debugPrint('Error accepting call from CallKit: $e');
@@ -225,8 +221,12 @@ abstract class FirebaseMessagingService {
 
       final isGroup = payload['type'] == 'group_call';
       if (!isGroup) {
-        await FirebaseFirestore.instance.collection('Calls').doc(callerId).update({
+        final docRef = FirebaseFirestore.instance.collection('Calls').doc(callerId);
+        await docRef.update({
           'state': 'decline',
+        }).catchError((_) {});
+        Future.delayed(const Duration(seconds: 3), () {
+          docRef.delete().catchError((_) {});
         });
       }
     } catch (e) {
@@ -236,15 +236,18 @@ abstract class FirebaseMessagingService {
 
   static Future<void> _handleCallDeclineById(String callerId) async {
     try {
-      // In a timeout, we assume it's a regular call unless we fetch the doc.
-      // Easiest is just to try updating Calls and GroupCalls.
-      await FirebaseFirestore.instance.collection('Calls').doc(callerId).update({
+      final callDocRef = FirebaseFirestore.instance.collection('Calls').doc(callerId);
+      final groupDocRef = FirebaseFirestore.instance.collection('GroupCalls').doc(callerId);
+      await callDocRef.update({
         'state': 'missed',
       }).catchError((_) {});
-      
-      await FirebaseFirestore.instance.collection('GroupCalls').doc(callerId).update({
+      await groupDocRef.update({
         'state': 'missed',
       }).catchError((_) {});
+      Future.delayed(const Duration(seconds: 3), () {
+        callDocRef.delete().catchError((_) {});
+        groupDocRef.delete().catchError((_) {});
+      });
     } catch (e) {
       debugPrint('Error handling call timeout: $e');
     }

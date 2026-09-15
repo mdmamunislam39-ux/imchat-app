@@ -8,6 +8,8 @@ import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/services/entrance_effect_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:chat_messenger/helpers/ranking_helper.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/ludo/ludo_models.dart';
 
 /// Repository for managing Audio Rooms v2 data
 class AudioRoomsRepository {
@@ -43,6 +45,7 @@ class AudioRoomsRepository {
 
       final rooms = querySnapshot.docs
           .map((doc) => AudioRoomV2.fromFirestore(doc))
+          .where((room) => !room.isGroupRoom && !room.isPrivate)
           .toList();
 
       final now = DateTime.now();
@@ -86,23 +89,29 @@ class AudioRoomsRepository {
     required String roomId,
     required bool isActive,
     int? maxPlayers,
+    String? hostUserId,
+    String? hostUserName,
+    String? hostUserAvatar,
   }) async {
     try {
       final updates = <String, dynamic>{
         'isLudoActive': isActive,
       };
       
-      if (isActive && maxPlayers != null) {
-        // Also initialize the Ludo game state when starting
-        final ludoState = {
-          'maxPlayers': maxPlayers,
-          'players': {},
-          'currentTurn': 'LudoColor.red',
-          'diceValue': 1,
-          'isDiceRolled': false,
-          'winner': null,
-          'tokens': [],
-        };
+      if (isActive) {
+        final initialState = LudoGameState.initial(maxPlayers: maxPlayers ?? 2);
+        final ludoState = initialState.copyWith(
+          players: {
+            if (hostUserId != null) LudoColor.red: hostUserId,
+          },
+          playerNames: {
+            if (hostUserName != null) LudoColor.red: hostUserName,
+          },
+          playerAvatars: {
+            if (hostUserAvatar != null) LudoColor.red: hostUserAvatar,
+          },
+        ).toJson();
+
         await FirebaseDatabase.instance
             .ref('rooms/$roomId/ludo/state')
             .set(ludoState);
@@ -112,6 +121,47 @@ class AudioRoomsRepository {
     } catch (e) {
       debugPrint('Error updating Ludo state: $e');
       throw Exception('Failed to update Ludo state: $e');
+    }
+  }
+
+  /// Update Carrom state for the room
+  Future<void> updateCarromState({
+    required String roomId,
+    required bool isActive,
+    int? maxPlayers,
+  }) async {
+    try {
+      final updates = <String, dynamic>{
+        'isCarromActive': isActive,
+      };
+      
+      if (isActive && maxPlayers != null) {
+        // Initialize the Carrom game state
+        final carromState = {
+          'maxPlayers': maxPlayers,
+          'players': {},
+          'isStarted': false,
+          'currentTurn': 'bottom',
+          'winner': null,
+          'pieces': [],
+          'scores': {
+            'white': 0,
+            'black': 0,
+          },
+          'queenStatus': 'none',
+          'queenOwner': null,
+          'shotState': null,
+          'lastTurnStartTime': DateTime.now().millisecondsSinceEpoch,
+        };
+        await FirebaseDatabase.instance
+            .ref('rooms/$roomId/carrom/state')
+            .set(carromState);
+      }
+      
+      await _roomsCollection.doc(roomId).update(updates);
+    } catch (e) {
+      debugPrint('Error updating Carrom state: $e');
+      throw Exception('Failed to update Carrom state: $e');
     }
   }
 
@@ -233,12 +283,18 @@ class AudioRoomsRepository {
     required String creatorName,
     String? creatorImageUrl,
     String? creatorFrameId,
+    String? creatorPhone,
+    String? creatorCountry,
     AudioRoomSettings? settings,
     String? category,
   }) async {
     try {
       debugPrint('🏠 [AudioRooms] Starting room creation for: $name');
       final startTime = DateTime.now();
+
+      final currentUser = AuthController.instance.currentUser;
+      final effectivePhone = creatorPhone ?? currentUser.number;
+      final effectiveCountry = creatorCountry ?? currentUser.country;
 
       // Generate unique 7-8 digit numeric Room ID
       String roomId = '';
@@ -278,6 +334,8 @@ class AudioRoomsRepository {
         creatorId: creatorId,
         creatorName: creatorName,
         creatorImageUrl: creatorImageUrl,
+        creatorPhone: effectivePhone,
+        creatorCountry: effectiveCountry,
         participants: [
           AudioRoomParticipant(
             userId: creatorId,
@@ -296,7 +354,7 @@ class AudioRoomsRepository {
         settings: roomSettings.copyWith(seatConfiguration: initialSeats),
         joinedUserIds: [creatorId],
         category: category ?? 'Game',
-        roomLink: 'https://imchat.com/audioroom?id=$roomId',
+        roomLink: 'https://invite.imchatapp.com/room/$roomId',
       );
 
       debugPrint('🏠 [AudioRooms] Saving room to Firestore...');
@@ -306,6 +364,18 @@ class AudioRoomsRepository {
           DateTime.now().difference(startTime).inMilliseconds;
       debugPrint(
           '🏠 [AudioRooms] Room created successfully in ${roomCreationTime}ms');
+
+      // Set Realtime Database presence for auto-exit for creator
+      try {
+        final databaseRef = FirebaseDatabase.instance.ref('audio_room_presence/$roomId/$creatorId');
+        await databaseRef.set({
+          'joinedAt': ServerValue.timestamp,
+        });
+        await databaseRef.onDisconnect().remove();
+        debugPrint('🔌 [AudioRooms] Set RTDB presence onDisconnect for creator $creatorId');
+      } catch (e) {
+        debugPrint('⚠️ [AudioRooms] Failed to set RTDB presence on create: $e');
+      }
 
       // Upload image asynchronously after room creation
       if (imageFile != null) {
@@ -334,10 +404,18 @@ class AudioRoomsRepository {
         throw Exception('Invalid parameters provided');
       }
 
-      // Force server query to get fresh room data
-      final roomDoc = await _roomsCollection
-          .doc(roomId)
-          .get(const GetOptions(source: Source.server));
+      // Force server query to get fresh room data (with 3s timeout fallback to cache)
+      DocumentSnapshot roomDoc;
+      try {
+        roomDoc = await _roomsCollection
+            .doc(roomId)
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 3));
+      } catch (e) {
+        debugPrint(
+            '⚠️ [AudioRoomsRepository] Server doc query timed out or failed, falling back to cache: $e');
+        roomDoc = await _roomsCollection.doc(roomId).get();
+      }
 
       if (!roomDoc.exists) {
         throw Exception('Room not found');
@@ -348,6 +426,14 @@ class AudioRoomsRepository {
       // Check if user is blocked from entering
       if (room.isUserBlocked(userId)) {
         throw Exception('You are blocked from entering this room.');
+      }
+
+      // Check private / group room membership access
+      if ((room.isGroupRoom || room.isPrivate) &&
+          room.allowedUserIds.isNotEmpty &&
+          !room.allowedUserIds.contains(userId) &&
+          room.creatorId != userId) {
+        throw Exception('This is a private room. Only group members are allowed to join.');
       }
 
       // Check if user was kicked recently (within 24 hours)
@@ -372,11 +458,16 @@ class AudioRoomsRepository {
            DateTime? removedAt;
            final val = mostRecentKick['removedAt'];
            if (val != null) {
-             if (val is Timestamp) removedAt = val.toDate();
-             else if (val is int) removedAt = DateTime.fromMillisecondsSinceEpoch(val);
-             else if (val is String) removedAt = DateTime.tryParse(val);
-             else if (val is DateTime) removedAt = val;
-           }
+              if (val is Timestamp) {
+                removedAt = val.toDate();
+              } else if (val is int) {
+                removedAt = DateTime.fromMillisecondsSinceEpoch(val);
+              } else if (val is String) {
+                removedAt = DateTime.tryParse(val);
+              } else if (val is DateTime) {
+                removedAt = val;
+              }
+            }
            
            if (removedAt != null) {
              final now = DateTime.now();
@@ -424,8 +515,9 @@ class AudioRoomsRepository {
           if (!existingParticipant.isSeated && (isCreator || room.settings.adminIds.contains(userId))) {
             final seat1 = room.settings.seatConfiguration.firstWhere(
                 (s) => s.seatNumber == 1,
-                orElse: () => SeatInfo(seatNumber: 1, isLocked: true));
-            if (seat1.occupiedBy == null && !seat1.isLocked) {
+                orElse: () => SeatInfo(seatNumber: 1, isLocked: false));
+            final bool isSeat1Vacant = (seat1.occupiedBy == null || seat1.occupiedBy!.isEmpty || seat1.occupiedBy == userId);
+            if (isSeat1Vacant) {
               autoSitRejoin = true;
               newSeatNumber = 1;
               newIsSeated = true;
@@ -435,7 +527,9 @@ class AudioRoomsRepository {
               final updatedSeats = List<SeatInfo>.from(room.settings.seatConfiguration);
               final seatIndex = updatedSeats.indexWhere((s) => s.seatNumber == 1);
               if (seatIndex != -1) {
-                updatedSeats[seatIndex] = updatedSeats[seatIndex].copyWith(occupiedBy: userId);
+                updatedSeats[seatIndex] = updatedSeats[seatIndex].copyWith(occupiedBy: userId, isLocked: false);
+              } else {
+                updatedSeats.add(SeatInfo(seatNumber: 1, isLocked: false, occupiedBy: userId));
               }
               updatedSettingsForRejoin = updatedSettingsForRejoin.copyWith(seatConfiguration: updatedSeats);
             }
@@ -496,8 +590,9 @@ class AudioRoomsRepository {
       if (isCreator || isPersistentAdmin) {
         final seat1 = room.settings.seatConfiguration.firstWhere(
             (s) => s.seatNumber == 1,
-            orElse: () => SeatInfo(seatNumber: 1, isLocked: true));
-        if (seat1.occupiedBy == null && !seat1.isLocked) {
+            orElse: () => SeatInfo(seatNumber: 1, isLocked: false));
+        final bool isSeat1Vacant = (seat1.occupiedBy == null || seat1.occupiedBy!.isEmpty || seat1.occupiedBy == userId);
+        if (isSeat1Vacant) {
           autoSit = true;
           seatNumber = 1;
         }
@@ -792,6 +887,36 @@ class AudioRoomsRepository {
     }
   }
 
+  /// Update participant's frameId in room
+  Future<void> updateParticipantFrameId({
+    required String roomId,
+    required String userId,
+    String? frameId,
+  }) async {
+    try {
+      final roomDoc = await _roomsCollection.doc(roomId).get();
+      if (!roomDoc.exists) return;
+
+      final room = AudioRoomV2.fromFirestore(roomDoc);
+      final participantIndex = room.participants.indexWhere((p) => p.userId == userId);
+
+      if (participantIndex != -1) {
+        final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
+        updatedParticipants[participantIndex] = updatedParticipants[participantIndex].copyWith(
+          frameId: frameId,
+        );
+
+        await _roomsCollection.doc(roomId).update({
+          'participants': updatedParticipants.map((p) => p.toJson()).toList(),
+          'updatedAt': Timestamp.fromDate(DateTime.now()),
+        });
+        debugPrint('🖼️ [AudioRoomsRepository] Updated participant $userId frameId to $frameId in room $roomId');
+      }
+    } catch (e) {
+      debugPrint('⚠️ [AudioRoomsRepository] Error updating participant frameId: $e');
+    }
+  }
+
   /// Toggle admin mute status for a participant
   Future<void> toggleAdminMute(String roomId, String userId, bool mutedByAdmin) async {
     try {
@@ -947,6 +1072,7 @@ class AudioRoomsRepository {
         .map((snapshot) {
       final rooms = snapshot.docs
           .map((doc) => AudioRoomV2.fromFirestore(doc))
+          .where((room) => !room.isGroupRoom && !room.isPrivate)
           .toList();
 
       final now = DateTime.now();
@@ -965,6 +1091,39 @@ class AudioRoomsRepository {
       return rooms;
     });
   }
+
+  /// Get real-time updates for trending audio rooms
+  Stream<List<AudioRoomV2>> getTrendingRoomsStream() {
+    return _roomsCollection
+        .where('isActive', isEqualTo: true)
+        .orderBy('trendingScore', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      final rooms = snapshot.docs
+          .map((doc) => AudioRoomV2.fromFirestore(doc))
+          .where((room) => !room.isGroupRoom && !room.isPrivate && !room.excludeFromRanking && !room.isBanned)
+          .toList();
+
+      final now = DateTime.now();
+      rooms.sort((a, b) {
+        final aPinned = a.isPinned &&
+            a.pinnedUntil != null &&
+            a.pinnedUntil!.isAfter(now);
+        final bPinned = b.isPinned &&
+            b.pinnedUntil != null &&
+            b.pinnedUntil!.isAfter(now);
+        if (aPinned && !bPinned) return -1;
+        if (!aPinned && bPinned) return 1;
+
+        final scoreA = a.trendingScore + (a.participants.length * 120.0) + (a.participants.where((p) => p.isSeated || p.isSpeaker).length * 60.0);
+        final scoreB = b.trendingScore + (b.participants.length * 120.0) + (b.participants.where((p) => p.isSeated || p.isSpeaker).length * 60.0);
+        return scoreB.compareTo(scoreA);
+      });
+
+      return rooms;
+    });
+  }
+
 
   /// Get real-time updates for a specific room
   Stream<AudioRoomV2> getRoomStream(String roomId) {
@@ -1679,23 +1838,34 @@ class AudioRoomsRepository {
         throw Exception('Only hosts can manage seats');
       }
 
-      // Generate updated seat configuration for all seats
-      final List<SeatInfo> updatedSeats = room.settings.seatConfiguration.map((seat) {
-        String? newOccupiedBy = seat.occupiedBy;
+      // Generate updated seat configuration for all expected seats for the current roomMode
+      final roomMode = room.settings.roomMode;
+      final totalSeatsCount = roomMode.seatCount;
+      final List<SeatInfo> updatedSeats = [];
+      
+      for (int i = 1; i <= totalSeatsCount; i++) {
+        SeatInfo? existingSeat;
+        try {
+          existingSeat = room.settings.seatConfiguration.firstWhere((s) => s.seatNumber == i);
+        } catch (_) {
+          existingSeat = null;
+        }
+
+        String? newOccupiedBy = existingSeat?.occupiedBy;
         
         // If locking all seats, unseat everyone
         if (isLocked) {
           newOccupiedBy = null;
         }
 
-        return SeatInfo(
-          seatNumber: seat.seatNumber,
+        updatedSeats.add(SeatInfo(
+          seatNumber: i,
           isLocked: isLocked,
           occupiedBy: newOccupiedBy,
           lockedAt: isLocked ? DateTime.now() : null,
           lockedBy: isLocked ? hostId : null,
-        );
-      }).toList();
+        ));
+      }
 
       final updatedSettings = room.settings.copyWith(seatConfiguration: updatedSeats);
       final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
@@ -1713,18 +1883,17 @@ class AudioRoomsRepository {
               isSpeaker: false,
             );
             
-            // Legacy subcollection update (just in case)
+            // Legacy subcollection update (set with merge to avoid NOT_FOUND crashes on batch commit)
             final pDoc = _roomsCollection.doc(roomId).collection('participants').doc(pId);
-            // Catch error if document doesn't exist in subcollection
-            try {
-               batch.update(pDoc, {
-                 'isSeated': false,
-                 'seatNumber': null,
-                 'seatedAt': null,
-               });
-            } catch (e) {
-               // Ignore missing subcollection document
-            }
+            batch.set(
+              pDoc,
+              {
+                'isSeated': false,
+                'seatNumber': null,
+                'seatedAt': null,
+              },
+              SetOptions(merge: true),
+            );
           }
         }
       }
@@ -1739,6 +1908,120 @@ class AudioRoomsRepository {
       debugPrint('🪑 [SeatManagement] All seats ${isLocked ? 'locked' : 'unlocked'} successfully');
     } catch (e) {
       debugPrint('🪑 [SeatManagement] Error toggling all seats lock: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> toggleAllMicsMute(String roomId, String hostId, bool muteAll) async {
+    try {
+      debugPrint('🎙️ [RoomManagement] Toggling ALL mics mute to $muteAll in room: $roomId');
+
+      final roomDoc = await _roomsCollection.doc(roomId).get();
+      if (!roomDoc.exists) {
+        throw Exception('Room not found');
+      }
+
+      final room = AudioRoomV2.fromFirestore(roomDoc);
+
+      // Verify host/admin permissions
+      final isCreator = room.isCreator(hostId);
+      final isAdmin = room.settings.adminIds.contains(hostId);
+      if (!isCreator && !isAdmin) {
+        throw Exception('Access Denied: Only hosts/admins can mute all mics');
+      }
+
+      final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
+      final batch = FirebaseFirestore.instance.batch();
+
+      for (int i = 0; i < updatedParticipants.length; i++) {
+        final p = updatedParticipants[i];
+        
+        // Exempt creator (owner) and admins
+        if (p.userId == room.creatorId || room.settings.adminIds.contains(p.userId)) {
+          continue;
+        }
+
+        updatedParticipants[i] = p.copyWith(
+          isMutedByAdmin: muteAll,
+          isMuted: muteAll ? true : p.isMuted,
+        );
+
+        final pDoc = _roomsCollection.doc(roomId).collection('participants').doc(p.userId);
+        batch.set(
+          pDoc,
+          {
+            'isMutedByAdmin': muteAll,
+            'isMuted': muteAll ? true : p.isMuted,
+          },
+          SetOptions(merge: true),
+        );
+      }
+
+      batch.update(_roomsCollection.doc(roomId), {
+        'participants': updatedParticipants.map((p) => p.toJson()).toList(),
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
+
+      await batch.commit();
+      debugPrint('🎙️ [RoomManagement] All mics ${muteAll ? 'muted' : 'unmuted'} successfully');
+    } catch (e) {
+      debugPrint('Error toggling all mics mute: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> toggleAllCommentsBan(String roomId, String hostId, bool banAll) async {
+    try {
+      debugPrint('💬 [RoomManagement] Toggling ALL comments ban to $banAll in room: $roomId');
+
+      final roomDoc = await _roomsCollection.doc(roomId).get();
+      if (!roomDoc.exists) {
+        throw Exception('Room not found');
+      }
+
+      final room = AudioRoomV2.fromFirestore(roomDoc);
+
+      // Verify host/admin permissions
+      final isCreator = room.isCreator(hostId);
+      final isAdmin = room.settings.adminIds.contains(hostId);
+      if (!isCreator && !isAdmin) {
+        throw Exception('Access Denied: Only hosts/admins can ban comments');
+      }
+
+      final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
+      final batch = FirebaseFirestore.instance.batch();
+
+      for (int i = 0; i < updatedParticipants.length; i++) {
+        final p = updatedParticipants[i];
+        
+        // Exempt creator (owner) and admins
+        if (p.userId == room.creatorId || room.settings.adminIds.contains(p.userId)) {
+          continue;
+        }
+
+        updatedParticipants[i] = p.copyWith(
+          isMessagingBlocked: banAll,
+        );
+
+        final pDoc = _roomsCollection.doc(roomId).collection('participants').doc(p.userId);
+        batch.set(
+          pDoc,
+          {
+            'isMessagingBlocked': banAll,
+          },
+          SetOptions(merge: true),
+        );
+      }
+
+      batch.update(_roomsCollection.doc(roomId), {
+        'participants': updatedParticipants.map((p) => p.toJson()).toList(),
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
+
+      await batch.commit();
+      debugPrint('💬 [RoomManagement] All comments ${banAll ? 'banned' : 'unbanned'} successfully');
+    } catch (e) {
+      debugPrint('Error toggling all comments ban: $e');
       rethrow;
     }
   }
@@ -1826,14 +2109,14 @@ class AudioRoomsRepository {
             '🪑 [SeatManagement] - ${p.userName} (${p.userId}): seat ${p.seatNumber}');
       }
 
-      // Check if user can move to target seat (special case: toSeat = 0 means leaving all seats)
-      if (toSeat != 0 && !room.canUserMoveToSeat(userId, toSeat)) {
+      // Check if user can move to target seat (special case: toSeat < 0 means leaving all seats)
+      if (toSeat >= 0 && !room.canUserMoveToSeat(userId, toSeat)) {
         throw Exception('Cannot move to this seat');
       }
 
       // Special handling for admin/creator moving to occupied seat
       final isAdmin = room.isCreator(userId);
-      final isMovingToOccupiedSeat = toSeat != 0 && room.isSeatOccupied(toSeat);
+      final isMovingToOccupiedSeat = toSeat >= 0 && room.isSeatOccupied(toSeat);
 
       if (isAdmin && isMovingToOccupiedSeat) {
         final currentOccupant = room.getParticipantInSeat(toSeat);
@@ -1843,8 +2126,8 @@ class AudioRoomsRepository {
         }
       }
 
-      // Special handling for leaving seats (toSeat = 0)
-      final isLeavingAllSeats = (toSeat == 0);
+      // Special handling for leaving seats (toSeat < 0 / -1)
+      final isLeavingAllSeats = (toSeat < 0);
       if (isLeavingAllSeats) {
         debugPrint(
             '🪑 [SeatManagement] User $userId is leaving all seats (becoming listener)');
@@ -2371,50 +2654,80 @@ class AudioRoomsRepository {
 
       final userData = userDoc.data();
       final customization = userData?['customization'];
-      final selectedEntryEffectId = customization?['selectedEntryEffectId'];
+      final selectedEntryEffectId = customization?['selectedEntryEffectId'] as String?;
+      final selectedRoomEntryId = customization?['selectedRoomEntryId'] as String?;
 
-      if (selectedEntryEffectId == null || selectedEntryEffectId.isEmpty) {
-        debugPrint(
-            '🎬 [EntranceEffect] No entrance effect equipped for $userName');
-        return;
-      }
-
-      // Fetch entrance effect details from store
-      final effectDoc = await _firestore
-          .collection('market_items')
-          .doc(selectedEntryEffectId)
-          .get();
-
-      if (!effectDoc.exists) {
-        debugPrint(
-            '🎬 [EntranceEffect] Effect not found: $selectedEntryEffectId');
-        return;
-      }
-
-      final effectData = effectDoc.data();
-      final effectUrl = effectData?['fileUrl'] ??
-          effectData?['thumbnailUrl'] ??
-          effectData?['imageUrl'] ??
-          effectData?['image'] ??
-          '';
-
-      if (effectUrl.isEmpty) {
-        debugPrint('🎬 [EntranceEffect] No URL found for effect');
-        return;
-      }
-
-      debugPrint(
-          '🎬 [EntranceEffect] Triggering effect for $userName: $effectUrl');
-
-      // Trigger the entrance effect
       final entranceService = EntranceEffectService();
+
+      // 1. Entrance Effect takes priority
+      if (selectedEntryEffectId != null && selectedEntryEffectId.isNotEmpty) {
+        // Fetch entrance effect details from store
+        final effectDoc = await _firestore
+            .collection('market_items')
+            .doc(selectedEntryEffectId)
+            .get();
+
+        if (effectDoc.exists) {
+          final effectData = effectDoc.data();
+          final effectUrl = effectData?['fileUrl'] ??
+              effectData?['thumbnailUrl'] ??
+              effectData?['imageUrl'] ??
+              effectData?['image'] ??
+              '';
+          final effectType = effectData?['type'] as String? ?? 'entryEffect';
+
+          if (effectUrl.isNotEmpty) {
+            debugPrint(
+                '🎬 [EntranceEffect] Triggering entrance effect for $userName: $effectUrl');
+            await entranceService.triggerEntranceEffect(
+              roomId: roomId,
+              userId: userId,
+              userName: userName,
+              userAvatar: userAvatar,
+              effectId: selectedEntryEffectId,
+              effectUrl: effectUrl,
+              type: effectType,
+            );
+            return; // Exit! Entrance effect takes priority, room entry won't show.
+          }
+        }
+      }
+
+      // 2. Custom Room Entry if equipped
+      if (selectedRoomEntryId != null && selectedRoomEntryId.isNotEmpty) {
+        final entryDoc = await _firestore
+            .collection('market_items')
+            .doc(selectedRoomEntryId)
+            .get();
+
+        if (entryDoc.exists) {
+          final entryData = entryDoc.data();
+          final entryUrl = entryData?['fileUrl'] ?? '';
+          debugPrint(
+              '🎬 [EntranceEffect] Triggering custom Room Entry for $userName');
+          await entranceService.triggerEntranceEffect(
+            roomId: roomId,
+            userId: userId,
+            userName: userName,
+            userAvatar: userAvatar,
+            effectId: selectedRoomEntryId,
+            effectUrl: entryUrl,
+            type: 'roomEntry',
+          );
+          return;
+        }
+      }
+
+      // 3. Fallback: Default Room Entry (for all random users)
+      debugPrint('🎬 [EntranceEffect] Triggering default Room Entry for $userName');
       await entranceService.triggerEntranceEffect(
         roomId: roomId,
         userId: userId,
         userName: userName,
         userAvatar: userAvatar,
-        effectId: selectedEntryEffectId,
-        effectUrl: effectUrl,
+        effectId: 'default_room_entry',
+        effectUrl: '',
+        type: 'roomEntry',
       );
     } catch (e) {
       debugPrint('❌ [EntranceEffect] Error triggering entrance effect: $e');

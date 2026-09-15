@@ -189,278 +189,296 @@ class _CreateRoomBottomSheetState extends State<CreateRoomBottomSheet> {
             });
           }
         },
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-            ),
-          ),
-          child: BlocBuilder<AudioRoomsBloc, AudioRoomsState>(
-            builder: (context, state) {
-              AudioRoomV2? existingRoom;
-              if (state is AudioRoomsLoaded) {
-                for (final room in state.userRooms) {
-                  if (room.creatorId == widget.currentUser.userId) {
-                    existingRoom = room;
-                    break;
-                  }
-                }
-                if (existingRoom == null) {
-                  for (final room in state.rooms) {
-                    if (room.creatorId == widget.currentUser.userId) {
-                      existingRoom = room;
-                      break;
+        child: Builder(
+          builder: (context) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final sheetBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+            final sheetTextColor = isDark ? Colors.white : Colors.black;
+            final sheetSubTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+            final inputBorderColor = isDark ? Colors.white24 : Colors.grey.shade300;
+
+            return Container(
+              decoration: BoxDecoration(
+                color: sheetBgColor,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
+                ),
+              ),
+              child: BlocBuilder<AudioRoomsBloc, AudioRoomsState>(
+                builder: (context, state) {
+                  AudioRoomV2? existingRoom;
+                  if (state is AudioRoomsLoaded) {
+                    for (final room in state.userRooms) {
+                      if (room.creatorId == widget.currentUser.userId) {
+                        existingRoom = room;
+                        break;
+                      }
+                    }
+                    if (existingRoom == null) {
+                      for (final room in state.rooms) {
+                        if (room.creatorId == widget.currentUser.userId) {
+                          existingRoom = room;
+                          break;
+                        }
+                      }
                     }
                   }
-                }
-              }
 
-              return Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min, // Use min size for height
-                  children: [
-                    // Close button and Title
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            existingRoom != null
-                                ? 'My Room'
-                                : 'Create New Room',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black,
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-                    // Only show fields if no existing room
-                    if (existingRoom == null) ...[
-                      // Room image selection
-                      Center(
-                        child: GestureDetector(
-                          onTap: _handleImageSelection,
-                          child: Stack(
+                  return Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min, // Use min size for height
+                      children: [
+                        // Close button and Title
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              // Photo
-                              Container(
-                                child: _selectedImageFile != null
-                                    ? CircleAvatar(
-                                        radius: 60,
-                                        backgroundImage:
-                                            FileImage(_selectedImageFile!),
-                                      )
-                                    : CachedCircleAvatar(
-                                        radius: 50,
-                                        iconSize: 60,
-                                        borderColor: primaryColor,
-                                        backgroundColor:
-                                            primaryColor.withValues(alpha: 0.1),
-                                        imageUrl: widget.currentUser.photoUrl,
-                                      ),
-                              ),
-                              // Camera icon
-                              const Positioned(
-                                right: 0,
-                                bottom: 10,
-                                child: CircleAvatar(
-                                  backgroundColor: primaryColor,
-                                  radius: 18,
-                                  child: Icon(
-                                    IconlyBold.camera,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
+                              Text(
+                                existingRoom != null
+                                    ? 'My Room'
+                                    : 'Create New Room',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: sheetTextColor,
                                 ),
+                              ),
+                              IconButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                icon: Icon(Icons.close, color: sheetTextColor),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
                               ),
                             ],
                           ),
                         ),
-                      ),
 
-                      // Room name field
-                      TextFormField(
-                        controller: _roomNameController,
-                        decoration: InputDecoration(
-                          filled: false,
-                          hintText: 'Enter room name',
-                          hintStyle: TextStyle(color: Colors.grey[600]),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.grey[300]!),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide:
-                                const BorderSide(color: primaryColor, width: 2),
-                          ),
-                          errorBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.red),
-                          ),
-                          focusedErrorBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide:
-                                const BorderSide(color: Colors.red, width: 2),
-                          ),
-                        ),
-                        validator: (String? name) {
-                          if (name == null || name.trim().isEmpty) {
-                            return 'Please enter a room name';
-                          }
-                          if (name.trim().length < 3) {
-                            return 'Room name must be at least 3 characters';
-                          }
-                          if (name.trim().length > 50) {
-                            return 'Room name must be less than 50 characters';
-                          }
-                          return null;
-                        },
-                      ),
-
-                      // Room description field
-                      TextFormField(
-                        controller: _roomDescriptionController,
-                        maxLines: 3,
-                        decoration: InputDecoration(
-                          filled: false,
-                          hintText: 'Enter room description',
-                          hintStyle: TextStyle(color: Colors.grey[600]),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.grey[300]!),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide:
-                                const BorderSide(color: primaryColor, width: 2),
-                          ),
-                          errorBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.red),
-                          ),
-                          focusedErrorBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide:
-                                const BorderSide(color: Colors.red, width: 2),
-                          ),
-                        ),
-                        validator: (String? description) {
-                          if (description == null ||
-                              description.trim().isEmpty) {
-                            return 'Please enter a room description';
-                          }
-                          if (description.trim().length < 10) {
-                            return 'Description must be at least 10 characters';
-                          }
-                          if (description.trim().length > 200) {
-                            return 'Description must be less than 200 characters';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      // Category selection
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Category',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            {'name': 'Game', 'emoji': '🎮'},
-                            {'name': 'PK', 'emoji': '⚔️'},
-                            {'name': 'Event', 'emoji': '🏆'},
-                            {'name': 'Islamic', 'emoji': '☪️'},
-                            {'name': 'Talk Show', 'emoji': '🎤'},
-                          ].map((cat) {
-                            final category = cat['name']!;
-                            final emoji = cat['emoji']!;
-                            final isSelected = _selectedCategory == category;
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 12),
-                              child: ChoiceChip(
-                                label: Text(
-                                  '$emoji $category',
-                                  style: TextStyle(
-                                    color: isSelected ? Colors.white : Colors.black87,
-                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        const SizedBox(height: 16),
+                        // Only show fields if no existing room
+                        if (existingRoom == null) ...[
+                          // Room image selection
+                          Center(
+                            child: GestureDetector(
+                              onTap: _handleImageSelection,
+                              child: Stack(
+                                children: [
+                                  // Photo
+                                  Container(
+                                    child: _selectedImageFile != null
+                                        ? CircleAvatar(
+                                            radius: 60,
+                                            backgroundImage:
+                                                FileImage(_selectedImageFile!),
+                                          )
+                                        : CachedCircleAvatar(
+                                            radius: 50,
+                                            iconSize: 60,
+                                            borderColor: primaryColor,
+                                            backgroundColor:
+                                                primaryColor.withValues(alpha: 0.1),
+                                            imageUrl: widget.currentUser.photoUrl,
+                                          ),
                                   ),
-                                ),
-                                selected: isSelected,
-                                onSelected: (selected) {
-                                  if (selected) {
-                                    setState(() {
-                                      _selectedCategory = category;
-                                    });
-                                  }
-                                },
-                                selectedColor: primaryColor,
-                                backgroundColor: Colors.grey[200],
+                                  // Camera icon
+                                  const Positioned(
+                                    right: 0,
+                                    bottom: 10,
+                                    child: CircleAvatar(
+                                      backgroundColor: primaryColor,
+                                      radius: 18,
+                                      child: Icon(
+                                        IconlyBold.camera,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ],
+                            ),
+                          ),
 
-                    if (existingRoom != null) ...[
-                      const SizedBox(height: 20),
-                      // Show current room info if it exists
-                      CircleAvatar(
-                        radius: 50,
-                        backgroundImage: existingRoom.imageUrl != null
-                            ? NetworkImage(existingRoom.imageUrl!)
-                            : null,
-                        child: existingRoom.imageUrl == null
-                            ? const Icon(Icons.room, size: 50)
-                            : null,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        existingRoom.name,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        existingRoom.description,
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          fontSize: 14,
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 20),
-                    ],
+                          const SizedBox(height: 16),
+
+                          // Room name field
+                          TextFormField(
+                            controller: _roomNameController,
+                            style: TextStyle(color: sheetTextColor, fontSize: 14),
+                            decoration: InputDecoration(
+                              filled: false,
+                              hintText: 'Enter room name',
+                              hintStyle: TextStyle(color: sheetSubTextColor),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: inputBorderColor),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide:
+                                    const BorderSide(color: primaryColor, width: 2),
+                              ),
+                              errorBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Colors.red),
+                              ),
+                              focusedErrorBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide:
+                                    const BorderSide(color: Colors.red, width: 2),
+                              ),
+                            ),
+                            validator: (String? name) {
+                              if (name == null || name.trim().isEmpty) {
+                                return 'Please enter a room name';
+                              }
+                              if (name.trim().length < 3) {
+                                return 'Room name must be at least 3 characters';
+                              }
+                              if (name.trim().length > 50) {
+                                return 'Room name must be less than 50 characters';
+                              }
+                              return null;
+                            },
+                          ),
+
+                          const SizedBox(height: 12),
+
+                          // Room description field
+                          TextFormField(
+                            controller: _roomDescriptionController,
+                            maxLines: 3,
+                            style: TextStyle(color: sheetTextColor, fontSize: 14),
+                            decoration: InputDecoration(
+                              filled: false,
+                              hintText: 'Enter room description',
+                              hintStyle: TextStyle(color: sheetSubTextColor),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: inputBorderColor),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide:
+                                    const BorderSide(color: primaryColor, width: 2),
+                              ),
+                              errorBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Colors.red),
+                              ),
+                              focusedErrorBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide:
+                                    const BorderSide(color: Colors.red, width: 2),
+                              ),
+                            ),
+                            validator: (String? description) {
+                              if (description == null ||
+                                  description.trim().isEmpty) {
+                                return 'Please enter a room description';
+                              }
+                              if (description.trim().length < 10) {
+                                return 'Description must be at least 10 characters';
+                              }
+                              if (description.trim().length > 200) {
+                                return 'Description must be less than 200 characters';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          // Category selection
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Category',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: sheetTextColor,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.start,
+                              children: [
+                                {'name': 'Game', 'emoji': '🎮'},
+                                {'name': 'PK', 'emoji': '⚔️'},
+                                {'name': 'Event', 'emoji': '🏆'},
+                                {'name': 'Islamic', 'emoji': '☪️'},
+                                {'name': 'Talk Show', 'emoji': '🎤'},
+                              ].map((cat) {
+                                final category = cat['name']!;
+                                final emoji = cat['emoji']!;
+                                final isSelected = _selectedCategory == category;
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 12),
+                                  child: ChoiceChip(
+                                    label: Text(
+                                      '$emoji $category',
+                                      style: TextStyle(
+                                        color: isSelected
+                                            ? Colors.white
+                                            : (isDark ? Colors.white70 : Colors.black87),
+                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      ),
+                                    ),
+                                    selected: isSelected,
+                                    onSelected: (selected) {
+                                      if (selected) {
+                                        setState(() {
+                                          _selectedCategory = category;
+                                        });
+                                      }
+                                    },
+                                    selectedColor: primaryColor,
+                                    backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ],
+
+                        if (existingRoom != null) ...[
+                          const SizedBox(height: 20),
+                          // Show current room info if it exists
+                          CircleAvatar(
+                            radius: 50,
+                            backgroundImage: existingRoom.imageUrl != null
+                                ? NetworkImage(existingRoom.imageUrl!)
+                                : null,
+                            child: existingRoom.imageUrl == null
+                                ? const Icon(Icons.room, size: 50)
+                                : null,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            existingRoom.name,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: sheetTextColor,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            existingRoom.description,
+                            style: TextStyle(
+                              color: sheetSubTextColor,
+                              fontSize: 14,
+                            ),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 20),
+                        ],
 
                     // Action button
                     Padding(
@@ -494,9 +512,11 @@ class _CreateRoomBottomSheetState extends State<CreateRoomBottomSheet> {
               );
             },
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ),
+  ),
+);
   }
 }
 
@@ -515,7 +535,9 @@ Future<void> showCreateRoomBottomSheet({
     builder: (BuildContext context) {
       return Padding(
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
+          bottom: MediaQuery.of(context).viewInsets.bottom > 0
+              ? MediaQuery.of(context).viewInsets.bottom
+              : MediaQuery.of(context).padding.bottom,
         ),
         child: CreateRoomBottomSheet(
           currentUser: currentUser,

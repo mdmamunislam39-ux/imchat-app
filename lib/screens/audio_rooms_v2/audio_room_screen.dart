@@ -1,15 +1,19 @@
 // ignore_for_file: deprecated_member_use
 import 'package:get/get.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:chat_messenger/widgets/spinning_dice_widget.dart';
 import 'package:chat_messenger/services/premium_room_service.dart';
+import 'package:chat_messenger/models/premium_room_id_model.dart';
 import 'dart:async';
+import 'dart:math';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/room_mode_selector.dart';
 import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
+import 'package:flutter_svga/flutter_svga.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/live_ended_summary_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,26 +23,35 @@ import 'package:chat_messenger/models/message.dart' as message_model;
 import 'package:chat_messenger/api/message_api.dart';
 import 'package:chat_messenger/helpers/app_helper.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/services/agora_service.dart';
+import 'package:chat_messenger/services/background_service.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/models/room_share.dart';
 import 'package:chat_messenger/helpers/nameplate_helper.dart';
+import 'package:chat_messenger/services/store_service.dart';
 
 import 'package:chat_messenger/api/official_team_api.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/bloc/audio_rooms_bloc.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/bloc/audio_rooms_event.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/bloc/audio_rooms_state.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/golden_seat_widget.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/room_controls.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/gift_animation_overlay.dart';
+import 'package:chat_messenger/widgets/coin_shower_widget.dart';
+import 'package:chat_messenger/widgets/lucky_win_banner.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/gift_selection_bottom_sheet.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/waiting_list_bottom_sheet.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/room_pk_settings_sheet.dart';
 import 'widgets/room_decor_sheet.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/lucky_bag_floating_widget.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/lucky_bag_global_banner.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/lucky_bag_big_packet_dialog.dart';
+import 'package:chat_messenger/services/lucky_bag_service.dart';
+import 'package:chat_messenger/models/lucky_bag_model.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/banner_carousel.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/modern_room_card.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/pk_battle_overlay.dart';
@@ -54,11 +67,15 @@ import 'package:chat_messenger/controllers/follow_controller.dart';
 import 'package:chat_messenger/widgets/follow_button.dart';
 import 'package:chat_messenger/services/emoji_chat_service.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/gift_flight_overlay.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/gift_combo_button.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/room_event_portal_widget.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/top_exposure_header_pill.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/top_exposure_center_banner.dart';
 import 'package:chat_messenger/services/push_notification_service.dart';
-import 'package:marquee/marquee.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/youtube_sync_player.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/ludo_game_widget.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/carrom_game_widget.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/carrom/carrom_setup_bottom_sheet.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/youtube_selection_sheet.dart';
 
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
@@ -67,7 +84,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/animated_notification.dart';
 import 'package:chat_messenger/screens/messages/message_screen.dart';
 import 'package:chat_messenger/models/agora_models.dart';
-import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/speaking_ripple_animation.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/repository/room_pk_repository.dart';
@@ -77,9 +93,7 @@ import 'package:chat_messenger/screens/audio_rooms_v2/widgets/floating_music_pla
 import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_controller.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_overlay.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:chat_messenger/services/background_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:flutter_svga/flutter_svga.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/room_member_screen.dart';
 import 'package:chat_messenger/api/contact_api.dart';
@@ -115,9 +129,31 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   String? _currentUserLevelBadgeUrl;
   List<dynamic>? _roomLevelConfigData;
   StreamSubscription<DocumentSnapshot>? _roomConfigSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _relationshipsSub;
+  List<Map<String, dynamic>> _activeRoomRelationships = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _friendshipLevelsSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _coupleLevelsSub;
+  Map<int, String> _friendshipLevelImages = {};
+  Map<int, String> _coupleLevelImages = {};
   bool _isCurrentUserHost = false;
+  bool get _isCurrentUserHostOrAdmin {
+    if (_isCurrentUserHost) return true;
+    if (_currentRoom.creatorId == _currentUser.userId) return true;
+    if (_currentRoom.settings.adminIds.contains(_currentUser.userId)) {
+      return true;
+    }
+    try {
+      final me = _currentRoom.participants.firstWhere(
+        (p) => p.userId == _currentUser.userId,
+      );
+      return me.isHost;
+    } catch (_) {
+      return false;
+    }
+  }
+
   bool _isMuted = true;
-  bool _isSpeakerOn = false;
+  bool _isSpeakerOn = true;
   bool _isMinimizing = false; // Track if user is minimizing vs leaving
   final Set<String> _invitedUserIds = {};
 
@@ -153,8 +189,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   // PK Battle variables
   final RoomPKRepository _pkRepository = RoomPKRepository();
   StreamSubscription<List<RoomPKInvite>>? _pkInviteSubscription;
+  StreamSubscription<DocumentSnapshot>? _micInviteSubscription;
+  bool _isMicInviteDialogShowing = false;
   late final DateTime
-      _joinTime; // Track when user joined to filter old messages
+  _joinTime; // Track when user joined to filter old messages
   final List<EmojiChatMessage> _syntheticMessages = [];
   bool _hasInjectedAnnouncementOnJoin = false;
 
@@ -183,7 +221,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   final GiftService _giftService = GiftService();
   Timer? _giftCleanupTimer;
   final Map<int, GlobalKey> _seatKeys = {};
-  final List<FlyingGiftItem> _flyingGifts = [];
+  final ValueNotifier<List<FlyingGiftItem>> _flyingGiftsNotifier =
+      ValueNotifier<List<FlyingGiftItem>>([]);
 
   // Entrance effect related
   final EntranceEffectService _entranceEffectService = EntranceEffectService();
@@ -195,6 +234,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   StreamSubscription<String>? _frameSubscription;
   // Static cached level configurations
   static List<dynamic>? _cachedSendingLevels;
+  static Map<int, String>? _cachedFriendshipLevelImages;
+  static Map<int, String>? _cachedCoupleLevelImages;
 
   // Chat auto-delete timer
   Timer? _autoDeleteTimer;
@@ -219,12 +260,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   @override
   void initState() {
     super.initState();
-    _requestInitialPermissions();
-    debugPrint('🎯 [AudioRoom] ===== INIT STATE STARTED =====');
+    debugPrint('ðŸŽ¯ [AudioRoom] ===== INIT STATE STARTED =====');
 
     // Reset minimizing flag when screen is created/restored
     _isMinimizing = false;
-    debugPrint('🔼 [AudioRoom] Screen initialized, minimizing flag reset');
+    debugPrint('ðŸ”¼ [AudioRoom] Screen initialized, minimizing flag reset');
 
     // Add lifecycle observer for background audio handling
     WidgetsBinding.instance.addObserver(this);
@@ -232,19 +272,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // End wakelock to keep CPU running
     WakelockPlus.enable();
 
-    // Start background service to keep network alive
-    BackgroundService().startService();
-
     // Initialize follow controller
     _followController = FollowController();
     _currentRoom = widget.room;
 
-    // Set join time — restore original if coming back from minimize, otherwise use now
+    // Set join time â€” restore original if coming back from minimize, otherwise use now
     if (widget.isRestoring) {
       final minimizedController = _getMinimizedController();
-      _joinTime = minimizedController.originalJoinTime ??
+      _joinTime =
+          minimizedController.originalJoinTime ??
           DateTime.now().subtract(const Duration(seconds: 5));
-      debugPrint('🔼 [AudioRoom] Restored original join time: $_joinTime');
+      debugPrint('ðŸ”¼ [AudioRoom] Restored original join time: $_joinTime');
     } else {
       _joinTime = DateTime.now();
     }
@@ -253,44 +291,60 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     try {
       _currentUser = AuthController.instance.currentUser;
       debugPrint(
-          '🎯 Current user loaded: ${_currentUser.userId} - ${_currentUser.fullname}');
+        'ðŸŽ¯ Current user loaded: ${_currentUser.userId} - ${_currentUser.fullname}',
+      );
       // Load current user's level badge
       _loadConfigs();
       _isCurrentUserHost = _currentUser.userId == widget.room.creatorId;
-      Get.put(RouletteController(widget.room.id, isHost: _isCurrentUserHost),
-          tag: 'roulette_${widget.room.id}');
+      if (_isCurrentUserHost) {
+        _isMuted = false;
+      }
+      final rouletteTag = 'roulette_${widget.room.id}';
+      if (!Get.isRegistered<RouletteController>(tag: rouletteTag)) {
+        Get.put(
+          RouletteController(widget.room.id, isHost: _isCurrentUserHost),
+          tag: rouletteTag,
+        );
+      }
     } catch (e) {
-      debugPrint('🎯 Error getting current user: $e');
-      // Handle null user case - navigate back or show error
-      Navigator.of(context).pop();
+      debugPrint('ðŸŽ¯ Error getting current user: $e');
+      // Handle null user case - navigate back safely
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
       return;
     }
 
     // Debug participant list
-    debugPrint('🎯 Room participants: ${_currentRoom.participants.length}');
+    debugPrint('ðŸŽ¯ Room participants: ${_currentRoom.participants.length}');
     for (var participant in _currentRoom.participants) {
       debugPrint(
-          '🎯 Participant: ${participant.userId} - ${participant.userName}');
+        'ðŸŽ¯ Participant: ${participant.userId} - ${participant.userName}',
+      );
     }
 
     // Safety check: don't use a closed BLoC
     if (widget.audioRoomsBloc.isClosed) {
-      debugPrint('🎤 [AudioRoom] ❌ BLoC is closed, cannot initialize room');
-      // Navigating back if the BLoC is closed
-      Navigator.of(context).pop();
+      debugPrint('ðŸŽ¤ [AudioRoom] âŒ BLoC is closed, cannot initialize room');
+      // Navigating back safely if the BLoC is closed
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
       return;
     }
 
     // Check if current user is a participant
     if (!_currentRoom.isParticipant(_currentUser.userId)) {
       // Automatically join the room if user is not a participant
-      widget.audioRoomsBloc.add(JoinAudioRoom(
-        roomId: _currentRoom.id,
-        userId: _currentUser.userId,
-        userName: _currentUser.fullname,
-        userImageUrl: _currentUser.photoUrl,
-        userFrameId: _currentUser.customization?.selectedFrameId,
-      ));
+      widget.audioRoomsBloc.add(
+        JoinAudioRoom(
+          roomId: _currentRoom.id,
+          userId: _currentUser.userId,
+          userName: _currentUser.fullname,
+          userImageUrl: _currentUser.photoUrl,
+          userFrameId: _currentUser.customization?.selectedFrameId,
+        ),
+      );
     }
 
     // Always initialize Agora for the audio room regardless of participant status
@@ -298,17 +352,18 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     // Send join/re-join message to chat - ONLY if not restoring from minimize
     if (!widget.isRestoring) {
-        EmojiChatService.sendPresenceMessage(
-          roomId: _currentRoom.id,
-          userId: _currentUser.userId,
-          username: _currentUser.fullname,
-          userAvatar: _currentUser.photoUrl,
-          isJoin: true,
-        );
-      } else {
-        debugPrint(
-            '🔼 [AudioRoom] Skipping join message - restoring from minimized state');
-      }
+      EmojiChatService.sendPresenceMessage(
+        roomId: _currentRoom.id,
+        userId: _currentUser.userId,
+        username: _currentUser.fullname,
+        userAvatar: _currentUser.photoUrl,
+        isJoin: true,
+      );
+    } else {
+      debugPrint(
+        'ðŸ”¼ [AudioRoom] Skipping join message - restoring from minimized state',
+      );
+    }
 
     // Start listening to room updates
     widget.audioRoomsBloc.add(ListenToRoomUpdates(roomId: widget.room.id));
@@ -316,14 +371,21 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Start listening to chat messages
     _startChatListener();
 
+    // Start listening to Lucky Win events
+    _startLuckyWinListener();
+
     // Start listening to PK Invites if host
     if (_isCurrentUserHost) {
       _startPKInviteListener();
     }
 
+    // Start listening to mic invites for current user
+    _startMicInviteListener();
+
     // Gift transactions will be handled by StreamBuilder in the UI
     debugPrint(
-        '🎁 [AudioRoom] Gift transactions will be handled by StreamBuilder');
+      'ðŸŽ [AudioRoom] Gift transactions will be handled by StreamBuilder',
+    );
 
     // Start periodic cleanup of old gifts
     _startGiftCleanupTimer();
@@ -333,30 +395,55 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     // Listen to real-time frame updates
     _frameSubscription = AuthController.instance.currentFrameUrl.listen((url) {
-      debugPrint('🖼️ [AudioRoom] Frame updated to: $url, rebuilding UI...');
+      debugPrint('ðŸ–¼ï¸ [AudioRoom] Frame updated to: $url, rebuilding UI...');
       if (mounted) {
-        setState(() {});
+        final newFrameId = AuthController.instance.currentUser.customization?.selectedFrameId;
+        final pIdx = _currentRoom.participants.indexWhere((p) => p.userId == _currentUser.userId);
+        if (pIdx != -1) {
+          if (_currentRoom.participants[pIdx].frameId != newFrameId) {
+            final updated = _currentRoom.participants[pIdx].copyWith(frameId: newFrameId);
+            setState(() {
+              _currentRoom.participants[pIdx] = updated;
+            });
+            AudioRoomsRepository().updateParticipantFrameId(
+              roomId: _currentRoom.id,
+              userId: _currentUser.userId,
+              frameId: newFrameId,
+            ).catchError((e) => debugPrint('Error updating participant frame: $e'));
+          }
+        }
       }
     });
 
-    debugPrint('🎯 [AudioRoom] ===== INIT STATE COMPLETE =====');
+    // Automatic center popup listener for active Lucky Bags
+    _initLuckyBagAutoPopupListener();
+
+    debugPrint('ðŸŽ¯ [AudioRoom] ===== INIT STATE COMPLETE =====');
   }
 
-  Future<void> _requestInitialPermissions() async {
-    try {
-      final status = await Permission.microphone.request();
-      if (!status.isGranted) {
-        debugPrint('⚠️ [AudioRoom] Microphone permission denied');
-      } else {
-        debugPrint('✅ [AudioRoom] Microphone permission granted');
-        // If the user is the host/speaker and was already supposed to be unmuted, force sync
-        if (_isCurrentUserSpeaker && !_isCurrentUserMuted) {
-          widget.audioRoomsBloc.add(const SetMicrophoneMute(muted: false));
-        }
+  StreamSubscription<LuckyBagModel?>? _luckyBagAutoPopupSub;
+  String? _lastAutoPoppedBagId;
+
+  void _initLuckyBagAutoPopupListener() {
+    _luckyBagAutoPopupSub?.cancel();
+    _luckyBagAutoPopupSub =
+        LuckyBagService.streamActiveLuckyBag(_currentRoom.id).listen((bag) {
+      if (bag != null && bag.isActive && _lastAutoPoppedBagId != bag.id) {
+        _lastAutoPoppedBagId = bag.id;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            LuckyBagBigPacketDialog.show(
+              context,
+              roomId: _currentRoom.id,
+              bag: bag,
+              currentUserId: _currentUser.userId,
+              currentUserName: _currentUser.fullname,
+              currentUserAvatar: _currentUser.photoUrl,
+            );
+          }
+        });
       }
-    } catch (e) {
-      debugPrint('⚠️ [AudioRoom] Error requesting microphone permission: $e');
-    }
+    });
   }
 
   /// Start periodic auto-delete chat timer (runs every 1 minute)
@@ -364,7 +451,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     _autoDeleteTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (_isCurrentUserHost) {
         debugPrint(
-            '🧹 [AudioRoom] Running periodic chat cleanup ( > 30 mins )...');
+          'ðŸ§¹ [AudioRoom] Running periodic chat cleanup ( > 30 mins )...',
+        );
         EmojiChatService.cleanupOldMessages(widget.room.id);
       }
     });
@@ -389,7 +477,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   String? _getDynamicRoomLevelBadgeUrl() {
     if (_roomLevelConfigData == null) return null;
     final currentLevel = AudioRoomV2.calculateRoomLevel(
-        _currentRoom.totalRevenue, _roomLevelConfigData);
+      _currentRoom.totalRevenue,
+      _roomLevelConfigData,
+    );
     for (final lvl in _roomLevelConfigData!) {
       if (lvl['levelNumber'] == currentLevel) {
         return lvl['imageUrl'] as String?;
@@ -425,7 +515,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 _currentUserLevelBadgeUrl = lvl['imageUrl'] as String?;
               }
               debugPrint(
-                  '🎯 Loaded current user level badge URL inside _AudioRoomScreenState from cache: $_currentUserLevelBadgeUrl');
+                'ðŸŽ¯ Loaded current user level badge URL inside _AudioRoomScreenState from cache: $_currentUserLevelBadgeUrl',
+              );
               break;
             }
           }
@@ -438,30 +529,137 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           .doc('room_config')
           .snapshots()
           .listen((doc) {
-        if (doc.exists && mounted) {
-          setState(() {
-            _roomLevelConfigData = doc.data()?['levels'] as List<dynamic>?;
+            if (doc.exists && mounted) {
+              setState(() {
+                _roomLevelConfigData = doc.data()?['levels'] as List<dynamic>?;
+              });
+            }
           });
-        }
-      });
+
+      _startRelationshipsListener();
     } catch (e) {
       debugPrint(
-          '❌ Error loading level configurations in _AudioRoomScreenState: $e');
+        'âŒ Error loading level configurations in _AudioRoomScreenState: $e',
+      );
     }
+  }
+
+  Future<void> _startRelationshipsListener() async {
+    // 1. Static cache check for friendship levels (static data, no need for continuous snapshot streaming)
+    if (_cachedFriendshipLevelImages != null) {
+      _friendshipLevelImages = _cachedFriendshipLevelImages!;
+    } else {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('relationshipLevels')
+            .get();
+        final Map<int, String> map = {};
+        for (var doc in snap.docs) {
+          final data = doc.data();
+          final rawLevel = data['level'];
+          int lvl = 1;
+          if (rawLevel is int) {
+            lvl = rawLevel;
+          } else if (rawLevel is String) {
+            lvl = int.tryParse(rawLevel) ?? 1;
+          } else if (rawLevel is num) {
+            lvl = rawLevel.toInt();
+          }
+          final String? img =
+              data['badgeUrl'] as String? ?? data['imageUrl'] as String?;
+          if (img != null && img.isNotEmpty) {
+            map[lvl] = img;
+          }
+        }
+        _cachedFriendshipLevelImages = map;
+        if (mounted) {
+          setState(() {
+            _friendshipLevelImages = map;
+          });
+        }
+      } catch (e) {
+        debugPrint('âŒ Error loading friendship levels: $e');
+      }
+    }
+
+    // 2. Static cache check for couple levels
+    if (_cachedCoupleLevelImages != null) {
+      _coupleLevelImages = _cachedCoupleLevelImages!;
+    } else {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('couple_levels')
+            .get();
+        final Map<int, String> map = {};
+        for (var doc in snap.docs) {
+          final data = doc.data();
+          final rawLevel = data['level'];
+          int lvl = 1;
+          if (rawLevel is int) {
+            lvl = rawLevel;
+          } else if (rawLevel is String) {
+            lvl = int.tryParse(rawLevel) ?? 1;
+          } else if (rawLevel is num) {
+            lvl = rawLevel.toInt();
+          }
+          final String? img =
+              data['badgeUrl'] as String? ?? data['imageUrl'] as String?;
+          if (img != null && img.isNotEmpty) {
+            map[lvl] = img;
+          }
+        }
+        _cachedCoupleLevelImages = map;
+        if (mounted) {
+          setState(() {
+            _coupleLevelImages = map;
+          });
+        }
+      } catch (e) {
+        debugPrint('âŒ Error loading couple levels: $e');
+      }
+    }
+
+    // 3. Relationships check: only update state if list actually changed
+    _relationshipsSub?.cancel();
+    _relationshipsSub = FirebaseFirestore.instance
+        .collection('relationships')
+        .where('status', isEqualTo: 'accepted')
+        .limit(30)
+        .snapshots()
+        .listen((snapshot) {
+          if (mounted) {
+            final List<Map<String, dynamic>> list = [];
+            for (var doc in snapshot.docs) {
+              final data = doc.data();
+              data['id'] = doc.id;
+              list.add(data);
+            }
+            if (_activeRoomRelationships.length != list.length) {
+              setState(() {
+                _activeRoomRelationships = list;
+              });
+            } else {
+              _activeRoomRelationships = list;
+            }
+            debugPrint(
+              'ðŸŽ¯ [Intimacy] Loaded active room relationships: ${_activeRoomRelationships.length}',
+            );
+          }
+        });
   }
 
   void _startPKInviteListener() {
     _pkInviteSubscription = _pkRepository
         .listenToIncomingInvites(_currentRoom.id)
         .listen((invites) {
-      if (!mounted) return;
-      for (var invite in invites) {
-        if (!_invitedUserIds.contains(invite.id)) {
-          _invitedUserIds.add(invite.id);
-          _showPKInviteDialog(invite);
-        }
-      }
-    });
+          if (!mounted) return;
+          for (var invite in invites) {
+            if (!_invitedUserIds.contains(invite.id)) {
+              _invitedUserIds.add(invite.id);
+              _showPKInviteDialog(invite);
+            }
+          }
+        });
   }
 
   void _showPKInviteDialog(RoomPKInvite invite) {
@@ -475,14 +673,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           children: [
             CircleAvatar(
               radius: 30,
-              backgroundImage:
-                  CachedNetworkImageProvider(invite.senderRoomImageUrl),
+              backgroundImage: CachedNetworkImageProvider(
+                invite.senderRoomImageUrl,
+              ),
             ),
             const SizedBox(height: 10),
             Text('${invite.senderRoomName} has challenged you to a PK battle!'),
             const SizedBox(height: 5),
-            Text('Duration: ${invite.durationMinutes} mins',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              'Duration: ${invite.durationMinutes} mins',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
           ],
         ),
         actions: [
@@ -509,15 +710,253 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     );
   }
 
+  void _startMicInviteListener() {
+    _micInviteSubscription?.cancel();
+    _micInviteSubscription = FirebaseFirestore.instance
+        .collection('audio_rooms_v2')
+        .doc(_currentRoom.id)
+        .collection('mic_invites')
+        .doc(_currentUser.userId)
+        .snapshots()
+        .listen((doc) {
+      if (!mounted) return;
+      if (!doc.exists) return;
+      final data = doc.data();
+      if (data == null) return;
+      if (data['status'] == 'pending') {
+        if (_currentParticipant?.isSeated == true && (_currentParticipant?.seatNumber ?? 0) > 0) {
+          // Already seated, remove invite
+          doc.reference.delete();
+          return;
+        }
+
+        final createdAt = data['createdAt'];
+        if (createdAt is Timestamp) {
+          final diff = DateTime.now().difference(createdAt.toDate());
+          if (diff.inMinutes > 2) {
+            // Stale invite, delete and ignore
+            doc.reference.delete();
+            return;
+          }
+        }
+        _showMicInviteDialog(data);
+      }
+    }, onError: (e) {
+      debugPrint('Error listening to mic invites: $e');
+    });
+  }
+
+  void _showMicInviteDialog(Map<String, dynamic> inviteData) {
+    if (_isMicInviteDialogShowing) return;
+    _isMicInviteDialogShowing = true;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) return;
+            Navigator.of(dialogContext).pop();
+            _isMicInviteDialogShowing = false;
+            _handleRejectMicInvite();
+          },
+          child: Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 26),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const Text(
+                    'Tips',
+                    style: TextStyle(
+                      color: Color(0xFF1F1F24),
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Inter',
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Invite you to the mic',
+                    style: TextStyle(
+                      color: Color(0xFF555555),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      fontFamily: 'Inter',
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 26),
+                  Row(
+                    children: [
+                      // Cancel Button
+                      Expanded(
+                        child: SizedBox(
+                          height: 44,
+                          child: OutlinedButton(
+                            onPressed: () async {
+                              Navigator.of(dialogContext).pop();
+                              _isMicInviteDialogShowing = false;
+                              await _handleRejectMicInvite();
+                            },
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              side: const BorderSide(
+                                color: Color(0xFFE0E0E0),
+                                width: 1.2,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(22),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: const Text(
+                              'Cancel',
+                              style: TextStyle(
+                                color: Color(0xFF757575),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                fontFamily: 'Inter',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      // Take Mic Button
+                      Expanded(
+                        child: SizedBox(
+                          height: 44,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              Navigator.of(dialogContext).pop();
+                              _isMicInviteDialogShowing = false;
+                              await _handleAcceptMicInvite(inviteData);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFFC107),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(22),
+                              ),
+                            ),
+                            child: const Text(
+                              'Take Mic',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'Inter',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    ).then((_) {
+      _isMicInviteDialogShowing = false;
+    });
+  }
+
+  Future<void> _handleRejectMicInvite() async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('audio_rooms_v2')
+          .doc(_currentRoom.id)
+          .collection('mic_invites')
+          .doc(_currentUser.userId)
+          .delete();
+    } catch (e) {
+      debugPrint('Error rejecting mic invite: $e');
+    }
+  }
+
+  Future<void> _handleAcceptMicInvite(Map<String, dynamic> inviteData) async {
+    try {
+      // First, delete the mic invite so it cannot be accepted twice
+      await FirebaseFirestore.instance
+          .collection('audio_rooms_v2')
+          .doc(_currentRoom.id)
+          .collection('mic_invites')
+          .doc(_currentUser.userId)
+          .delete();
+
+      int targetSeat = (inviteData['seatNumber'] as num?)?.toInt() ?? 0;
+      bool canTakeSpecifiedSeat = false;
+
+      if (targetSeat > 0) {
+        canTakeSpecifiedSeat =
+            _currentRoom.canUserMoveToSeat(_currentUser.userId, targetSeat) &&
+            !_currentRoom.isSeatOccupied(targetSeat) &&
+            !_currentRoom.isSeatLocked(targetSeat);
+      }
+
+      if (!canTakeSpecifiedSeat) {
+        // Find first available unlocked, unoccupied seat that the user can move to
+        targetSeat = 0;
+        final totalSeats = _currentRoom.settings.seatConfiguration.length;
+        for (int s = 1; s <= totalSeats; s++) {
+          if (_currentRoom.canUserMoveToSeat(_currentUser.userId, s) &&
+              !_currentRoom.isSeatOccupied(s) &&
+              !_currentRoom.isSeatLocked(s)) {
+            targetSeat = s;
+            break;
+          }
+        }
+      }
+
+      if (targetSeat > 0) {
+        _moveToSeat(targetSeat);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No empty seat available at the moment.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error accepting mic invite: $e');
+    }
+  }
+
   /// Start listening to chat messages
   void _startChatListener() {
     // Use the emoji chat message stream for full emoji support
-    _chatSubscription =
-        EmojiChatService.getEmojiChatMessagesStream(_currentRoom.id).listen(
+    _chatSubscription = EmojiChatService.getEmojiChatMessagesStream(_currentRoom.id).listen(
       (messages) {
         if (!mounted) {
           debugPrint(
-              '💬 [AudioRoom] [$hashCode] ⚠️ Listener fired after dispose! Skipping.');
+            'ðŸ’¬ [AudioRoom] [$hashCode] âš ï¸ Listener fired after dispose! Skipping.',
+          );
           return;
         }
 
@@ -528,12 +967,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
         final newMessages = messages.where((msg) {
           // Subtract 30 seconds to prevent clock synchronization issues and guarantee immediate messages show up perfectly
-          return msg.timestamp
-              .isAfter(_joinTime.subtract(const Duration(seconds: 30)));
+          return msg.timestamp.isAfter(
+            _joinTime.subtract(const Duration(seconds: 30)),
+          );
         }).toList();
 
         debugPrint(
-            '💬 [AudioRoom] [$hashCode] Received ${messages.length} messages, filtered to ${newMessages.length}');
+          'ðŸ’¬ [AudioRoom] [$hashCode] Received ${messages.length} messages, filtered to ${newMessages.length}',
+        );
 
         // Inject initial announcement
         if (!_hasInjectedAnnouncementOnJoin &&
@@ -551,52 +992,55 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         });
       },
       onError: (error) {
-        debugPrint('💬 Error listening to chat messages: $error');
+        debugPrint('ðŸ’¬ Error listening to chat messages: $error');
       },
     );
   }
 
-  /// Clean up extremely old gifts (older than 60 seconds)
-  void _cleanupExtremelyOldGifts(List<GiftTransaction> allTransactions) {
-    if (!_isCurrentUserHost) return; // Only host handles long-term cleanup
+  StreamSubscription<QuerySnapshot>? _luckyWinSubscription;
+  Map<String, dynamic>? _currentLuckyWin;
+  bool _showCoinShower = false;
 
-    final now = DateTime.now();
-    final oldTransactions = allTransactions.where((transaction) {
-      final timeDiff = now.difference(transaction.timestamp).inSeconds;
-      return timeDiff > 60; // Older than 60 seconds
-    }).toList();
-
-    if (oldTransactions.isNotEmpty) {
-      debugPrint(
-          '🧹 [AudioRoom] Cleaning up ${oldTransactions.length} extremely old gift transactions');
-      _deleteDisplayedGifts(oldTransactions);
-    }
+  /// Start listening to Lucky Win events in real-time
+  void _startLuckyWinListener() {
+    _luckyWinSubscription?.cancel();
+    _luckyWinSubscription = FirebaseFirestore.instance
+        .collection('audio_rooms_v2')
+        .doc(_currentRoom.id)
+        .collection('lucky_wins')
+        .orderBy('timestamp', descending: true)
+        .limit(1)
+        .snapshots()
+        .listen((snapshot) {
+          if (snapshot.docs.isNotEmpty) {
+            final doc = snapshot.docs.first;
+            final data = doc.data();
+            final timestamp = data['timestamp'] as Timestamp?;
+            if (timestamp != null) {
+              final diff = DateTime.now()
+                  .difference(timestamp.toDate())
+                  .inSeconds;
+              if (diff < 15) {
+                if (mounted) {
+                  setState(() {
+                    _currentLuckyWin = data;
+                    _showCoinShower = true;
+                  });
+                }
+              }
+            }
+          }
+        });
   }
 
-  /// Archive gift transactions to user_received_gifts, then delete from gift_transactions
-  Future<void> _deleteDisplayedGifts(List<GiftTransaction> transactions) async {
-    try {
-      final firestore = FirebaseFirestore.instance;
-      final batch = firestore.batch();
 
-      for (final transaction in transactions) {
-        // Delete from gift_transactions (user_received_gifts is already persisted permanently with full metadata in sendGift)
-        batch.delete(
-          firestore.collection('gift_transactions').doc(transaction.id),
-        );
-      }
 
-      await batch.commit();
-      debugPrint(
-          '🗑️ [AudioRoom] Cleared ${transactions.length} gift transactions from display queue');
-    } catch (e) {
-      debugPrint('❌ [AudioRoom] Error clearing gift transactions: $e');
-    }
-  }
+
 
   /// Delete displayed entrance effects from Firestore
   Future<void> _deleteDisplayedEntranceEffects(
-      List<EntranceEffect> effects) async {
+    List<EntranceEffect> effects,
+  ) async {
     try {
       for (final effect in effects) {
         await _entranceEffectService.deleteEntranceEffect(
@@ -605,51 +1049,61 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         );
       }
       debugPrint(
-          '🗑️ [AudioRoom] Deleted ${effects.length} entrance effects from Firestore');
+        'ðŸ—‘ï¸ [AudioRoom] Deleted ${effects.length} entrance effects from Firestore',
+      );
     } catch (e) {
-      debugPrint('❌ [AudioRoom] Error deleting entrance effects: $e');
+      debugPrint('âŒ [AudioRoom] Error deleting entrance effects: $e');
     }
   }
 
   /// Start periodic cleanup timer for old gifts
   void _startGiftCleanupTimer() {
-    _giftCleanupTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      debugPrint('🧹 [AudioRoom] Running periodic gift cleanup...');
-      // This will trigger the StreamBuilder to clean up old gifts
+    _giftCleanupTimer = Timer.periodic(const Duration(seconds: 15), (timer) async {
+      if (!_isCurrentUserHost) return;
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('gift_transactions')
+            .where('roomId', isEqualTo: widget.room.id)
+            .get();
+
+        final now = DateTime.now();
+        final oldDocs = snap.docs.where((doc) {
+          final ts = doc.data()['timestamp'];
+          if (ts is Timestamp) {
+            return now.difference(ts.toDate()).inSeconds > 60;
+          }
+          return false;
+        }).toList();
+
+        if (oldDocs.isNotEmpty) {
+          final batch = FirebaseFirestore.instance.batch();
+          for (final doc in oldDocs) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+          debugPrint('ðŸ§¹ [AudioRoom] Background timer cleaned up ${oldDocs.length} old gift docs');
+        }
+      } catch (e) {
+        debugPrint('âš ï¸ [AudioRoom] Periodic gift cleanup error: $e');
+      }
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    debugPrint('🔄 [AudioRoom] App lifecycle changed to: $state');
+    debugPrint('ðŸ”„ [AudioRoom] App lifecycle changed to: $state');
 
     if (state == AppLifecycleState.resumed) {
-      debugPrint('🔄 [AudioRoom] App resumed - refreshing audio session...');
-      // Re-enable speakerphone to ensure audio route is active
-      // Using a slight delay to allow the OS to give audio focus back
-      Future.delayed(const Duration(milliseconds: 500), () {
+      debugPrint('ðŸ”„ [AudioRoom] App resumed - refreshing audio session...');
+      Future.delayed(const Duration(milliseconds: 300), () {
         if (_agoraChannelJoined) {
-          // We can toggle to earpiece and back to speaker to force route update,
-          // but normally setDefaultAudioRouteToSpeakerphone(true) is enough.
-          // Since we don't have direct access to engine here easily without importing agora_rtc_engine,
-          // we use the BLoC or Service.
-          // However, ToggleSpeaker event flips the state. We want to SET it.
-          // Let's assume the service handles "setSpeakerOn".
-          // We can just trigger a manual update if we had a "RefreshAudio" event.
-          // For now, let's use a workaround:
-          // If speaker was ON, toggle it OFF and ON again? No that's jarring.
-
-          // Actually, the issue is often that the audio session was deactivated.
-          // We can invoke a specific event or method if we had one.
-          // Since we don't, we'll try to trigger a state update.
-
-          // If we have access to AgoraService singleton (we don't import it directly as instance but maybe we can?)
-          // AgoraService is a singleton!
-          // import 'package:chat_messenger/services/agora_service.dart'; is not imported?
-          // It is imported in BLoC, not here.
-          // Wait, line 29 imports `agora_models.dart`.
-          // Let's check imports.
+          try {
+            AgoraService().engine?.setDefaultAudioRouteToSpeakerphone(true);
+            AgoraService().engine?.setEnableSpeakerphone(_isSpeakerOn);
+          } catch (e) {
+            debugPrint('âš ï¸ [AudioRoom] Error restoring speaker on resume: $e');
+          }
         }
       });
     }
@@ -660,24 +1114,21 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Remove observer
     WidgetsBinding.instance.removeObserver(this);
 
-    // Disable WakeLock safely
-    try {
-      WakelockPlus.disable();
-    } catch (e) {
-      debugPrint('Error disabling Wakelock: $e');
-    }
-
-    // Stop background service safely
-    try {
-      BackgroundService().stopService();
-    } catch (e) {
-      debugPrint('Error stopping BackgroundService: $e');
+    // Disable WakeLock safely if not minimizing
+    if (!_isMinimizing) {
+      try {
+        WakelockPlus.disable();
+      } catch (e) {
+        debugPrint('Error disabling Wakelock: $e');
+      }
     }
 
     // Cancel timers safely
     try {
+      _flyingGiftsNotifier.dispose();
       _giftCleanupTimer?.cancel();
       _pkInviteSubscription?.cancel();
+      _micInviteSubscription?.cancel();
       _autoDeleteTimer?.cancel();
       _offlineTimer?.cancel();
     } catch (e) {
@@ -687,8 +1138,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Clean up subscriptions safely
     try {
       _chatSubscription?.cancel();
+      _luckyWinSubscription?.cancel();
       _frameSubscription?.cancel();
       _roomConfigSub?.cancel();
+      _relationshipsSub?.cancel();
+      _friendshipLevelsSub?.cancel();
+      _coupleLevelsSub?.cancel();
     } catch (e) {
       debugPrint('Error canceling subscriptions: $e');
     }
@@ -703,7 +1158,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Dispose roulette controller safely
     try {
       if (Get.isRegistered<RouletteController>(
-          tag: 'roulette_${widget.room.id}')) {
+        tag: 'roulette_${widget.room.id}',
+      )) {
         Get.delete<RouletteController>(tag: 'roulette_${widget.room.id}');
       }
     } catch (e) {
@@ -719,28 +1175,31 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         debugPrint('Error disabling Wakelock: $e');
       }
 
-      // Stop background service safely
-      try {
-        BackgroundService().stopService();
-      } catch (e) {
-        debugPrint('Error stopping BackgroundService: $e');
-      }
-
       try {
         if (_agoraChannelJoined) {
-          widget.audioRoomsBloc.add(const LeaveAgoraChannel());
-          debugPrint('🎤 [AudioRoom] Leaving Agora channel (actual leave)');
+          widget.audioRoomsBloc.add(LeaveAgoraChannel(channelName: _currentRoom.id));
+          debugPrint('ðŸŽ¤ [AudioRoom] Leaving Agora channel (actual leave: ${_currentRoom.id})');
+        } else {
+          AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
         }
         widget.audioRoomsBloc.add(const StopListeningToRoomUpdates());
       } catch (e) {
         debugPrint('Error adding leave events to bloc: $e');
+        AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
+      }
+
+      if (AgoraService().currentChannelId == null || AgoraService().currentChannelId == _currentRoom.id) {
+        try {
+          BackgroundService().stopService();
+        } catch (_) {}
       }
 
       _agoraChannelJoined = false;
       _agoraUid = null;
     } else {
       debugPrint(
-          '🔽 [AudioRoom] Dispose called but minimizing - keeping connections alive');
+        'ðŸ”½ [AudioRoom] Dispose called but minimizing - keeping connections alive',
+      );
     }
 
     try {
@@ -758,8 +1217,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Show exit & minimize options menu as a right side drawer
   void _showExitConfirmationBottomSheet() {
-    Future<List<AudioRoomV2>> trendingRoomsFuture =
-        AudioRoomsRepository().getAllRooms();
+    Future<List<AudioRoomV2>> trendingRoomsFuture = AudioRoomsRepository()
+        .getAllRooms();
     String selectedCategory = 'All';
     final List<String> categories = [
       'All',
@@ -767,7 +1226,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       'Event',
       'PK',
       'Islamic',
-      'Talk Show'
+      'Talk Show',
     ];
 
     showGeneralDialog(
@@ -783,7 +1242,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               alignment: Alignment.centerRight,
               child: Material(
                 color: const Color(
-                    0xFF111111), // Dark background matching screenshot
+                  0xFF111111,
+                ), // Dark background matching screenshot
                 child: SizedBox(
                   width: MediaQuery.of(context).size.width * 0.85,
                   height: double.infinity,
@@ -835,21 +1295,25 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                         selectedCategory = category;
                                       });
                                     },
-                                    child: _buildCategoryChip(category,
-                                        isSelected:
-                                            selectedCategory == category),
+                                    child: _buildCategoryChip(
+                                      category,
+                                      isSelected: selectedCategory == category,
+                                    ),
                                   ),
                                 );
-                              }).toList(),
+                              }),
                               GestureDetector(
                                 onTap: () {
                                   setDialogState(() {
-                                    trendingRoomsFuture =
-                                        AudioRoomsRepository().getAllRooms();
+                                    trendingRoomsFuture = AudioRoomsRepository()
+                                        .getAllRooms();
                                   });
                                 },
-                                child: const Icon(Icons.refresh_rounded,
-                                    color: Colors.white70, size: 24),
+                                child: const Icon(
+                                  Icons.refresh_rounded,
+                                  color: Colors.white70,
+                                  size: 24,
+                                ),
                               ),
                             ],
                           ),
@@ -865,51 +1329,64 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               if (snapshot.connectionState ==
                                   ConnectionState.waiting) {
                                 return const Center(
-                                    child: CircularProgressIndicator(
-                                        color: Colors.blueAccent));
+                                  child: CircularProgressIndicator(
+                                    color: Colors.blueAccent,
+                                  ),
+                                );
                               }
                               if (snapshot.hasError) {
                                 return Center(
-                                    child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Text('Failed to load rooms.',
-                                        style:
-                                            TextStyle(color: Colors.white70)),
-                                    const SizedBox(height: 8),
-                                    ElevatedButton(
-                                      onPressed: () {
-                                        setDialogState(() {
-                                          trendingRoomsFuture =
-                                              AudioRoomsRepository()
-                                                  .getAllRooms();
-                                        });
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.pinkAccent),
-                                      child: const Text('Try Again',
-                                          style:
-                                              TextStyle(color: Colors.white)),
-                                    ),
-                                  ],
-                                ));
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Text(
+                                        'Failed to load rooms.',
+                                        style: TextStyle(color: Colors.white70),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          setDialogState(() {
+                                            trendingRoomsFuture =
+                                                AudioRoomsRepository()
+                                                    .getAllRooms();
+                                          });
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.pinkAccent,
+                                        ),
+                                        child: const Text(
+                                          'Try Again',
+                                          style: TextStyle(color: Colors.white),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
                               }
 
                               final allRooms = snapshot.data ?? [];
                               final popularRooms = allRooms
-                                  .where((r) =>
-                                      r.id != widget.room.id &&
-                                      (selectedCategory == 'All' ||
-                                          r.category == selectedCategory))
+                                  .where(
+                                    (r) =>
+                                        r.id != widget.room.id &&
+                                        (selectedCategory == 'All' ||
+                                            r.category == selectedCategory),
+                                  )
                                   .toList();
-                              popularRooms.sort((a, b) => b.participantCount
-                                  .compareTo(a.participantCount));
+                              popularRooms.sort(
+                                (a, b) => b.participantCount.compareTo(
+                                  a.participantCount,
+                                ),
+                              );
 
                               if (popularRooms.isEmpty) {
                                 return const Center(
-                                    child: Text('No trending rooms right now.',
-                                        style:
-                                            TextStyle(color: Colors.white54)));
+                                  child: Text(
+                                    'No trending rooms right now.',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                );
                               }
                               return ListView.builder(
                                 padding: const EdgeInsets.only(bottom: 20),
@@ -919,44 +1396,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   return ModernRoomCard(
                                     room: room,
                                     onTap: () {
-                                      Navigator.of(context)
-                                          .pop(); // Close bottom sheet
-
-                                      // Cleanly leave current room directly (skips popping the screen inside _handleActualLeave)
-                                      setState(() {
-                                        _canPopScreen = true;
-                                      });
-                                      _getMinimizedController()
-                                          .clearMinimizedRoom();
-                                      widget.audioRoomsBloc.add(LeaveAudioRoom(
-                                        roomId: _currentRoom.id,
-                                        userId: _currentUser.userId,
-                                      ));
-
-                                      // Navigate to new room immediately
-                                      final newBloc = AudioRoomsBloc(
-                                          repository: AudioRoomsRepository());
-                                      final currentUser =
-                                          AuthController.instance.currentUser;
-
-                                      if (!room
-                                          .isParticipant(currentUser.userId)) {
-                                        newBloc.add(JoinAudioRoom(
-                                          roomId: room.id,
-                                          userId: currentUser.userId,
-                                          userName: currentUser.fullname,
-                                          userImageUrl: currentUser.photoUrl,
-                                          userFrameId: currentUser
-                                              .customization?.selectedFrameId,
-                                        ));
-                                      }
-
-                                      Get.off(
-                                          () => AudioRoomScreen(
-                                                room: room,
-                                                audioRoomsBloc: newBloc,
-                                              ),
-                                          preventDuplicates: false);
+                                      _confirmSwitchToRoom(room);
                                     },
                                   );
                                 },
@@ -975,13 +1415,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       },
       transitionBuilder: (context, animation, secondaryAnimation, child) {
         return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(1.0, 0.0),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          )),
+          position:
+              Tween<Offset>(
+                begin: const Offset(1.0, 0.0),
+                end: Offset.zero,
+              ).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+              ),
           child: child,
         );
       },
@@ -992,6 +1432,185 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         _handleActualLeave(fromBottomSheet: false);
       }
     });
+  }
+
+  /// Show premium confirmation dialog when switching to another room from exit sheet
+  void _confirmSwitchToRoom(AudioRoomV2 targetRoom) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E142B), // Harmonious premium dark background
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Colors.purpleAccent.withAlpha(51),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(128),
+                  blurRadius: 15,
+                  spreadRadius: 5,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Warning/Switch Icon
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.purpleAccent.withAlpha(26),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.swap_horizontal_circle_outlined,
+                    color: Colors.purpleAccent,
+                    size: 44,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Title
+                const Text(
+                  'Leave & Join Room?',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Message
+                Text(
+                  "Do you want to completely leave '${_currentRoom.name}' and join '${targetRoom.name}'?",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Action Buttons
+                Row(
+                  children: [
+                    // Cancel Button
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: const BorderSide(color: Colors.white24),
+                          ),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Leave & Join Button
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ElevatedButton(
+                          onPressed: () async {
+                            Navigator.of(dialogContext).pop(); // Close confirmation dialog
+                            Navigator.of(context).pop(); // Close exit bottom sheet
+
+                            // 1. Cleanly leave current room completely
+                            setState(() {
+                              _canPopScreen = true;
+                            });
+                            _getMinimizedController().clearMinimizedRoom();
+
+                            widget.audioRoomsBloc.add(
+                              LeaveAgoraChannel(channelName: _currentRoom.id),
+                            );
+                            widget.audioRoomsBloc.add(
+                              LeaveAudioRoom(
+                                roomId: _currentRoom.id,
+                                userId: _currentUser.userId,
+                              ),
+                            );
+
+                            await AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
+                            await Future.delayed(const Duration(milliseconds: 150));
+
+                            // 2. Initialize new room BLoC and join cleanly like explore flow
+                            final newBloc = AudioRoomsBloc(
+                              repository: AudioRoomsRepository(),
+                            );
+                            final currentUser = AuthController.instance.currentUser;
+
+                            if (!targetRoom.isParticipant(currentUser.userId)) {
+                              newBloc.add(
+                                JoinAudioRoom(
+                                  roomId: targetRoom.id,
+                                  userId: currentUser.userId,
+                                  userName: currentUser.fullname,
+                                  userImageUrl: currentUser.photoUrl,
+                                  userFrameId: currentUser.customization?.selectedFrameId,
+                                ),
+                              );
+                            }
+
+                            Get.off(
+                              () => AudioRoomScreen(
+                                room: targetRoom,
+                                audioRoomsBloc: newBloc,
+                              ),
+                              preventDuplicates: false,
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Leave & Join',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildTopActionButton({
@@ -1015,9 +1634,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             child: Icon(icon, color: iconColor, size: 28),
           ),
           const SizedBox(height: 8),
-          Text(label,
-              style: TextStyle(
-                  color: textColor, fontSize: 13, fontWeight: FontWeight.w500)),
+          Text(
+            label,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );
@@ -1048,7 +1672,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     } catch (e) {
       // Controller not found, initialize it
       debugPrint(
-          '⚠️ [AudioRoom] MinimizedRoomController not found, initializing...');
+        'âš ï¸ [AudioRoom] MinimizedRoomController not found, initializing...',
+      );
       return Get.put(MinimizedRoomController());
     }
   }
@@ -1066,14 +1691,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     final minimizedController = _getMinimizedController();
 
     // Minimize the room (save state) - also pass the BLoC so it doesn't get closed
-    minimizedController.minimizeRoom(_currentRoom,
-        bloc: widget.audioRoomsBloc, joinTime: _joinTime);
+    minimizedController.minimizeRoom(
+      _currentRoom,
+      bloc: widget.audioRoomsBloc,
+      joinTime: _joinTime,
+    );
 
     // IMPORTANT: Do NOT leave Agora channel - keep audio connection active!
     // Do NOT stop listening to room updates - keep getting real-time updates
 
-    debugPrint('🔽 [AudioRoom] Room minimized: ${_currentRoom.name}');
-    debugPrint('🔽 [AudioRoom] Agora channel kept active for minimized room');
+    debugPrint('ðŸ”½ [AudioRoom] Room minimized: ${_currentRoom.name}');
+    debugPrint('ðŸ”½ [AudioRoom] Agora channel kept active for minimized room');
 
     // Show floating overlay BEFORE navigating back
     MinimizedRoomOverlay.show(context, widget.audioRoomsBloc);
@@ -1090,7 +1718,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Use LoadAudioRooms to force a fresh fetch from server
     Future.delayed(const Duration(milliseconds: 500), () {
       widget.audioRoomsBloc.add(const LoadAudioRooms());
-      debugPrint('🔄 [AudioRoom] Reloading room list after minimize');
+      debugPrint('ðŸ”„ [AudioRoom] Reloading room list after minimize');
     });
   }
 
@@ -1106,18 +1734,22 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     final minimizedController = _getMinimizedController();
     minimizedController.clearMinimizedRoom();
 
+    try {
+      BackgroundService().stopService();
+    } catch (_) {}
+
     // Leave the room
-    widget.audioRoomsBloc.add(LeaveAudioRoom(
-      roomId: _currentRoom.id,
-      userId: _currentUser.userId,
-    ));
+    widget.audioRoomsBloc.add(
+      LeaveAudioRoom(roomId: _currentRoom.id, userId: _currentUser.userId),
+    );
 
     // Wait for the next frame so PopScope is updated before popping
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         if (_isCurrentUserHost && _currentRoom.category == 'Live') {
-          final int duration =
-              DateTime.now().difference(_currentRoom.createdAt).inMinutes;
+          final int duration = DateTime.now()
+              .difference(_currentRoom.createdAt)
+              .inMinutes;
           final int users = _currentRoom.joinedUserIds.length;
           final int diamonds = _currentRoom.totalRevenue;
           Navigator.of(context).pushReplacement(
@@ -1139,22 +1771,45 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       }
     });
 
-    debugPrint('👋 [AudioRoom] User left room: ${_currentRoom.name}');
+    debugPrint('ðŸ‘‹ [AudioRoom] User left room: ${_currentRoom.name}');
+  }
+
+  /// Handle grab top seat / gift selection
+  void _grabTopSeat() {
+    final hostParticipant = _currentRoom.participants.firstWhere(
+      (p) => p.userId == _currentRoom.creatorId,
+      orElse: () => AudioRoomParticipant(
+        userId: _currentRoom.creatorId,
+        userName: _currentRoom.creatorName,
+        userImageUrl: _currentRoom.creatorImageUrl,
+        isHost: true,
+        joinedAt: DateTime.now(),
+      ),
+    );
+    _showGiftSelection(hostParticipant);
   }
 
   /// Handle mute/unmute
   void _handleMuteToggle() {
-    debugPrint('🎤 [AudioRoom] 🎙️ Microphone toggle requested...');
+    debugPrint('ðŸŽ¤ [AudioRoom] ðŸŽ™ï¸ Microphone toggle requested...');
     debugPrint(
-        '🎤 [AudioRoom]   - Current state: ${_isMuted ? "MUTED" : "UNMUTED"}');
-    debugPrint('🎤 [AudioRoom]   - Agora connected: $_agoraChannelJoined');
+      'ðŸŽ¤ [AudioRoom]   - Current state: ${_isMuted ? "MUTED" : "UNMUTED"}',
+    );
+    debugPrint('ðŸŽ¤ [AudioRoom]   - Agora connected: $_agoraChannelJoined');
     debugPrint(
-        '🎤 [AudioRoom]   - Is seated: ${_currentParticipant?.isSeated ?? false}');
+      'ðŸŽ¤ [AudioRoom]   - Is seated: ${_currentParticipant?.isSeated ?? false}',
+    );
 
-    // Check if participant is seated - if not, don't allow mic toggle
-    if (!(_currentParticipant?.isSeated ?? false)) {
+    // Check if participant is seated on a seat
+    final bool canUserUseMic = _currentParticipant != null &&
+        (_currentParticipant!.isSeated ||
+            _currentParticipant!.isSpeaker ||
+            (_currentParticipant!.seatNumber != null && _currentParticipant!.seatNumber! >= 0));
+
+    if (!canUserUseMic) {
       debugPrint(
-          '🎤 [AudioRoom] ❌ Cannot toggle mic - participant is not seated');
+        'ðŸŽ¤ [AudioRoom] âŒ Cannot toggle mic - participant is not seated',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('You must be seated to use the microphone'),
@@ -1179,61 +1834,76 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       return;
     }
 
+    final bool targetMute = !_isMuted;
+
+    if (mounted) {
+      setState(() {
+        _isMuted = targetMute;
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    }
+
     if (_agoraChannelJoined) {
-      // Use Agora for mute/unmute
+      // Use Agora for explicit mute/unmute
       debugPrint(
-          '🎤 [AudioRoom] 🔧 Sending ToggleMicrophone event to Agora...');
-      widget.audioRoomsBloc.add(const ToggleMicrophone());
+        'ðŸŽ¤ [AudioRoom] ðŸ”§ Sending SetMicrophoneMute($targetMute) event to Agora...',
+      );
+      widget.audioRoomsBloc.add(SetMicrophoneMute(muted: targetMute));
     } else {
       // Fallback to local state if Agora not connected
       debugPrint(
-          '🎤 [AudioRoom] ⚠️ Agora not connected, using local state fallback');
-      if (mounted) {
-        setState(() {
-          _isMuted = !_isMuted;
-        });
-      }
+        'ðŸŽ¤ [AudioRoom] âš ï¸ Agora not connected, using local state fallback',
+      );
 
       // Update participant's mute status in the room
       if (_currentParticipant != null) {
-        final updatedParticipant =
-            _currentParticipant!.copyWith(isMuted: _isMuted);
-        widget.audioRoomsBloc.add(UpdateRoomParticipant(
-          roomId: _currentRoom.id,
-          userId: _currentUser.userId,
-          updatedParticipant: updatedParticipant,
-        ));
+        final updatedParticipant = _currentParticipant!.copyWith(
+          isMuted: _isMuted,
+        );
+        widget.audioRoomsBloc.add(
+          UpdateRoomParticipant(
+            roomId: _currentRoom.id,
+            userId: _currentUser.userId,
+            updatedParticipant: updatedParticipant,
+          ),
+        );
         debugPrint(
-            '🎤 [AudioRoom] 📝 Updated participant mute status in room (local): $_isMuted');
+          'ðŸŽ¤ [AudioRoom] ðŸ“ Updated participant mute status in room (local): $_isMuted',
+        );
       }
 
       debugPrint(
-          '🎤 [AudioRoom] 📱 Local state updated: ${_isMuted ? "MUTED" : "UNMUTED"}');
+        'ðŸŽ¤ [AudioRoom] ðŸ“± Local state updated: ${_isMuted ? "MUTED" : "UNMUTED"}',
+      );
     }
   }
 
   /// Handle speaker toggle
   void _handleSpeakerToggle() {
-    debugPrint('🔊 [AudioRoom] 🔊 Speaker toggle requested...');
+    debugPrint('ðŸ”Š [AudioRoom] ðŸ”Š Speaker toggle requested...');
     debugPrint(
-        '🔊 [AudioRoom]   - Current state: ${_isSpeakerOn ? "ON" : "OFF"}');
-    debugPrint('🔊 [AudioRoom]   - Agora connected: $_agoraChannelJoined');
+      'ðŸ”Š [AudioRoom]   - Current state: ${_isSpeakerOn ? "ON" : "OFF"}',
+    );
+    debugPrint('ðŸ”Š [AudioRoom]   - Agora connected: $_agoraChannelJoined');
 
     if (_agoraChannelJoined) {
       // Use Agora for speaker toggle
-      debugPrint('🔊 [AudioRoom] 🔧 Sending ToggleSpeaker event to Agora...');
+      debugPrint('ðŸ”Š [AudioRoom] ðŸ”§ Sending ToggleSpeaker event to Agora...');
       widget.audioRoomsBloc.add(const ToggleSpeaker());
     } else {
       // Fallback to local state if Agora not connected
       debugPrint(
-          '🔊 [AudioRoom] ⚠️ Agora not connected, using local state fallback');
+        'ðŸ”Š [AudioRoom] âš ï¸ Agora not connected, using local state fallback',
+      );
       if (mounted) {
         setState(() {
           _isSpeakerOn = !_isSpeakerOn;
         });
+        WidgetsBinding.instance.scheduleFrame();
       }
       debugPrint(
-          '🔊 [AudioRoom] 📱 Local state updated: ${_isSpeakerOn ? "ON" : "OFF"}');
+        'ðŸ”Š [AudioRoom] ðŸ“± Local state updated: ${_isSpeakerOn ? "ON" : "OFF"}',
+      );
     }
   }
 
@@ -1253,7 +1923,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 top: 20,
                 left: 20,
                 right: 20,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom > 0
+                    ? MediaQuery.of(context).viewInsets.bottom + 20
+                    : MediaQuery.of(context).padding.bottom + 20,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1271,14 +1943,19 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   // Switch Camera Option
                   ListTile(
                     tileColor: Colors.transparent,
-                    leading: const Icon(Icons.flip_camera_ios_rounded,
-                        color: Colors.white),
-                    title: const Text('Switch Camera',
-                        style: TextStyle(color: Colors.white)),
+                    leading: const Icon(
+                      Icons.flip_camera_ios_rounded,
+                      color: Colors.white,
+                    ),
+                    title: const Text(
+                      'Switch Camera',
+                      style: TextStyle(color: Colors.white),
+                    ),
                     onTap: () {
                       AgoraService().switchCamera();
                       Navigator.pop(
-                          context); // Optional: close bottom sheet after switching
+                        context,
+                      ); // Optional: close bottom sheet after switching
                     },
                   ),
                   const Divider(color: Colors.white24),
@@ -1287,8 +1964,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   SwitchListTile(
                     tileColor: Colors.transparent,
                     activeColor: Colors.pinkAccent,
-                    title: const Text('Enable Camera',
-                        style: TextStyle(color: Colors.white)),
+                    title: const Text(
+                      'Enable Camera',
+                      style: TextStyle(color: Colors.white),
+                    ),
                     secondary: Icon(
                       _isHostVideoEnabled
                           ? Icons.videocam_rounded
@@ -1313,10 +1992,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   SwitchListTile(
                     tileColor: Colors.transparent,
                     activeColor: Colors.pinkAccent,
-                    title: const Text('Beauty Camera',
-                        style: TextStyle(color: Colors.white)),
-                    secondary: const Icon(Icons.face_retouching_natural,
-                        color: Colors.white),
+                    title: const Text(
+                      'Beauty Camera',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    secondary: const Icon(
+                      Icons.face_retouching_natural,
+                      color: Colors.white,
+                    ),
                     value: _isBeautyCameraEnabled,
                     onChanged: (val) {
                       setState(() {
@@ -1427,8 +2110,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         children: [
           SizedBox(
             width: 80,
-            child: Text(title,
-                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            child: Text(
+              title,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
           ),
           Expanded(
             child: Slider(
@@ -1440,8 +2125,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           ),
           SizedBox(
             width: 30,
-            child: Text((value * 100).toInt().toString(),
-                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            child: Text(
+              (value * 100).toInt().toString(),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -1470,39 +2157,50 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     ListTile(
                       tileColor: Colors.transparent,
                       leading: const Icon(Icons.list_alt, color: Colors.white),
-                      title: const Text('Waiting List',
-                          style: TextStyle(color: Colors.white)),
+                      title: const Text(
+                        'Waiting List',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       onTap: () {
                         Navigator.pop(context);
                         showWaitingListBottomSheet(
-                            context, _currentRoom.id, widget.audioRoomsBloc);
+                          context,
+                          _currentRoom.id,
+                          widget.audioRoomsBloc,
+                        );
                       },
                     ),
                   if (_isCurrentUserHost)
                     ListTile(
                       tileColor: Colors.transparent,
                       leading: const Icon(Icons.block, color: Colors.white),
-                      title: const Text('Mute All Users',
-                          style: TextStyle(color: Colors.white)),
+                      title: const Text(
+                        'Mute All Users',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       onTap: () {
                         Navigator.pop(context);
-                        widget.audioRoomsBloc.add(ToggleAdminMute(
-                          roomId: _currentRoom.id,
-                          participantId: 'ALL',
-                          mutedByAdmin: true,
-                        ));
+                        widget.audioRoomsBloc.add(
+                          ToggleAdminMute(
+                            roomId: _currentRoom.id,
+                            participantId: 'ALL',
+                            mutedByAdmin: true,
+                          ),
+                        );
                       },
                     ),
                   ListTile(
                     tileColor: Colors.transparent,
                     leading: Icon(
-                        localRoomMuted ? Icons.volume_off : Icons.volume_up,
-                        color: Colors.white),
+                      localRoomMuted ? Icons.volume_off : Icons.volume_up,
+                      color: Colors.white,
+                    ),
                     title: Text(
-                        localRoomMuted
-                            ? 'Unmute Room Speaker'
-                            : 'Mute Room Speaker',
-                        style: const TextStyle(color: Colors.white)),
+                      localRoomMuted
+                          ? 'Unmute Room Speaker'
+                          : 'Mute Room Speaker',
+                      style: const TextStyle(color: Colors.white),
+                    ),
                     onTap: () {
                       setModalState(() {
                         localRoomMuted = !localRoomMuted;
@@ -1512,13 +2210,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   ),
                   ListTile(
                     tileColor: Colors.transparent,
-                    leading: Icon(localUserMuted ? Icons.mic_off : Icons.mic,
-                        color: Colors.white),
+                    leading: Icon(
+                      localUserMuted ? Icons.mic_off : Icons.mic,
+                      color: Colors.white,
+                    ),
                     title: Text(
-                        localUserMuted
-                            ? 'Unmute Microphone'
-                            : 'Mute Microphone',
-                        style: const TextStyle(color: Colors.white)),
+                      localUserMuted ? 'Unmute Microphone' : 'Mute Microphone',
+                      style: const TextStyle(color: Colors.white),
+                    ),
                     onTap: () {
                       setModalState(() {
                         localUserMuted = !localUserMuted;
@@ -1538,10 +2237,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Handle request to speak
   void _handleRequestToSpeak() {
     // Send a join request
-    widget.audioRoomsBloc.add(SendJoinRequest(
-      roomId: _currentRoom.id,
-      userId: _currentUser.userId,
-    ));
+    widget.audioRoomsBloc.add(
+      SendJoinRequest(roomId: _currentRoom.id, userId: _currentUser.userId),
+    );
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Join request sent!'),
@@ -1554,59 +2252,75 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   void _initializeAgoraForRoom() {
     // Safety check: don't add events to a closed BLoC
     if (widget.audioRoomsBloc.isClosed) {
-      debugPrint('🎤 [AudioRoom] ❌ Cannot initialize Agora: BLoC is closed');
+      debugPrint('ðŸŽ¤ [AudioRoom] âŒ Cannot initialize Agora: BLoC is closed');
       return;
     }
 
-    // Generate a unique UID for this user (using userId hash)
-    _agoraUid = _currentUser.userId.hashCode.abs() % 1000000;
+    // Generate a unique non-zero deterministic UID for this user
+    _agoraUid = generateAgoraUid(_currentUser.userId);
 
     // Initialize Agora only - join will happen in BlocListener
-    widget.audioRoomsBloc.add(InitializeAgora(
-      roomId: _currentRoom.id,
-      userId: _currentUser.userId,
-      userName: _currentUser.fullname,
-      userImageUrl: _currentUser.photoUrl,
-      audioQuality: AudioQuality.high,
-      isVideo: widget.room.category == 'Live',
-    ));
+    widget.audioRoomsBloc.add(
+      InitializeAgora(
+        roomId: _currentRoom.id,
+        userId: _currentUser.userId,
+        userName: _currentUser.fullname,
+        userImageUrl: _currentUser.photoUrl,
+        audioQuality: AudioQuality.high,
+        isVideo: widget.room.category == 'Live',
+      ),
+    );
   }
 
   /// Join Agora channel
   void _joinAgoraChannel() {
     if (_agoraUid == null) {
-      debugPrint('🎤 [AudioRoom] ❌ Cannot join channel: UID is null');
+      debugPrint('ðŸŽ¤ [AudioRoom] âŒ Cannot join channel: UID is null');
       return;
     }
 
-    if (_agoraChannelJoined) {
+    if (_agoraChannelJoined &&
+        AgoraService().isConnected &&
+        AgoraService().currentChannelId == _currentRoom.id) {
       debugPrint(
-          '🎤 [AudioRoom] ⚠️ Already joined Agora channel, skipping duplicate join');
+        'ðŸŽ¤ [AudioRoom] âš ï¸ Already joined Agora channel ${_currentRoom.id}, skipping duplicate join',
+      );
       return;
     }
 
-    debugPrint('🎤 [AudioRoom] 🚪 Attempting to join Agora channel...');
-    debugPrint('🎤 [AudioRoom] 📋 Join Info:');
-    debugPrint('🎤 [AudioRoom]   - Channel: ${_currentRoom.id}');
-    debugPrint('🎤 [AudioRoom]   - UID: $_agoraUid');
-    debugPrint('🎤 [AudioRoom]   - User: ${_currentUser.fullname}');
+    debugPrint('ðŸŽ¤ [AudioRoom] ðŸšª Attempting to join Agora channel...');
+    debugPrint('ðŸŽ¤ [AudioRoom] ðŸ“‹ Join Info:');
+    debugPrint('ðŸŽ¤ [AudioRoom]   - Channel: ${_currentRoom.id}');
+    debugPrint('ðŸŽ¤ [AudioRoom]   - UID: $_agoraUid');
+    debugPrint('ðŸŽ¤ [AudioRoom]   - User: ${_currentUser.fullname}');
 
-    // Get current participant's mute status
+    // Get current participant's seat and mute status
     final currentParticipant = _currentParticipant;
-    final isMuted =
-        currentParticipant?.isMuted ?? true; // Default to muted if not found
-    debugPrint(
-        '🎤 [AudioRoom] 🔧 Participant mute status: $isMuted (participant: ${currentParticipant?.userName}, seat: ${currentParticipant?.seatNumber})');
 
-    widget.audioRoomsBloc.add(JoinAgoraChannel(
-      channelName: _currentRoom.id,
-      uid: _agoraUid!,
-      userId: _currentUser.userId,
-      userName: _currentUser.fullname,
-      userImageUrl: _currentUser.photoUrl,
-      isMuted: isMuted,
-      isVideo: _currentRoom.category == 'Live',
-    ));
+    final bool isSeated = (currentParticipant?.isSeated ?? false) ||
+        (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! >= 0);
+
+    final bool isMuted = isSeated ? (currentParticipant?.isMutedByAdmin == true) : true;
+    if (isSeated && currentParticipant?.isMutedByAdmin != true) {
+      _isMuted = false;
+    }
+
+    debugPrint(
+      'ðŸŽ¤ [AudioRoom] ðŸ”§ Participant mute status: $isMuted (isSeated: $isSeated, participant: ${currentParticipant?.userName}, seat: ${currentParticipant?.seatNumber})',
+    );
+
+    widget.audioRoomsBloc.add(
+      JoinAgoraChannel(
+        channelName: _currentRoom.id,
+        uid: _agoraUid!,
+        userId: _currentUser.userId,
+        userName: _currentUser.fullname,
+        userImageUrl: _currentUser.photoUrl,
+        isMuted: isMuted,
+        isVideo: _currentRoom.category == 'Live',
+        isSeated: isSeated,
+      ),
+    );
   }
 
   /// Show Room Decor Sheet (Background & Seat Decor)
@@ -1638,14 +2352,15 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     try {
       // Validate current user and room participants exist
       if (_currentUser.userId.isEmpty || _currentRoom.participants.isEmpty) {
-        debugPrint('🎯 Current user or participants list is empty');
+        debugPrint('ðŸŽ¯ Current user or participants list is empty');
         return null;
       }
 
-      return _currentRoom.participants
-          .firstWhere((p) => p.userId == _currentUser.userId);
+      return _currentRoom.participants.firstWhere(
+        (p) => p.userId == _currentUser.userId,
+      );
     } catch (e) {
-      debugPrint('🎯 Current user not found in participants: $e');
+      debugPrint('ðŸŽ¯ Current user not found in participants: $e');
       return null;
     }
   }
@@ -1694,7 +2409,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Helper to map participant UserID to Agora UID (must match BLoC logic)
   int _generateUid(String userId) {
-    return userId.hashCode.abs() % 1000000;
+    return generateAgoraUid(userId);
   }
 
   @override
@@ -1708,7 +2423,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               (state.errorCode == 'KICKED' ||
                   state.errorCode == 'ROOM_ENDED')) {
             debugPrint(
-                '🚪 [UI] User has been kicked, blocked, or room ended. Popping screen...');
+              'ðŸšª [UI] User has been kicked, blocked, or room ended. Popping screen...',
+            );
             Navigator.of(context).pop();
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -1722,14 +2438,15 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
           // Handle Agora states
           if (state is AgoraInitializing) {
-            debugPrint('🎤 [AudioRoom] 🔄 Agora is initializing...');
+            debugPrint('ðŸŽ¤ [AudioRoom] ðŸ”„ Agora is initializing...');
           } else if (state is AgoraInitialized) {
-            debugPrint('🎤 [AudioRoom] ✅ Agora initialized successfully');
+            debugPrint('ðŸŽ¤ [AudioRoom] âœ… Agora initialized successfully');
             // Auto-join channel after initialization
             _joinAgoraChannel();
           } else if (state is AgoraInitializationFailed) {
             debugPrint(
-                '🎤 [AudioRoom] Agora initialization failed: ${state.error}');
+              'ðŸŽ¤ [AudioRoom] Agora initialization failed: ${state.error}',
+            );
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Audio initialization failed: ${state.error}'),
@@ -1738,20 +2455,25 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             );
           } else if (state is AgoraChannelJoining) {
             debugPrint(
-                '🎤 [AudioRoom] 🔄 Joining Agora channel: ${state.channelName}...');
+              'ðŸŽ¤ [AudioRoom] ðŸ”„ Joining Agora channel: ${state.channelName}...',
+            );
           } else if (state is AgoraChannelJoined) {
             debugPrint(
-                '🎤 [AudioRoom] ✅ Successfully joined Agora channel: ${state.channelName}');
-            debugPrint('🎤 [AudioRoom] 📊 Channel Info:');
-            debugPrint('🎤 [AudioRoom]   - UID: ${state.uid}');
+              'ðŸŽ¤ [AudioRoom] âœ… Successfully joined Agora channel: ${state.channelName}',
+            );
+            debugPrint('ðŸŽ¤ [AudioRoom] ðŸ“Š Channel Info:');
+            debugPrint('ðŸŽ¤ [AudioRoom]   - UID: ${state.uid}');
             debugPrint(
-                '🎤 [AudioRoom]   - Connection State: ${state.connectionState}');
+              'ðŸŽ¤ [AudioRoom]   - Connection State: ${state.connectionState}',
+            );
             debugPrint(
-                '🎤 [AudioRoom]   - Users in channel: ${state.users.length}');
-            debugPrint('🎤 [AudioRoom]   - Microphone muted: ${state.isMuted}');
-            debugPrint('🎤 [AudioRoom]   - Speaker on: ${state.isSpeakerOn}');
+              'ðŸŽ¤ [AudioRoom]   - Users in channel: ${state.users.length}',
+            );
+            debugPrint('ðŸŽ¤ [AudioRoom]   - Microphone muted: ${state.isMuted}');
+            debugPrint('ðŸŽ¤ [AudioRoom]   - Speaker on: ${state.isSpeakerOn}');
             debugPrint(
-                '🎤 [AudioRoom]   - Audio quality: ${state.audioQuality}');
+              'ðŸŽ¤ [AudioRoom]   - Audio quality: ${state.audioQuality}',
+            );
 
             setState(() {
               _agoraChannelJoined = true;
@@ -1762,14 +2484,22 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
             // ScaffoldMessenger.of(context).showSnackBar(
             //   const SnackBar(
-            //     content: Text('🎤 Connected to audio room!'),
+            //     content: Text('ðŸŽ¤ Connected to audio room!'),
             //     backgroundColor: Colors.green,
             //     duration: Duration(seconds: 2),
             //   ),
             // );
           } else if (state is AgoraChannelJoinFailed) {
             debugPrint(
-                '🎤 [AudioRoom] Failed to join Agora channel: ${state.error}');
+              'ðŸŽ¤ [AudioRoom] Failed to join Agora channel: ${state.error}',
+            );
+            // Seamless automatic retry after 1.5 seconds if not yet joined
+            Future.delayed(const Duration(milliseconds: 1500), () {
+              if (mounted && !_agoraChannelJoined && !widget.audioRoomsBloc.isClosed) {
+                debugPrint('ðŸŽ¤ [AudioRoom] ðŸ”„ Auto-retrying Agora join channel...');
+                _joinAgoraChannel();
+              }
+            });
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Failed to join audio: ${state.error}'),
@@ -1778,62 +2508,75 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             );
           } else if (state is MicrophoneToggled) {
             debugPrint(
-                '🎤 [AudioRoom] 🎙️ Microphone toggled: ${state.isMuted ? "🔇 MUTED" : "🎤 UNMUTED"}');
+              'ðŸŽ¤ [AudioRoom] ðŸŽ™ï¸ Microphone toggled: ${state.isMuted ? "ðŸ”‡ MUTED" : "ðŸŽ¤ UNMUTED"}',
+            );
             setState(() {
               _isMuted = state.isMuted;
             });
+            WidgetsBinding.instance.scheduleFrame();
 
             // Update participant's mute status in the room
             if (_currentParticipant != null) {
-              final updatedParticipant =
-                  _currentParticipant!.copyWith(isMuted: state.isMuted);
-              widget.audioRoomsBloc.add(UpdateRoomParticipant(
-                roomId: _currentRoom.id,
-                userId: _currentUser.userId,
-                updatedParticipant: updatedParticipant,
-              ));
+              final updatedParticipant = _currentParticipant!.copyWith(
+                isMuted: state.isMuted,
+              );
+              widget.audioRoomsBloc.add(
+                UpdateRoomParticipant(
+                  roomId: _currentRoom.id,
+                  userId: _currentUser.userId,
+                  updatedParticipant: updatedParticipant,
+                ),
+              );
               debugPrint(
-                  '🎤 [AudioRoom] 📝 Updated participant mute status in room: ${state.isMuted}');
+                'ðŸŽ¤ [AudioRoom] ðŸ“ Updated participant mute status in room: ${state.isMuted}',
+              );
             }
           } else if (state is RoomMuteToggled) {
             debugPrint(
-                '🔇 [AudioRoom] 🔇 Room mute toggled: ${state.isRoomMuted ? "🔇 MUTED" : "🔊 UNMUTED"}');
+              'ðŸ”‡ [AudioRoom] ðŸ”‡ Room mute toggled: ${state.isRoomMuted ? "ðŸ”‡ MUTED" : "ðŸ”Š UNMUTED"}',
+            );
             setState(() {
               _isRoomMuted = state.isRoomMuted;
             });
+            WidgetsBinding.instance.scheduleFrame();
 
             // ScaffoldMessenger.of(context).showSnackBar(
             //   SnackBar(
-            //     content: Text(state.isMuted ? '🔇 Microphone muted' : '🎤 Microphone unmuted'),
+            //     content: Text(state.isMuted ? 'ðŸ”‡ Microphone muted' : 'ðŸŽ¤ Microphone unmuted'),
             //     backgroundColor: state.isMuted ? Colors.orange : Colors.green,
             //     duration: const Duration(seconds: 1),
             //   ),
             // );
           } else if (state is SpeakerToggled) {
             debugPrint(
-                '🔊 [AudioRoom] 🔊 Speaker toggled: ${state.isSpeakerOn ? "🔊 ON" : "🔇 OFF"}');
+              'ðŸ”Š [AudioRoom] ðŸ”Š Speaker toggled: ${state.isSpeakerOn ? "ðŸ”Š ON" : "ðŸ”‡ OFF"}',
+            );
             setState(() {
               _isSpeakerOn = state.isSpeakerOn;
             });
             // ScaffoldMessenger.of(context).showSnackBar(
             //   SnackBar(
-            //     content: Text(state.isSpeakerOn ? '🔊 Speaker on' : '🔇 Speaker off'),
+            //     content: Text(state.isSpeakerOn ? 'ðŸ”Š Speaker on' : 'ðŸ”‡ Speaker off'),
             //     backgroundColor: state.isSpeakerOn ? Colors.green : Colors.orange,
             //     duration: const Duration(seconds: 1),
             //   ),
             // );
           } else if (state is AgoraUserUpdated) {
             debugPrint(
-                '🎤 [AudioRoom] Agora user updated: ${state.user.userName} (${state.action})');
+              'ðŸŽ¤ [AudioRoom] Agora user updated: ${state.user.userName} (${state.action})',
+            );
             if (state.action == 'joined') {
               debugPrint(
-                  '🎤 [AudioRoom] 🟢 Remote user JOINED Agora channel: ${state.user.userName} (UID: ${state.user.uid})');
+                'ðŸŽ¤ [AudioRoom] ðŸŸ¢ Remote user JOINED Agora channel: ${state.user.userName} (UID: ${state.user.uid})',
+              );
               debugPrint(
-                  '🎤 [AudioRoom] 🔍 User ID comparison: ${state.user.userId} vs ${_currentUser.userId}');
+                'ðŸŽ¤ [AudioRoom] ðŸ” User ID comparison: ${state.user.userId} vs ${_currentUser.userId}',
+              );
               // Only show notification if it's not the current user
               if (state.user.userId != _currentUser.userId) {
                 debugPrint(
-                    '🎤 [AudioRoom] ✅ Showing notification for remote user');
+                  'ðŸŽ¤ [AudioRoom] âœ… Showing notification for remote user',
+                );
                 NotificationManager.show(
                   context: context,
                   message: '${state.user.userName} joined the audio',
@@ -1842,11 +2585,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 );
               } else {
                 debugPrint(
-                    '🎤 [AudioRoom] ❌ Skipping notification for current user');
+                  'ðŸŽ¤ [AudioRoom] âŒ Skipping notification for current user',
+                );
               }
             } else if (state.action == 'left') {
               debugPrint(
-                  '🎤 [AudioRoom] 🔴 Remote user LEFT Agora channel: ${state.user.userName} (UID: ${state.user.uid})');
+                'ðŸŽ¤ [AudioRoom] ðŸ”´ Remote user LEFT Agora channel: ${state.user.userName} (UID: ${state.user.uid})',
+              );
               // Only show notification if it's not the current user
               if (state.user.userId != _currentUser.userId) {
                 NotificationManager.show(
@@ -1861,8 +2606,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             // Update the user in our local list
             setState(() {
               if (state.action == 'joined') {
-                final index =
-                    _agoraUsers.indexWhere((u) => u.uid == state.user.uid);
+                final index = _agoraUsers.indexWhere(
+                  (u) => u.uid == state.user.uid,
+                );
                 if (index != -1) {
                   _agoraUsers[index] = state.user;
                 } else {
@@ -1870,70 +2616,174 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 }
               } else if (state.action == 'left') {
                 _agoraUsers.removeWhere((u) => u.uid == state.user.uid);
+              } else if (state.action == 'muted' || state.action == 'unmuted') {
+                final index = _agoraUsers.indexWhere(
+                  (u) => u.uid == state.user.uid,
+                );
+                if (index != -1) {
+                  _agoraUsers[index] = state.user;
+                }
+                final participantIndex = _currentRoom.participants.indexWhere(
+                  (p) =>
+                      (state.user.userId.isNotEmpty && p.userId == state.user.userId) ||
+                      generateAgoraUid(p.userId) == state.user.uid ||
+                      (p.userId.hashCode.abs() % 1000000) == state.user.uid,
+                );
+                if (participantIndex != -1) {
+                  final isMutedNow = state.action == 'muted';
+                  final updatedList = List<AudioRoomParticipant>.from(_currentRoom.participants);
+                  updatedList[participantIndex] = updatedList[participantIndex].copyWith(
+                    isMuted: isMutedNow,
+                  );
+                  _currentRoom = _currentRoom.copyWith(participants: updatedList);
+
+                  // If muted, clear volume immediately so ripple stops instantly
+                  if (isMutedNow) {
+                    _userVolumeNotifiers[updatedList[participantIndex].userId]?.value = 0.0;
+                  }
+                }
               }
             });
           } else if (state is AgoraConnectionUpdated) {
             debugPrint(
-                '🎤 [AudioRoom] 🌐 Connection state changed: ${state.state}');
+              'ðŸŽ¤ [AudioRoom] ðŸŒ Connection state changed: ${state.state}',
+            );
           } else if (state is AudioVolumeUpdated) {
-            // Update volume notifiers efficiently
+            final activeSpeakingUserIds = <String>{};
+
             state.userVolumes.forEach((uid, volume) {
               try {
-                // Find participant with this UID
-                // We use firstWhereOrNull logic essentially
-                final participant = _currentRoom.participants
-                    .cast<AudioRoomParticipant?>()
-                    .firstWhere(
-                      (p) => p != null && _generateUid(p.userId) == uid,
-                      orElse: () => null,
-                    );
+                final isLocalUser = (uid == 0) ||
+                    (uid == _agoraUid) ||
+                    (uid == generateAgoraUid(_currentUser.userId)) ||
+                    (uid == _currentUser.userId.hashCode.abs() % 1000000);
 
-                if (participant != null) {
-                  final notifier = _getVolumeNotifier(participant.userId);
+                String? targetUserId;
+                if (isLocalUser) {
+                  targetUserId = _currentUser.userId;
+                } else {
+                  // 1. Check room participants first by Agora UID hash (matches seat occupant)
+                  final p = _currentRoom.participants.firstWhereOrNull(
+                    (p) =>
+                        generateAgoraUid(p.userId) == uid ||
+                        (p.userId.hashCode.abs() % 1000000) == uid ||
+                        p.userId == uid.toString(),
+                  );
+                  if (p != null) {
+                    targetUserId = p.userId;
+                  } else if (generateAgoraUid(_currentRoom.creatorId) == uid ||
+                      (_currentRoom.creatorId.hashCode.abs() % 1000000) == uid ||
+                      _currentRoom.creatorId == uid.toString()) {
+                    targetUserId = _currentRoom.creatorId;
+                  } else {
+                    // 2. Fallback to active Agora users map if resolved
+                    final agoraUser = _agoraUsers.firstWhereOrNull((u) => u.uid == uid);
+                    if (agoraUser != null &&
+                        agoraUser.userId.isNotEmpty &&
+                        !agoraUser.userId.startsWith('user_')) {
+                      targetUserId = agoraUser.userId;
+                    } else {
+                      // 3. Fallback to AgoraService remote users map
+                      final remoteUser = widget.audioRoomsBloc.agoraService.remoteUsers[uid];
+                      if (remoteUser != null &&
+                          remoteUser.userId.isNotEmpty &&
+                          !remoteUser.userId.startsWith('user_')) {
+                        targetUserId = remoteUser.userId;
+                      }
+                    }
+                  }
+                }
 
-                  bool isActuallyMuted = participant.isMuted;
-                  if (participant.userId == _currentUser.userId) {
+                if (targetUserId != null) {
+                  bool isActuallyMuted = false;
+                  if (targetUserId == _currentUser.userId) {
                     isActuallyMuted = _isCurrentUserMuted;
+                  } else {
+                    final p = _currentRoom.participants
+                        .firstWhereOrNull((p) => p.userId == targetUserId);
+                    final isMutedByAdmin = p?.isMutedByAdmin == true;
+                    // If Agora detects actual incoming audio from remote user, they are speaking and unmuted
+                    if (volume > 1 && !isMutedByAdmin) {
+                      isActuallyMuted = false;
+                      if (p != null && p.isMuted) {
+                        final idx = _currentRoom.participants.indexOf(p);
+                        if (idx != -1) {
+                          final updatedList = List<AudioRoomParticipant>.from(_currentRoom.participants);
+                          updatedList[idx] = p.copyWith(isMuted: false);
+                          _currentRoom = _currentRoom.copyWith(participants: updatedList);
+                          if (mounted) {
+                            setState(() {});
+                          }
+                        }
+                      }
+                    } else {
+                      isActuallyMuted = isMutedByAdmin || (p?.isMuted == true);
+                    }
                   }
 
-                  // Don't show ripple for muted users
-                  notifier.value = isActuallyMuted ? 0.0 : volume / 255.0;
+                  // Boost normalized volume for clear, vibrant mic waves when speaking
+                  // When user is muted, volume is strictly 0.0 (no mic ripple when muted)
+                  final normalizedVol = (isActuallyMuted || volume <= 1)
+                      ? 0.0
+                      : (volume / 100.0).clamp(0.15, 1.0);
+
+                  if (normalizedVol > 0.0) {
+                    activeSpeakingUserIds.add(targetUserId);
+                  }
+
+                  final notifier = _getVolumeNotifier(targetUserId);
+                  notifier.value = normalizedVol;
                 }
               } catch (e) {
                 // Ignore errors
               }
             });
+
+            // Reset volume notifier to 0.0 for users who stopped speaking
+            _userVolumeNotifiers.forEach((userId, notifier) {
+              if (!activeSpeakingUserIds.contains(userId) && notifier.value != 0.0) {
+                notifier.value = 0.0;
+              }
+            });
           } else if (state is NetworkQualityUpdated) {
-            // debugPrint('🎤 [AudioRoom] 📶 Network quality: ${state.quality}');
+            // debugPrint('ðŸŽ¤ [AudioRoom] ðŸ“¶ Network quality: ${state.quality}');
           } else if (state is AgoraStatsUpdated) {
-            // debugPrint('🎤 [AudioRoom] 📊 Agora Stats:');
-            // debugPrint('🎤 [AudioRoom]   - Duration: ${state.stats.duration}s');
-            // debugPrint('🎤 [AudioRoom]   - Users: ${state.stats.userCount}');
-            // debugPrint('🎤 [AudioRoom]   - CPU Usage: ${state.stats.cpuTotalUsage}%');
+            // debugPrint('ðŸŽ¤ [AudioRoom] ðŸ“Š Agora Stats:');
+            // debugPrint('ðŸŽ¤ [AudioRoom]   - Duration: ${state.stats.duration}s');
+            // debugPrint('ðŸŽ¤ [AudioRoom]   - Users: ${state.stats.userCount}');
+            // debugPrint('ðŸŽ¤ [AudioRoom]   - CPU Usage: ${state.stats.cpuTotalUsage}%');
             if (state.stats.txBytes > 0) {
               debugPrint(
-                  '🎤 [AudioRoom]   - TX: ${state.stats.txBytes} bytes (${state.stats.txKBitRate} kbps)');
+                'ðŸŽ¤ [AudioRoom]   - TX: ${state.stats.txBytes} bytes (${state.stats.txKBitRate} kbps)',
+              );
             }
             if (state.stats.rxBytes > 0) {
               debugPrint(
-                  '🎤 [AudioRoom]   - RX: ${state.stats.rxBytes} bytes (${state.stats.rxKBitRate} kbps)');
+                'ðŸŽ¤ [AudioRoom]   - RX: ${state.stats.rxBytes} bytes (${state.stats.rxKBitRate} kbps)',
+              );
             }
           } else if (state is TokenPrivilegeWillExpire) {
-            debugPrint('🎤 [AudioRoom] ⚠️ Token will expire soon, renewing...');
+            debugPrint('ðŸŽ¤ [AudioRoom] âš ï¸ Token will expire soon, renewing...');
           } else if (state is TokenRenewed) {
-            debugPrint('🎤 [AudioRoom] ✅ Token renewed successfully');
+            debugPrint('ðŸŽ¤ [AudioRoom] âœ… Token renewed successfully');
           } else if (state is AgoraError) {
             debugPrint(
-                '🎤 [AudioRoom] ❌ Agora Error: ${state.message} (Code: ${state.code})');
-            // ScaffoldMessenger.of(context).showSnackBar(
-            //   SnackBar(
-            //     content: Text('Audio Error: ${state.message}'),
-            //     backgroundColor: Colors.red,
-            //     duration: const Duration(seconds: 3),
-            //   ),
-            // );
+              'ðŸŽ¤ [AudioRoom] âŒ Agora Error: ${state.message} (Code: ${state.code})',
+            );
+            if (state.code == 'MIC_PERMISSION_DENIED' ||
+                state.code == 'NOT_SEATED' ||
+                state.code == 'MUTED_BY_ADMIN' ||
+                state.code == 'TOGGLE_MIC_FAILED' ||
+                state.code == 'SET_MIC_FAILED') {
+              if (mounted) {
+                setState(() {
+                  _isMuted = true;
+                });
+                WidgetsBinding.instance.scheduleFrame();
+              }
+            }
           } else if (state is AgoraChannelLeft) {
-            debugPrint('🎤 [AudioRoom] 👋 Left Agora channel successfully');
+            debugPrint('ðŸŽ¤ [AudioRoom] ðŸ‘‹ Left Agora channel successfully');
             setState(() {
               _agoraChannelJoined = false;
               _agoraUsers.clear();
@@ -1948,10 +2798,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             final oldBackgroundUrl = oldRoom.settings.backgroundImageUrl;
             final newBackgroundUrl = newRoom.settings.backgroundImageUrl;
 
-            // Update local state first (UI needs to react)
-            setState(() {
-              _currentRoom = newRoom;
-            });
+            _currentRoom = newRoom;
+
+            if (mounted) {
+              setState(() {});
+              WidgetsBinding.instance.scheduleFrame();
+            }
 
             final oldAnnouncement = oldRoom.settings.announcement;
             final newAnnouncement = newRoom.settings.announcement;
@@ -1967,15 +2819,18 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             }
 
             if (newRoom.activeYoutubeVideoId != null) {
-              final hostParticipant = newRoom.participants
-                  .firstWhereOrNull((p) => p.userId == newRoom.creatorId);
-              final isHostInSeat1 = hostParticipant != null &&
+              final hostParticipant = newRoom.participants.firstWhereOrNull(
+                (p) => p.userId == newRoom.creatorId,
+              );
+              final isHostInSeat1 =
+                  hostParticipant != null &&
                   hostParticipant.isSeated &&
                   hostParticipant.seatNumber == 1;
 
               if (!isHostInSeat1) {
                 final isHostInRoom = hostParticipant != null;
-                final shouldIUpdate = (isHostInRoom && _isCurrentUserHost) ||
+                final shouldIUpdate =
+                    (isHostInRoom && _isCurrentUserHost) ||
                     (!isHostInRoom &&
                         newRoom.participants.isNotEmpty &&
                         newRoom.participants.first.userId ==
@@ -1992,13 +2847,42 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               }
             }
 
+            // Auto-close Carrom if Seat 1 (Host seat) becomes empty
+            if (newRoom.isCarromActive) {
+              final seat1Participant = newRoom.participants.firstWhereOrNull(
+                (p) => p.isSeated && p.seatNumber == 1,
+              );
+              final isSeat1Occupied = seat1Participant != null;
+
+              if (!isSeat1Occupied) {
+                final isHostInRoom = newRoom.participants.any(
+                  (p) => p.userId == newRoom.creatorId,
+                );
+                final shouldCloseCarrom =
+                    (isHostInRoom && _isCurrentUserHost) ||
+                    (!isHostInRoom &&
+                        newRoom.participants.isNotEmpty &&
+                        newRoom.participants.first.userId ==
+                            _currentUser.userId);
+
+                if (shouldCloseCarrom) {
+                  AudioRoomsRepository().updateCarromState(
+                    roomId: newRoom.id,
+                    isActive: false,
+                  );
+                }
+              }
+            }
+
             // --- NOTIFICATIONS LOGIC ---
 
             // 1. Find Current User in both states
-            final oldMe = oldRoom.participants
-                .firstWhereOrNull((p) => p.userId == _currentUser.userId);
-            final newMe = newRoom.participants
-                .firstWhereOrNull((p) => p.userId == _currentUser.userId);
+            final oldMe = oldRoom.participants.firstWhereOrNull(
+              (p) => p.userId == _currentUser.userId,
+            );
+            final newMe = newRoom.participants.firstWhereOrNull(
+              (p) => p.userId == _currentUser.userId,
+            );
 
             if (oldMe != null && newMe != null) {
               // Check Mute Status (Admin Mute)
@@ -2062,8 +2946,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
             if (newParticipantCount > oldParticipantCount) {
               final newParticipants = newRoom.participants
-                  .where((p) => !oldRoom.participants
-                      .any((old) => old.userId == p.userId))
+                  .where(
+                    (p) => !oldRoom.participants.any(
+                      (old) => old.userId == p.userId,
+                    ),
+                  )
                   .toList();
               if (newParticipants.isNotEmpty) {
                 final newParticipant = newParticipants.first;
@@ -2087,18 +2974,20 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 DefaultCacheManager()
                     .getSingleFile(newBackgroundUrl)
                     .catchError((error) {
-                  debugPrint(
-                      '🖼️ Failed to preload updated background: $error');
-                  throw error;
-                });
+                      debugPrint(
+                        'ðŸ–¼ï¸ Failed to preload updated background: $error',
+                      );
+                      throw error;
+                    });
               }
             }
           } else if (state is AudioRoomLeft) {
-            debugPrint('🎯 Successfully left room (screen already popped)');
+            debugPrint('ðŸŽ¯ Successfully left room (screen already popped)');
             // Removed Navigator.of(context).pop() to fix double-pop white screen bug
           } else if (state is AudioRoomJoined) {
             debugPrint(
-                '🎯 User successfully joined room from within room screen');
+              'ðŸŽ¯ User successfully joined room from within room screen',
+            );
             // ScaffoldMessenger.of(context).showSnackBar(
             //   SnackBar(
             //     content: Text('Welcome to ${state.room.name}!'),
@@ -2121,14 +3010,15 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             );
           } else if (state is AudioRoomJoinFailed) {
             debugPrint(
-                '🎯 Failed to join room from within room screen: ${state.message}');
-            // ScaffoldMessenger.of(context).showSnackBar(
-            //   SnackBar(
-            //     content: Text('Failed to join: ${state.message}'),
-            //     backgroundColor: Colors.red,
-            //     duration: const Duration(seconds: 3),
-            //   ),
-            // );
+              'ðŸŽ¯ Failed to join room from within room screen: ${state.message}',
+            );
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(state.message),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 3),
+              ),
+            );
             // Navigate back since join failed
             Navigator.of(context).pop();
           } else if (state is JoiningAudioRoom) {
@@ -2154,7 +3044,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             //   ),
             // );
           } else if (state is AudioRoomsError) {
-            debugPrint('🎯 Room error: ${state.message}');
+            debugPrint('ðŸŽ¯ Room error: ${state.message}');
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(state.message),
@@ -2164,7 +3054,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             );
             if (state.errorCode == 'KICKED') {
               debugPrint(
-                  '🚪 [AudioRoom] Kicked state detected, safely exiting room screen...');
+                'ðŸšª [AudioRoom] Kicked state detected, safely exiting room screen...',
+              );
               setState(() {
                 _canPopScreen = true;
               });
@@ -2172,27 +3063,68 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             }
           } else if (state is ParticipantMovedToSeat) {
             debugPrint(
-                '🪑 [UI] Participant moved to seat - forcing UI refresh');
+              '🪑 [UI] Participant moved to seat - forcing UI refresh',
+            );
+            if (state.userId == _currentUser.userId) {
+              if (state.toSeat >= 0) {
+                // Moving onto a seat: unmuted by default unless muted by admin
+                final bool isMutedByAdmin = _currentParticipant?.isMutedByAdmin == true;
+                _isMuted = isMutedByAdmin;
+              } else {
+                // Leaving seat: muted
+                _isMuted = true;
+              }
+            }
+            // Update _currentRoom participants in-memory immediately
+            final updatedParticipants = _currentRoom.participants.map((p) {
+              if (p.userId == state.userId) {
+                if (state.toSeat >= 0) {
+                  return p.copyWith(
+                    seatNumber: state.toSeat,
+                    isSeated: true,
+                    isSpeaker: true,
+                    isMuted: state.userId == _currentUser.userId ? _isMuted : (p.isMutedByAdmin ? true : false),
+                  );
+                } else {
+                  return p.copyWith(
+                    clearSeatNumber: true,
+                    isSeated: false,
+                    isSpeaker: false,
+                    isMuted: true,
+                  );
+                }
+              }
+              return p;
+            }).toList();
+            _currentRoom = _currentRoom.copyWith(participants: updatedParticipants);
             // Force UI refresh to update seat display immediately
             if (mounted) {
               setState(() {});
+              WidgetsBinding.instance.scheduleFrame();
             }
-
-            // ScaffoldMessenger.of(context).showSnackBar(
-            //   SnackBar(
-            //     content: Text(state.toSeat == 0
-            //         ? 'Left seat successfully'
-            //         : 'Moved to seat ${state.toSeat}'),
-            //     backgroundColor: Colors.green.withValues(alpha: 0.8),
-            //     duration: const Duration(seconds: 2),
-            //   ),
-            // );
           } else if (state is ParticipantRemovedFromSeat) {
             debugPrint(
-                '🪑 [UI] Participant removed from seat - forcing UI refresh');
+              '🪑 [UI] Participant removed from seat - forcing UI refresh',
+            );
+            final updatedParticipants = _currentRoom.participants.map((p) {
+              if (p.userId == state.participantId) {
+                return p.copyWith(
+                  clearSeatNumber: true,
+                  isSeated: false,
+                  isSpeaker: false,
+                  isMuted: true,
+                );
+              }
+              return p;
+            }).toList();
+            _currentRoom = _currentRoom.copyWith(participants: updatedParticipants);
+            if (state.participantId == _currentUser.userId) {
+              _isMuted = true;
+            }
             // Force UI refresh to update seat display immediately
             if (mounted) {
               setState(() {});
+              WidgetsBinding.instance.scheduleFrame();
             }
 
             // ScaffoldMessenger.of(context).showSnackBar(
@@ -2208,7 +3140,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           canPop: _canPopScreen,
           onPopInvokedWithResult: (bool didPop, dynamic result) {
             if (!didPop) {
-              _showExitConfirmationBottomSheet();
+              // Pressing the back button/gesture automatically minimizes the room
+              _handleMinimize();
             }
           },
           child: AnnotatedRegion<SystemUiOverlayStyle>(
@@ -2230,19 +3163,121 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     );
   }
 
+  /// Handle joining the room member club via the top bar + button
+  Future<void> _handleJoinRoomClub() async {
+    try {
+      final DocumentReference roomRef = FirebaseFirestore.instance
+          .collection('audio_rooms_v2')
+          .doc(_currentRoom.id);
+
+      await roomRef.update({
+        'joinedUserIds': FieldValue.arrayUnion([_currentUser.userId])
+      });
+
+      if (mounted) {
+        setState(() {
+          if (!_currentRoom.joinedUserIds.contains(_currentUser.userId)) {
+            _currentRoom = _currentRoom.copyWith(
+              joinedUserIds: [..._currentRoom.joinedUserIds, _currentUser.userId],
+            );
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'ðŸŽ‰ You joined this room member club!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Inter',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFF0288D1),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error joining room member club: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Failed to join room: $e',
+              style: const TextStyle(color: Colors.white, fontFamily: 'Inter'),
+            ),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Small circular blue '+' button to join room members
+  Widget _buildJoinRoomClubButton() {
+    return GestureDetector(
+      onTap: _handleJoinRoomClub,
+      child: Container(
+        width: 18,
+        height: 18,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const LinearGradient(
+            colors: [
+              Color(0xFF29B6F6),
+              Color(0xFF0288D1),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0288D1).withValues(alpha: 0.4),
+              blurRadius: 4,
+              spreadRadius: 0.5,
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.add,
+            color: Colors.white,
+            size: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Build custom header exactly like screenshot
   Widget _buildCustomHeader() {
     return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 6, bottom: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Room icon/avatar and title/member count area - Tappable for details
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                GestureDetector(
+          // ==========================================
+          // SERIAL 1 (Top Row): Room Info <---> Action Buttons
+          // ==========================================
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Left: Room Icon + Name + ID + Level Badge + Join '+' Button
+              Expanded(
+                child: GestureDetector(
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
@@ -2255,150 +3290,114 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   },
                   behavior: HitTestBehavior.opaque,
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Room icon/avatar
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(10),
-                              image: _currentRoom.imageUrl != null
-                                  ? DecorationImage(
-                                      image:
-                                          NetworkImage(_currentRoom.imageUrl!),
-                                      fit: BoxFit.cover,
-                                    )
-                                  : null,
-                              color: _currentRoom.imageUrl == null
-                                  ? Colors.red
-                                  : null,
-                            ),
-                            child: _currentRoom.imageUrl == null
-                                ? const Icon(
-                                    Icons.group,
-                                    color: Colors.white,
-                                    size: 24,
-                                  )
-                                : null,
-                          ),
-                        ],
+                      // Room Avatar
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          image: _currentRoom.imageUrl != null &&
+                                  _currentRoom.imageUrl!.isNotEmpty
+                              ? DecorationImage(
+                                  image: NetworkImage(_currentRoom.imageUrl!),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
+                          color: _currentRoom.imageUrl == null ? Colors.red : null,
+                        ),
+                        child: _currentRoom.imageUrl == null
+                            ? const Icon(
+                                Icons.group,
+                                color: Colors.white,
+                                size: 20,
+                              )
+                            : null,
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
 
-                      // Room title and member count
-                      // Room title and member count
+                      // Room Title and ID
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            // Row 1: Name + Level
-                            Row(
-                              children: [
-                                Container(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 140),
-                                  child: ShaderMask(
-                                    shaderCallback: (Rect bounds) {
-                                      return const LinearGradient(
-                                        begin: Alignment.centerLeft,
-                                        end: Alignment.centerRight,
-                                        colors: [
-                                          Colors.white,
-                                          Colors.white,
-                                          Colors.transparent
-                                        ],
-                                        stops: [0.0, 0.8, 1.0],
-                                      ).createShader(bounds);
-                                    },
-                                    blendMode: BlendMode.dstIn,
-                                    child: _currentRoom.name.length > 15
-                                        ? SizedBox(
-                                            height: 20,
-                                            child: Marquee(
-                                              text: _currentRoom.name,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                              scrollAxis: Axis.horizontal,
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              blankSpace: 20.0,
-                                              velocity: 30.0,
-                                              pauseAfterRound:
-                                                  const Duration(seconds: 1),
-                                            ),
-                                          )
-                                        : Text(
-                                            _currentRoom.name,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                            maxLines: 1,
-                                            softWrap: false,
-                                            overflow: TextOverflow.clip,
-                                          ),
-                                  ),
-                                ),
-                              ],
+                            Text(
+                              _currentRoom.name,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'Inter',
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-
                             const SizedBox(height: 2),
-
-                            // Row 2: ID
                             Row(
                               children: [
                                 Flexible(
-                                  child: Obx(() {
-                                    final premiumRoomService =
-                                        Get.put(PremiumRoomService());
-                                    final customIdModel = premiumRoomService
-                                        .streamRoomId(_currentRoom.id)
-                                        .value;
+                                  child: StreamBuilder<DocumentSnapshot>(
+                                    stream: FirebaseFirestore.instance
+                                        .collection('premium_room_ids')
+                                        .doc(_currentRoom.id)
+                                        .snapshots(),
+                                    builder: (context, snapshot) {
+                                      if (snapshot.hasData &&
+                                          snapshot.data!.exists &&
+                                          snapshot.data!.data() != null) {
+                                        final model = PremiumRoomIdModel.fromMap(
+                                          snapshot.data!.data()
+                                              as Map<String, dynamic>,
+                                          snapshot.data!.id,
+                                        );
+                                        if (!model.isExpired &&
+                                            model.customId.isNotEmpty) {
+                                          return AnimatedPremiumId(
+                                            idStr: model.customId,
+                                          );
+                                        }
+                                      }
 
-                                    if (customIdModel != null &&
-                                        !customIdModel.isExpired) {
-                                      return AnimatedPremiumId(
-                                          idStr: customIdModel.customId);
-                                    }
-
-                                    return Text(
-                                      'ID: ${_currentRoom.id.length > 8 ? _currentRoom.id.substring(0, 8) : _currentRoom.id}',
-                                      style: TextStyle(
-                                        color:
-                                            Colors.white.withValues(alpha: 0.6),
-                                        fontSize: 11,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    );
-                                  }),
+                                      return Text(
+                                        'ID: ${_currentRoom.id.length > 8 ? _currentRoom.id.substring(0, 8) : _currentRoom.id}',
+                                        style: TextStyle(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.6,
+                                          ),
+                                          fontSize: 10,
+                                          fontFamily: 'Inter',
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      );
+                                    },
+                                  ),
                                 ),
+                                const SizedBox(width: 4),
                                 _getDynamicRoomLevelBadgeUrl() != null
                                     ? CachedNetworkImage(
                                         imageUrl:
                                             _getDynamicRoomLevelBadgeUrl()!,
-                                        width: 44,
-                                        height: 24,
+                                        width: 36,
+                                        height: 20,
                                         fit: BoxFit.contain,
                                       )
                                     : Container(
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 4, vertical: 1),
+                                          horizontal: 4,
+                                          vertical: 1,
+                                        ),
                                         decoration: BoxDecoration(
-                                          color: Colors.blue
-                                              .withValues(alpha: 0.6),
-                                          borderRadius:
-                                              BorderRadius.circular(4),
+                                          color: Colors.blue.withValues(
+                                            alpha: 0.6,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
                                           border: Border.all(
-                                              color: Colors.white24,
-                                              width: 0.5),
+                                            color: Colors.white24,
+                                            width: 0.5,
+                                          ),
                                         ),
                                         child: Text(
                                           'Lv.${AudioRoomV2.calculateRoomLevel(_currentRoom.totalRevenue, _roomLevelConfigData)}',
@@ -2410,66 +3409,45 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                           ),
                                         ),
                                       ),
-                                if (!_currentRoom.joinedUserIds
-                                        .contains(_currentUser.userId) &&
-                                    !_currentRoom
-                                        .isCreator(_currentUser.userId)) ...[
-                                  GestureDetector(
-                                    onTap: () async {
-                                      try {
-                                        await FirebaseFirestore.instance
-                                            .collection('audio_rooms_v2')
-                                            .doc(_currentRoom.id)
-                                            .update({
-                                          'joinedUserIds':
-                                              FieldValue.arrayUnion(
-                                                  [_currentUser.userId])
-                                        });
-                                        if (!mounted) return;
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              '🎉 You are now an official member of this room!',
-                                              style: TextStyle(
-                                                color: Colors.black,
-                                                fontWeight: FontWeight.bold,
-                                                fontFamily: 'Inter',
-                                              ),
-                                            ),
-                                            backgroundColor: Color(0xFFD4AF37),
-                                          ),
-                                        );
-                                      } catch (e) {
-                                        if (!mounted) return;
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content: Text('Error: $e'),
-                                            backgroundColor: Colors.red,
-                                          ),
-                                        );
+
+                                // Plus button if user is not in joined members
+                                StreamBuilder<DocumentSnapshot>(
+                                  stream: FirebaseFirestore.instance
+                                      .collection('audio_rooms_v2')
+                                      .doc(_currentRoom.id)
+                                      .snapshots(),
+                                  builder: (context, snapshot) {
+                                    List<dynamic> joinedUserIds =
+                                        _currentRoom.joinedUserIds;
+                                    String creatorId = _currentRoom.creatorId;
+                                    if (snapshot.hasData &&
+                                        snapshot.data?.exists == true) {
+                                      final data = snapshot.data!.data()
+                                          as Map<String, dynamic>?;
+                                      if (data != null) {
+                                        joinedUserIds = (data['joinedUserIds']
+                                                as List<dynamic>?) ??
+                                            joinedUserIds;
+                                        creatorId =
+                                            (data['creatorId'] as String?) ??
+                                                creatorId;
                                       }
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.all(3),
-                                      decoration: const BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            Color(0xFFFFD700),
-                                            Color(0xFFFFA500),
-                                          ],
-                                        ),
-                                      ),
-                                      child: const Icon(
-                                        Icons.add,
-                                        color: Colors.black,
-                                        size: 11,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                    }
+
+                                    final bool isMember = joinedUserIds
+                                            .contains(_currentUser.userId) ||
+                                        creatorId == _currentUser.userId;
+
+                                    if (isMember) {
+                                      return const SizedBox.shrink();
+                                    }
+
+                                    return Padding(
+                                      padding: const EdgeInsets.only(left: 4.0),
+                                      child: _buildJoinRoomClubButton(),
+                                    );
+                                  },
+                                ),
                               ],
                             ),
                           ],
@@ -2478,201 +3456,246 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     ],
                   ),
                 ),
-                const SizedBox(height: 10),
-                // Ranking / Revenue (Below Avatar)
-                GestureDetector(
-                  onTap: _showRankingList,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [
-                          Color(0xFF9C27B0), // Purple like screenshot
-                          Color(0xFFBA68C8),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.emoji_events,
-                          color: Color(0xFFFFD700),
-                          size: 20,
-                        ),
-                        const SizedBox(width: 2),
-                        Text(
-                          _formatRevenue(_currentRoom.totalRevenue),
-                          style: const TextStyle(
-                            color: Color(0xFFFFE0B2),
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
 
-          // Right side buttons
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
+              const SizedBox(width: 8),
+
+              // Right: Action Buttons (..., flip, share, close)
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Dropdown/Settings button - Only for Host
-                  if (_isCurrentUserHost) ...[
+                  if (_isCurrentUserHostOrAdmin) ...[
                     GestureDetector(
                       onTap: _showVoiceRoomCustomize,
                       child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: const BoxDecoration(
-                          color: Colors.transparent,
-                        ),
+                        padding: const EdgeInsets.all(4),
                         child: const Icon(
                           Icons.more_horiz_rounded,
                           color: Colors.white,
-                          size: 22,
+                          size: 20,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 4),
                   ],
-
-                  // Camera Flip and Off Buttons (Video Live Host Only)
                   if (_currentRoom.category == 'Live' &&
                       _isCurrentUserHost) ...[
-                    // Camera Options Button (replaces flip button)
                     GestureDetector(
                       onTap: _showCameraOptionsBottomSheet,
                       child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: const BoxDecoration(
-                          color: Colors.transparent,
-                        ),
+                        padding: const EdgeInsets.all(4),
                         child: const Icon(
                           Icons.flip_camera_ios_rounded,
                           color: Colors.white,
-                          size: 22,
+                          size: 20,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 4),
                   ],
-
-                  // Share button
                   GestureDetector(
-                    onTap: _showShareBottomSheet,
+                    onTap: (_currentRoom.isGroupRoom || _currentRoom.isPrivate)
+                        ? () {
+                            Get.snackbar(
+                              'Private Room',
+                              'Private Group Room: Only group members can join.',
+                              backgroundColor: Colors.black87,
+                              colorText: Colors.white,
+                              snackPosition: SnackPosition.BOTTOM,
+                            );
+                          }
+                        : _showShareBottomSheet,
                     child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(
-                        color: Colors.transparent,
-                      ),
-                      child: Transform.scale(
-                        scaleX: -1,
-                        child: const Icon(
-                          Icons.reply_rounded,
-                          color: Colors.white,
-                          size: 22,
-                        ),
-                      ),
+                      padding: const EdgeInsets.all(4),
+                      child: (_currentRoom.isGroupRoom || _currentRoom.isPrivate)
+                          ? const Icon(
+                              Icons.lock_rounded,
+                              color: Colors.white,
+                              size: 20,
+                            )
+                          : Transform.scale(
+                              scaleX: -1,
+                              child: const Icon(
+                                Icons.reply_rounded,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
                     ),
                   ),
-
-                  const SizedBox(width: 8),
-
-                  // Close button
+                  const SizedBox(width: 4),
                   GestureDetector(
                     onTap: _handleLeaveRoom,
                     child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(
-                        color: Colors.transparent,
-                      ),
+                      padding: const EdgeInsets.all(4),
                       child: const Icon(
                         Icons.close_rounded,
                         color: Colors.white,
-                        size: 22,
+                        size: 20,
                       ),
                     ),
                   ),
                 ],
               ),
+            ],
+          ),
 
-              const SizedBox(height: 8),
+          const SizedBox(height: 8),
 
-              // Viewer Count Badge
-              Builder(builder: (context) {
-                final firstOnlineMember = _currentRoom.participants.isNotEmpty
-                    ? _currentRoom.participants.first
-                    : null;
-                final hasOnlineMember = firstOnlineMember != null;
-
-                return Transform.translate(
-                  offset: const Offset(
-                      -3, 0), // Slight 3pt optical adjustment to the left
-                  child: GestureDetector(
-                    onTap: _showViewersList,
-                    child: Container(
-                      height: 34,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(17),
-                        border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.2)),
+          // ==========================================
+          // SERIAL 2 (Bottom Row): Revenue Badge <---> Online Users & Grab the Top
+          // ==========================================
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Left: Revenue / Ranking Badge
+              GestureDetector(
+                onTap: _showRankingList,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [
+                        Color(0xFF9C27B0),
+                        Color(0xFFBA68C8),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.emoji_events,
+                        color: Color(0xFFFFD700),
+                        size: 16,
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (hasOnlineMember)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 6.0),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                      color: Colors.white24, width: 1.5),
-                                ),
-                                child: CachedCircleAvatar(
-                                  imageUrl:
-                                      firstOnlineMember.userImageUrl ?? '',
-                                  radius: 10,
-                                ),
-                              ),
-                            )
-                          else
-                            const Padding(
-                              padding: EdgeInsets.only(top: 2.0, right: 6.0),
-                              child: Icon(
-                                Icons.remove_red_eye_rounded,
-                                color: Colors.white,
-                                size: 16,
+                      const SizedBox(width: 4),
+                      Text(
+                        _formatRevenue(_currentRoom.totalRevenue),
+                        style: const TextStyle(
+                          color: Color(0xFFFFE0B2),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
+                      const SizedBox(width: 3),
+                      const DynamicDiamondIcon(
+                        width: 12,
+                        height: 12,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Right: Online Users Badge + Grab the Top Pill (side-by-side)
+              Flexible(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    // Online Users Badge
+                    Builder(
+                      builder: (context) {
+                        final firstOnlineMember =
+                            _currentRoom.participants.isNotEmpty
+                                ? _currentRoom.participants.first
+                                : null;
+                        final hasOnlineMember = firstOnlineMember != null;
+
+                        return GestureDetector(
+                          onTap: _showViewersList,
+                          child: Container(
+                            height: 28,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                width: 1,
                               ),
                             ),
-                          Text(
-                            '${_currentRoom.participantCount}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (hasOnlineMember)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 4.0),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white24,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: CachedCircleAvatar(
+                                        imageUrl:
+                                            firstOnlineMember.userImageUrl ?? '',
+                                        radius: 8,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  const Padding(
+                                    padding: EdgeInsets.only(right: 4.0),
+                                    child: Icon(
+                                      Icons.remove_red_eye_rounded,
+                                      color: Colors.white,
+                                      size: 14,
+                                    ),
+                                  ),
+                                Text(
+                                  '${_currentRoom.participantCount}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'Inter',
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
+                        );
+                      },
+                    ),
+
+                    const SizedBox(width: 4),
+
+                    // Grab the Top Header Pill
+                    Flexible(
+                      child: TopExposureHeaderPill(
+                        currentRoomId: _currentRoom.id,
+                        audioRoomsBloc: widget.audioRoomsBloc,
+                        onGrabTheTopTap: () {
+                          final hostParticipant =
+                              _currentRoom.participants.firstWhere(
+                            (p) => p.userId == _currentRoom.creatorId,
+                            orElse: () => AudioRoomParticipant(
+                              userId: _currentRoom.creatorId,
+                              userName: _currentRoom.creatorName,
+                              userImageUrl: _currentRoom.creatorImageUrl,
+                              isHost: true,
+                              joinedAt: DateTime.now(),
+                            ),
+                          );
+                          _showGiftSelection(hostParticipant);
+                        },
                       ),
                     ),
-                  ),
-                );
-              }),
+                  ],
+                ),
+              ),
             ],
           ),
         ],
@@ -2724,7 +3747,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     if (_currentRoom.isLudoActive)
                       LudoGameWidget(
                         room: _currentRoom,
-                        isHost: _isCurrentUserHost,
+                        isHost: _isCurrentUserHostOrAdmin || (_currentParticipant?.seatNumber == 1),
+                        repository: AudioRoomsRepository(),
+                        currentUserId: _currentUser.userId,
+                      )
+                    else if (_currentRoom.isCarromActive)
+                      CarromGameWidget(
+                        room: _currentRoom,
+                        isHost: _isCurrentUserHostOrAdmin || (_currentParticipant?.seatNumber == 1),
                         repository: AudioRoomsRepository(),
                         currentUserId: _currentUser.userId,
                       )
@@ -2745,15 +3775,16 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     ),
 
                     if (_currentRoom.activeYoutubeVideoId == null &&
-                        !_currentRoom.isLudoActive)
+                        !_currentRoom.isLudoActive &&
+                        !_currentRoom.isCarromActive)
                       const SizedBox(height: 20),
 
                     // Participants grid (without chat)
                     Expanded(
                       child: _currentRoom.category == 'Live'
                           ? (_currentRoom.settings.isLiveMultipleMode
-                              ? _buildLiveMultipleModeGrid()
-                              : const SizedBox.expand())
+                                ? _buildLiveMultipleModeGrid()
+                                : const SizedBox.expand())
                           : _buildParticipantsGrid(),
                     ),
 
@@ -2764,9 +3795,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             ),
           ),
         ), // Closes Positioned.fill
-
         // Floating Music Player
-        if (_showMusicPlayer && _isCurrentUserHost) ...[
+        if (_showMusicPlayer && _isCurrentUserHostOrAdmin) ...[
           // ... music player code is separate ...
         ],
 
@@ -2779,8 +3809,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             builder: (ctx) {
               final bottomInset = MediaQuery.viewInsetsOf(ctx).bottom;
               return Padding(
-                padding:
-                    EdgeInsets.only(bottom: bottomInset > 0 ? bottomInset : 22),
+                padding: EdgeInsets.only(
+                  bottom: bottomInset > 0 ? bottomInset : 22,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -2792,12 +3823,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       isSpeakerOn: _isSpeakerOn,
                       isHost: _isCurrentUserHost,
                       isSpeaker: _isCurrentUserSpeaker,
-                      isSeated: _currentParticipant?.isSeated ?? false,
+                      isSeated: _isCurrentUserHost ||
+                          _isCurrentUserSpeaker ||
+                          (_currentParticipant?.isSeated ?? false) ||
+                          (_currentParticipant?.seatNumber != null),
                       onMuteToggle: _handleMuteToggle,
+                      onGrabTopSeat: _grabTopSeat,
                       onSpeakerToggle: _handleSpeakerToggle,
                       onLeave: _handleLeaveRoom,
-                      onRequestToSpeak:
-                          _isCurrentUserSpeaker ? null : _handleRequestToSpeak,
+                      onRequestToSpeak: _isCurrentUserSpeaker
+                          ? null
+                          : _handleRequestToSpeak,
                       chatMessages: _chatMessages,
                       participants: _currentRoom.participants,
                       totalSeats: _currentRoom.settings.roomMode.seatCount,
@@ -2812,13 +3848,20 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       selectedUserName: _currentRoom.creatorName, // Host name
                       selectedUserImageUrl:
                           _currentRoom.creatorImageUrl, // Host image
+                      creatorId: _currentRoom.creatorId,
+                      adminIds: _currentRoom.settings.adminIds,
                       onMessageTap: _handleMessageTap,
                       isLive: _currentRoom.category == 'Live',
-                      hasRequestedToJoin: _currentRoom.joinRequests
-                          .contains(_currentUser.userId),
+                      hasRequestedToJoin: _currentRoom.joinRequests.contains(
+                        _currentUser.userId,
+                      ),
                       joinRequestsCount: _currentRoom.joinRequests.length,
                       onLiveMicTapped: _showLiveMicOptionsBottomSheet,
                       onJoinRequestTapped: _handleRequestToSpeak,
+                      isGameActive: _currentRoom.isCarromActive ||
+                          _currentRoom.isLudoActive ||
+                          _currentRoom.activeYoutubeVideoId != null,
+                      isPKActive: _currentRoom.pkBattleState.isActive,
                     ),
                   ],
                 ),
@@ -2827,42 +3870,113 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           ),
         ),
 
-        // Room Event Portal Banners (Carousel) - MOVED HERE TO BE ON TOP OF ROOM CONTROLS
+        // Room Event Portal Banners (Carousel)
         Positioned(
           right: 12,
-          bottom: 100, // Above the gift box in RoomControls
-          child: Builder(builder: (ctx) {
-            return Padding(
-              padding:
-                  EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-              child: const RoomEventPortalWidget(),
-            );
-          }),
+          bottom: 100,
+          child: Builder(
+            builder: (ctx) {
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewInsetsOf(ctx).bottom,
+                ),
+                child: const RoomEventPortalWidget(),
+              );
+            },
+          ),
         ),
 
-        // Voting Overlay (Controller handles visibility based on state)
+        // Voting Overlay
         VotingWidget(
           room: _currentRoom,
           currentUserId: _currentUser.userId,
           isHost: _isCurrentUserHost,
         ),
 
+        // Floating Active Lucky Bag Overlay Widget
+        LuckyBagFloatingWidget(
+          roomId: _currentRoom.id,
+          currentUserId: _currentUser.userId,
+          currentUserName: _currentUser.fullname,
+          currentUserAvatar: _currentUser.photoUrl,
+        ),
+
+        // Lucky Gift Winner Banner & Coin Shower Particle Animation Overlay
+        if (_showCoinShower)
+          CoinShowerWidget(
+            onCompleted: () {
+              if (mounted) {
+                setState(() {
+                  _showCoinShower = false;
+                });
+              }
+            },
+          ),
+
+        // Center Floating Top Exposure Banner Overlay
+        Positioned(
+          top: MediaQuery.of(context).size.height * 0.28,
+          left: 0,
+          right: 0,
+          child: TopExposureCenterBanner(
+            currentRoomId: _currentRoom.id,
+            audioRoomsBloc: widget.audioRoomsBloc,
+          ),
+        ),
+
+        // Top Global Broadcast Banner for Lucky Bags across all rooms
+        Positioned(
+          top: 45,
+          left: 0,
+          right: 0,
+          child: LuckyBagGlobalBanner(
+            currentRoomId: _currentRoom.id,
+            audioRoomsBloc: widget.audioRoomsBloc,
+          ),
+        ),
+
+        if (_currentLuckyWin != null)
+          Positioned(
+            top: 50,
+            left: 0,
+            right: 0,
+            child: LuckyWinBanner(
+              senderName: _currentLuckyWin!['senderName'] ?? 'Lucky Winner',
+              senderAvatar: _currentLuckyWin!['senderAvatar'],
+              giftName: _currentLuckyWin!['giftName'] ?? 'Gift',
+              multiplier: _currentLuckyWin!['multiplier'] ?? 2,
+              wonDiamonds: _currentLuckyWin!['wonDiamonds'] ?? 0,
+              onDismiss: () {
+                if (mounted) {
+                  setState(() {
+                    _currentLuckyWin = null;
+                  });
+                }
+              },
+            ),
+          ),
+
         // Roulette Overlay
         RouletteWidget(
-          controller: Get.isRegistered<RouletteController>(
-                  tag: 'roulette_${widget.room.id}')
+          controller:
+              Get.isRegistered<RouletteController>(
+                tag: 'roulette_${widget.room.id}',
+              )
               ? Get.find<RouletteController>(tag: 'roulette_${widget.room.id}')
               : Get.put(
-                  RouletteController(widget.room.id,
-                      isHost: _isCurrentUserHost),
-                  tag: 'roulette_${widget.room.id}'),
+                  RouletteController(
+                    widget.room.id,
+                    isHost: _isCurrentUserHostOrAdmin,
+                  ),
+                  tag: 'roulette_${widget.room.id}',
+                ),
         ),
 
         // Floating Music Player
-        if (_showMusicPlayer || !_isCurrentUserHost)
+        if (_showMusicPlayer)
           FloatingMusicPlayer(
             roomId: widget.room.id,
-            isHost: _isCurrentUserHost,
+            isHost: _isCurrentUserHostOrAdmin,
             onClose: () {
               setState(() {
                 _showMusicPlayer = false;
@@ -2875,82 +3989,34 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           stream: _giftService.getGiftTransactions(widget.room.id),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              debugPrint(
-                  '❌ [AudioRoom] Gift transactions stream error: ${snapshot.error}');
+              debugPrint('âŒ [AudioRoom] Gift transactions stream error: ${snapshot.error}');
               return const SizedBox.shrink();
             }
 
-            if (!snapshot.hasData) {
-              debugPrint('🎁 [AudioRoom] StreamBuilder: No data yet');
-              return const SizedBox.shrink();
-            }
-
-            final allTransactions = snapshot.data!;
-            // Filter only recent gifts (last 60 seconds) to handle major clock skew
+            final allTransactions = snapshot.data ?? [];
             final now = DateTime.now();
             final recentTransactions = allTransactions.where((transaction) {
               final timeDiff = now.difference(transaction.timestamp).inSeconds;
-
-              // Debug logging for every transaction received to help diagnose clock skew
-              debugPrint('🎁 [GiftDebug] Room ID: ${widget.room.id}');
-              debugPrint(
-                  '🎁 [GiftDebug] Gift: ${transaction.giftName} from ${transaction.senderName}');
-              debugPrint(
-                  '🎁 [GiftDebug] TX Time: ${transaction.timestamp.toIso8601String()}');
-              debugPrint('🎁 [GiftDebug] Your Time: ${now.toIso8601String()}');
-              debugPrint(
-                  '🎁 [GiftDebug] timeDiff (Now - TX): $timeDiff seconds');
-
-              // Be extremely lenient: 60s in the past to 60s in the "future"
               return timeDiff.abs() <= 60;
             }).toList();
 
-            debugPrint(
-                '🎁 [AudioRoom] Filtered to ${recentTransactions.length} recent gift transactions');
-
-            if (recentTransactions.isEmpty) {
-              debugPrint(
-                  '🎁 [AudioRoom] StreamBuilder: No recent transactions to display');
-              return const SizedBox.shrink();
-            }
-
-            // Clean up truly old gifts only occasionally (older than 1 minute)
-            _cleanupExtremelyOldGifts(allTransactions);
-
-            // Show a simple debug indicator
-            return Stack(
-              children: [
-                // Debug indicator (remove this in production)
-                Positioned(
-                  top: 50,
-                  right: 20,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      'Recent Gifts: ${recentTransactions.length}',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                  ),
-                ),
-
-                Positioned.fill(
-                  child: GiftAnimationOverlay(
-                    transactions: recentTransactions,
-                    onAnimationComplete: () {
-                      debugPrint('🎁 [AudioRoom] Gift animation completed');
-                      // Auto-delete the displayed gifts
-                      _deleteDisplayedGifts(recentTransactions);
-                    },
-                    onGiftFlightTriggered: _triggerGiftFlightAnimation,
-                  ),
-                ),
-              ],
+            return Positioned.fill(
+              child: GiftAnimationOverlay(
+                transactions: recentTransactions,
+                onTransactionFinished: (completedTx) {
+                  debugPrint('ðŸŽ [AudioRoom] Gift animation completed for tx: ${completedTx.id}');
+                },
+                onGiftFlightTriggered: _triggerGiftFlightAnimation,
+              ),
             );
           },
+        ),
+
+        // Floating Gift Combo Button at bottom-right corner
+        Positioned(
+          right: 16,
+          bottom: 85,
+          child: const GiftComboButton(),
         ),
 
         // Entrance effect animation overlay
@@ -2959,12 +4025,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           builder: (context, snapshot) {
             if (snapshot.hasError) {
               debugPrint(
-                  '❌ [AudioRoom] Entrance effects stream error: ${snapshot.error}');
+                'âŒ [AudioRoom] Entrance effects stream error: ${snapshot.error}',
+              );
               return const SizedBox.shrink();
             }
 
             if (!snapshot.hasData) {
-              debugPrint('🎬 [AudioRoom] StreamBuilder: No entrance data yet');
+              debugPrint('ðŸŽ¬ [AudioRoom] StreamBuilder: No entrance data yet');
               return const SizedBox.shrink();
             }
 
@@ -2973,13 +4040,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             final now = DateTime.now();
             final recentEffects = allEffects.where((effect) {
               final timeDiff = now.difference(effect.timestamp).inSeconds;
-              debugPrint('🎬 [EntranceDebug] Effect: ${effect.userName}');
-              debugPrint('🎬 [EntranceDebug] Time diff: $timeDiff seconds');
+              debugPrint('ðŸŽ¬ [EntranceDebug] Effect: ${effect.userName}');
+              debugPrint('ðŸŽ¬ [EntranceDebug] Time diff: $timeDiff seconds');
               return timeDiff.abs() <= 30; // Increased from 10 to 30 seconds
             }).toList();
 
             debugPrint(
-                '🎬 [AudioRoom] Filtered to ${recentEffects.length} recent entrance effects');
+              'ðŸŽ¬ [AudioRoom] Filtered to ${recentEffects.length} recent entrance effects',
+            );
 
             if (recentEffects.isEmpty) {
               return const SizedBox.shrink();
@@ -2989,7 +4057,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               child: EntranceEffectOverlay(
                 effects: recentEffects,
                 onAnimationComplete: () {
-                  debugPrint('🎬 [AudioRoom] Entrance animation completed');
+                  debugPrint('ðŸŽ¬ [AudioRoom] Entrance animation completed');
                   // Auto-delete the displayed entrance effects
                   _deleteDisplayedEntranceEffects(recentEffects);
                 },
@@ -3006,76 +4074,78 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Build flying PNG gifts layer
   Widget _buildFlyingGiftsLayer() {
-    return Stack(
-      children: _flyingGifts.map((item) {
-        return FlyingGiftWidget(
-          key: ValueKey(item.id),
-          pngUrl: item.pngUrl,
-          startOffset: item.startOffset,
-          endOffset: item.endOffset,
-          onComplete: () {
-            if (mounted) {
-              setState(() {
-                _flyingGifts.removeWhere((g) => g.id == item.id);
-              });
-            }
-          },
+    return ValueListenableBuilder<List<FlyingGiftItem>>(
+      valueListenable: _flyingGiftsNotifier,
+      builder: (context, flyingGifts, _) {
+        return Stack(
+          children: flyingGifts.map((item) {
+            return FlyingGiftWidget(
+              key: ValueKey(item.id),
+              pngUrl: item.pngUrl,
+              startOffset: item.startOffset,
+              endOffset: item.endOffset,
+              onComplete: () {
+                _flyingGiftsNotifier.value = _flyingGiftsNotifier.value
+                    .where((g) => g.id != item.id)
+                    .toList();
+              },
+            );
+          }).toList(),
         );
-      }).toList(),
+      },
     );
   }
 
   /// Trigger the flight path animation for a PNG gift thumbnail
   void _triggerGiftFlightAnimation(
-      GiftTransaction transaction, List<String> receiverIds) {
+    GiftTransaction transaction,
+    List<String> receiverIds,
+  ) {
     if (transaction.giftPngUrl.isEmpty) return;
 
     final screenSize = MediaQuery.of(context).size;
     Offset startOffset = Offset(screenSize.width / 2, screenSize.height - 100);
 
-    // Find sender's seat to start animation from their avatar
-    final senderSeatNumber = _findUserSeatNumber(transaction.senderId);
-    if (senderSeatNumber != null && _seatKeys.containsKey(senderSeatNumber)) {
-      final key = _seatKeys[senderSeatNumber];
-      final renderBox = key?.currentContext?.findRenderObject() as RenderBox?;
-      if (renderBox != null) {
-        final seatPosition = renderBox.localToGlobal(Offset.zero);
-        final seatSize = renderBox.size;
-        startOffset = Offset(
-          seatPosition.dx + seatSize.width / 2,
-          seatPosition.dy + seatSize.height / 2,
-        );
+    try {
+      final senderSeatNumber = _findUserSeatNumber(transaction.senderId);
+      if (senderSeatNumber != null && _seatKeys.containsKey(senderSeatNumber)) {
+        final key = _seatKeys[senderSeatNumber];
+        final renderBox = key?.currentContext?.findRenderObject() as RenderBox?;
+        if (renderBox != null && renderBox.hasSize && renderBox.attached) {
+          final seatPosition = renderBox.localToGlobal(Offset.zero);
+          final seatSize = renderBox.size;
+          startOffset = Offset(
+            seatPosition.dx + seatSize.width / 2,
+            seatPosition.dy + seatSize.height / 2,
+          );
+        }
       }
-    }
+    } catch (_) {}
 
     final List<FlyingGiftItem> newFlights = [];
 
     for (final receiverId in receiverIds) {
-      // Find seat number of this receiver
       final seatNumber = _findUserSeatNumber(receiverId);
       late Offset endOffset;
 
-      if (seatNumber != null && _seatKeys.containsKey(seatNumber)) {
-        final key = _seatKeys[seatNumber];
-        final renderBox = key?.currentContext?.findRenderObject() as RenderBox?;
-        if (renderBox != null) {
-          final seatPosition = renderBox.localToGlobal(Offset.zero);
-          final seatSize = renderBox.size;
-          // Target center of the seat profile avatar dynamically in real-time
-          endOffset = Offset(
-            seatPosition.dx + seatSize.width / 2,
-            seatPosition.dy + seatSize.height / 2,
-          );
-        } else {
-          endOffset = Offset(screenSize.width / 2, screenSize.height * 0.7);
-        }
-      } else {
-        // Fallback: If user is not seated, default to seat 1 (usually host/admin)
-        if (_seatKeys.containsKey(1)) {
+      try {
+        if (seatNumber != null && _seatKeys.containsKey(seatNumber)) {
+          final key = _seatKeys[seatNumber];
+          final renderBox = key?.currentContext?.findRenderObject() as RenderBox?;
+          if (renderBox != null && renderBox.hasSize && renderBox.attached) {
+            final seatPosition = renderBox.localToGlobal(Offset.zero);
+            final seatSize = renderBox.size;
+            endOffset = Offset(
+              seatPosition.dx + seatSize.width / 2,
+              seatPosition.dy + seatSize.height / 2,
+            );
+          } else {
+            endOffset = Offset(screenSize.width / 2, screenSize.height * 0.7);
+          }
+        } else if (_seatKeys.containsKey(1)) {
           final key = _seatKeys[1];
-          final renderBox =
-              key?.currentContext?.findRenderObject() as RenderBox?;
-          if (renderBox != null) {
+          final renderBox = key?.currentContext?.findRenderObject() as RenderBox?;
+          if (renderBox != null && renderBox.hasSize && renderBox.attached) {
             final seatPosition = renderBox.localToGlobal(Offset.zero);
             final seatSize = renderBox.size;
             endOffset = Offset(
@@ -3088,6 +4158,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         } else {
           endOffset = Offset(screenSize.width / 2, screenSize.height * 0.2);
         }
+      } catch (_) {
+        endOffset = Offset(screenSize.width / 2, screenSize.height * 0.5);
       }
 
       newFlights.add(
@@ -3100,10 +4172,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       );
     }
 
-    if (newFlights.isNotEmpty && mounted) {
-      setState(() {
-        _flyingGifts.addAll(newFlights);
-      });
+    if (newFlights.isNotEmpty) {
+      _flyingGiftsNotifier.value = [
+        ..._flyingGiftsNotifier.value,
+        ...newFlights,
+      ];
     }
   }
 
@@ -3184,14 +4257,18 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 SizedBox.expand(
                   child: AgoraVideoView(
                     controller: _getVideoController(
-                        _generateUid(occupant!.userId), AgoraService().engine!),
+                      _generateUid(occupant!.userId),
+                      AgoraService().engine!,
+                    ),
                   ),
                 )
               else
                 const SizedBox.expand(
                   child: Center(
                     child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2),
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
                   ),
                 ),
 
@@ -3199,8 +4276,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               Positioned(
                 bottom: 2,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(4),
@@ -3226,7 +4305,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       return const SizedBox.shrink();
     }
     if (_currentRoom.activeYoutubeVideoId != null ||
-        _currentRoom.isLudoActive) {
+        _currentRoom.isLudoActive ||
+        _currentRoom.isCarromActive) {
       return _buildYoutubeSeatsLayout();
     }
 
@@ -3257,7 +4337,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           final isAdmin = _isSeatOccupiedByHost(currentSeat);
 
           return SizedBox(
-            width: MediaQuery.of(context).size.width /
+            width:
+                MediaQuery.of(context).size.width /
                 10, // Force 10 items per screen width
             child: OverflowBox(
               maxWidth: double.infinity,
@@ -3281,147 +4362,205 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 0),
-      child: Column(
-        children: _buildDynamicSeatRows(seatCount),
-      ),
+      child: Column(children: _buildDynamicSeatRows(seatCount)),
     );
+  }
+
+  String? _getIdFromRef(dynamic ref) {
+    if (ref == null) return null;
+    if (ref is DocumentReference) {
+      return ref.id;
+    }
+    final refStr = ref.toString();
+    if (refStr.contains('/')) {
+      return refStr.split('/').last;
+    }
+    return refStr;
+  }
+
+  Map<String, dynamic>? _getRelationshipBetweenSeats(int seatA, int seatB) {
+    AudioRoomParticipant? occupantA;
+    AudioRoomParticipant? occupantB;
+    for (var p in _currentRoom.participants) {
+      if (p.seatNumber == seatA) occupantA = p;
+      if (p.seatNumber == seatB) occupantB = p;
+    }
+    if (occupantA == null || occupantB == null) return null;
+    final uidA = occupantA.userId;
+    final uidB = occupantB.userId;
+    for (var rel in _activeRoomRelationships) {
+      final r1Id = _getIdFromRef(rel['user1Ref']);
+      final r2Id = _getIdFromRef(rel['user2Ref']);
+      if (r1Id == null || r2Id == null) continue;
+
+      if ((r1Id == uidA && r2Id == uidB) || (r1Id == uidB && r2Id == uidA)) {
+        return rel;
+      }
+    }
+    return null;
+  }
+
+  Widget _buildSeatConnectorBadge(Map<String, dynamic> rel) {
+    final type = rel['relationshipType']?.toString().toLowerCase() ?? 'friend';
+    final rawLevel = rel['currentLevel'];
+    int level = 1;
+    if (rawLevel is int) {
+      level = rawLevel;
+    } else if (rawLevel is String) {
+      level = int.tryParse(rawLevel) ?? 1;
+    } else if (rawLevel is num) {
+      level = rawLevel.toInt();
+    }
+    final isCouple = type == 'couple';
+
+    final String? customImageUrl = isCouple
+        ? _coupleLevelImages[level]
+        : _friendshipLevelImages[level];
+
+    if (customImageUrl != null && customImageUrl.isNotEmpty) {
+      if (customImageUrl.toLowerCase().contains('.svga')) {
+        return SizedBox(
+          width: 32,
+          height: 32,
+          child: SVGAEasyPlayer(resUrl: customImageUrl),
+        );
+      }
+
+      return CachedNetworkImage(
+        imageUrl: customImageUrl,
+        width: 32,
+        height: 32,
+        fit: BoxFit.contain,
+        placeholder: (context, url) => const SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.2,
+            color: Colors.purpleAccent,
+          ),
+        ),
+        errorWidget: (context, url, error) => const SizedBox.shrink(),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildRowWithConnectors(
+    List<int> seatNumbers, {
+    MainAxisAlignment alignment = MainAxisAlignment.spaceEvenly,
+  }) {
+    List<Widget> children = [];
+    for (int i = 0; i < seatNumbers.length; i++) {
+      final seatNumber = seatNumbers[i];
+      final isAdmin = _isSeatOccupiedByHost(seatNumber);
+
+      Map<String, dynamic>? rightRelationship;
+      if (i < seatNumbers.length - 1) {
+        final nextSeat = seatNumbers[i + 1];
+        rightRelationship = _getRelationshipBetweenSeats(seatNumber, nextSeat);
+      }
+
+      children.add(
+        Flexible(
+          child: _buildNumberedSeat(
+            seatNumber,
+            isAdmin: isAdmin,
+            rightRelationship: rightRelationship,
+          ),
+        ),
+      );
+    }
+    return Row(mainAxisAlignment: alignment, children: children);
   }
 
   /// Build dynamic seat rows based on room mode
   List<Widget> _buildDynamicSeatRows(int totalSeats) {
     final roomMode = _currentRoom.settings.roomMode;
-
-    // Special layouts for specific modes
-    // Removed modes as per client request: CP, KTV, Immersive
-    // if (roomMode == RoomMode.cp) {
-    //   return _buildCoupleLayout();
-    // } else if (roomMode == RoomMode.ktv) {
-    //   return _buildKTVLayout();
-    // } else
     if (roomMode == RoomMode.lite) {
       return _buildLiteLayout();
     } else if (roomMode == RoomMode.party) {
       return _buildPartyLayout();
     }
 
-    // Default layout for other modes (multiMic uses default 5-per-row)
     List<Widget> rows = [];
     int currentSeat = 1;
     const int seatsPerRow = 5;
 
     while (currentSeat <= totalSeats) {
-      List<Widget> seatsInRow = [];
-
-      // Build seats for this row (up to 5 seats per row)
+      List<int> seatsInRow = [];
       for (int i = 0; i < seatsPerRow && currentSeat <= totalSeats; i++) {
-        // Check if current seat is occupied by the host/admin
-        final isAdmin = _isSeatOccupiedByHost(currentSeat);
-        seatsInRow.add(
-            Flexible(child: _buildNumberedSeat(currentSeat, isAdmin: isAdmin)));
+        seatsInRow.add(currentSeat);
         currentSeat++;
       }
-
-      // Add the row with proper spacing
-      rows.add(
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: seatsInRow,
-        ),
-      );
-
-      // Add spacing between rows (except for the last row)
+      rows.add(_buildRowWithConnectors(seatsInRow));
       if (currentSeat <= totalSeats) {
         rows.add(const SizedBox(height: 20));
       }
     }
-
     return rows;
   }
 
   /// Build Lite layout (9 seats - 1 host top centered, 4+4 grid below)
   List<Widget> _buildLiteLayout() {
     return [
-      // Row 1 - 1 host seat (centered on top)
-      Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(child: _buildNumberedSeat(1, isAdmin: true)),
-        ],
-      ),
-
+      _buildRowWithConnectors([1], alignment: MainAxisAlignment.center),
       const SizedBox(height: 16),
-
-      // Row 2 - 4 seats
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Flexible(child: _buildNumberedSeat(2)),
-          Flexible(child: _buildNumberedSeat(3)),
-          Flexible(child: _buildNumberedSeat(4)),
-          Flexible(child: _buildNumberedSeat(5)),
-        ],
-      ),
-
+      _buildRowWithConnectors([2, 3, 4, 5]),
       const SizedBox(height: 16),
-
-      // Row 3 - 4 seats
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Flexible(child: _buildNumberedSeat(6)),
-          Flexible(child: _buildNumberedSeat(7)),
-          Flexible(child: _buildNumberedSeat(8)),
-          Flexible(child: _buildNumberedSeat(9)),
-        ],
-      ),
+      _buildRowWithConnectors([6, 7, 8, 9]),
     ];
   }
 
   /// Build Party layout (12 seats - 2 at top, then rest below)
   List<Widget> _buildPartyLayout() {
     return [
-      // Top row - 2 seats (centered)
-      Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(child: _buildNumberedSeat(1, isAdmin: true)), // Admin seat
-          const SizedBox(width: 20),
-          Flexible(child: _buildNumberedSeat(2)),
-        ],
-      ),
-
+      _buildRowWithConnectors([1, 2], alignment: MainAxisAlignment.center),
       const SizedBox(height: 20),
-
-      // Second row - 5 seats
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Flexible(child: _buildNumberedSeat(3)),
-          Flexible(child: _buildNumberedSeat(4)),
-          Flexible(child: _buildNumberedSeat(5)),
-          Flexible(child: _buildNumberedSeat(6)),
-          Flexible(child: _buildNumberedSeat(7)),
-        ],
-      ),
-
+      _buildRowWithConnectors([3, 4, 5, 6, 7]),
       const SizedBox(height: 20),
-
-      // Third row - 5 seats
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Flexible(child: _buildNumberedSeat(8)),
-          Flexible(child: _buildNumberedSeat(9)),
-          Flexible(child: _buildNumberedSeat(10)),
-          Flexible(child: _buildNumberedSeat(11)),
-          Flexible(child: _buildNumberedSeat(12)),
-        ],
-      ),
+      _buildRowWithConnectors([8, 9, 10, 11, 12]),
     ];
   }
 
+  /// Fallback seat decoration widget when custom PNG asset is missing
+  Widget _buildSeatFallbackWidget(double dimension, SeatColorMode mode) {
+    Color borderColor;
+    Color bgColor;
+    if (mode == SeatColorMode.purple || mode == SeatColorMode.dashedPink) {
+      borderColor = Colors.purpleAccent;
+      bgColor = Colors.purple.withValues(alpha: 0.1);
+    } else if (mode == SeatColorMode.golden) {
+      borderColor = Colors.amber;
+      bgColor = Colors.amber.withValues(alpha: 0.1);
+    } else if (mode == SeatColorMode.dashedOrange) {
+      borderColor = Colors.orangeAccent;
+      bgColor = Colors.orange.withValues(alpha: 0.1);
+    } else {
+      borderColor = Colors.blueAccent;
+      bgColor = Colors.blue.withValues(alpha: 0.1);
+    }
+
+    return Container(
+      width: dimension,
+      height: dimension,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: bgColor,
+        border: Border.all(
+          color: borderColor.withValues(alpha: 0.5),
+          width: 1.5,
+        ),
+      ),
+    );
+  }
+
   /// Build individual numbered seat
-  Widget _buildNumberedSeat(int seatNumber, {bool isAdmin = false}) {
+  Widget _buildNumberedSeat(
+    int seatNumber, {
+    bool isAdmin = false,
+    Map<String, dynamic>? rightRelationship,
+  }) {
     // Check if this seat is occupied
     AudioRoomParticipant? occupant;
     bool isOccupied = false;
@@ -3437,18 +4576,34 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Check if this seat is locked
     final isLocked = _currentRoom.isSeatLocked(seatNumber);
 
-    final bool hasCustomSeatDecor = _currentRoom.settings.seatDecorUrl != null;
+    final String? seatSpecificDecorUrl = (seatNumber == 1 &&
+            _currentRoom.settings.hostSeatDecorUrl != null &&
+            _currentRoom.settings.hostSeatDecorUrl!.trim().isNotEmpty)
+        ? _currentRoom.settings.hostSeatDecorUrl
+        : (isLocked &&
+                !isOccupied &&
+                _currentRoom.settings.lockedSeatDecorUrl != null &&
+                _currentRoom.settings.lockedSeatDecorUrl!.trim().isNotEmpty)
+            ? _currentRoom.settings.lockedSeatDecorUrl
+            : (_currentRoom.settings.seatDecorUrl != null &&
+                    _currentRoom.settings.seatDecorUrl!.trim().isNotEmpty)
+                ? _currentRoom.settings.seatDecorUrl
+                : (seatNumber == 1 &&
+                        _currentRoom.settings.seatDecorUrl != null &&
+                        _currentRoom.settings.seatDecorUrl!.trim().isNotEmpty)
+                    ? _currentRoom.settings.seatDecorUrl
+                    : null;
+
+    final bool hasCustomSeatDecor = seatSpecificDecorUrl != null &&
+        seatSpecificDecorUrl.trim().isNotEmpty;
+    final bool isGoldenMode =
+        _currentRoom.settings.seatColorMode == SeatColorMode.golden;
+    final bool isPurpleMode =
+        _currentRoom.settings.seatColorMode == SeatColorMode.purple;
     final bool isDashedPink =
         _currentRoom.settings.seatColorMode == SeatColorMode.dashedPink;
     final bool isDashedOrange =
         _currentRoom.settings.seatColorMode == SeatColorMode.dashedOrange;
-    final bool useSeatModePNG = hasCustomSeatDecor ||
-        (_currentRoom.settings.seatColorMode == SeatColorMode.purple ||
-            _currentRoom.settings.seatColorMode == SeatColorMode.golden);
-    final String seatModeAsset =
-        _currentRoom.settings.seatColorMode == SeatColorMode.purple
-            ? 'assets/images/seat_mode_pink.png'
-            : 'assets/images/seat_mode_blue.png';
 
     // Find participant by seat number
     try {
@@ -3464,15 +4619,22 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     const double size = 48.0;
     final seatKey = _seatKeys.putIfAbsent(seatNumber, () => GlobalKey());
 
-    return GestureDetector(
-      key: seatKey,
-      onTap: () => _handleSeatTap(seatNumber, occupant),
-      onLongPress: () => _handleSeatLongPress(seatNumber, occupant),
-      child: SizedBox(
-        width: size + 30,
-        child: Column(
+    final bool isOccupantMuted = (occupant == null)
+        ? false
+        : (occupant.userId == _currentUser.userId
+            ? _isCurrentUserMuted
+            : (occupant.isMutedByAdmin || occupant.isMuted));
+
+    return RepaintBoundary(
+      child: GestureDetector(
+        key: seatKey,
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _handleSeatTap(seatNumber, occupant),
+        onLongPress: () => _handleSeatLongPress(seatNumber, occupant),
+        child: SizedBox(
+          width: size + 30,
+          child: Column(
           children: [
-            // Seat circle
             // Seat circle
             SizedBox(
               width: size + 8,
@@ -3482,40 +4644,34 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 clipBehavior: Clip.none,
                 children: [
                   // 1. Background Seat Decor (shown for both empty and occupied seats)
-                  if (useSeatModePNG)
-                    if (hasCustomSeatDecor)
-                      CachedNetworkImage(
-                        imageUrl: (isLocked &&
-                                !isOccupied &&
-                                _currentRoom.settings.lockedSeatDecorUrl !=
-                                    null)
-                            ? _currentRoom.settings.lockedSeatDecorUrl!
-                            : _currentRoom.settings.seatDecorUrl!,
-                        width: size + 8,
-                        height: size + 8,
-                        fit: BoxFit.contain,
-                        placeholder: (context, url) => Image.asset(
-                          seatModeAsset,
-                          width: size + 8,
-                          height: size + 8,
-                          fit: BoxFit.contain,
-                        ),
-                        errorWidget: (context, url, error) => Image.asset(
-                          seatModeAsset,
-                          width: size + 8,
-                          height: size + 8,
-                          fit: BoxFit.contain,
-                        ),
-                      )
-                    else
-                      Image.asset(
-                        seatModeAsset,
-                        width: size + 8,
-                        height: size + 8,
-                        fit: BoxFit.contain,
-                      )
+                  if (hasCustomSeatDecor)
+                    CachedNetworkImage(
+                      imageUrl: seatSpecificDecorUrl,
+                      width: size + 8,
+                      height: size + 8,
+                      fit: BoxFit.contain,
+                      placeholder: (context, url) => _buildSeatFallbackWidget(
+                        size + 8,
+                        _currentRoom.settings.seatColorMode,
+                      ),
+                      errorWidget: (context, url, error) =>
+                          _buildSeatFallbackWidget(
+                        size + 8,
+                        _currentRoom.settings.seatColorMode,
+                      ),
+                    )
                   else if (!isOccupied)
-                    if (isDashedPink || isDashedOrange)
+                    if (isPurpleMode)
+                      NeonPurpleGlassOrbWidget(
+                        size: size + 6,
+                        isLocked: isLocked,
+                      )
+                    else if (isGoldenMode)
+                      GoldenGlassOrbWidget(
+                        size: size + 6,
+                        isLocked: isLocked,
+                      )
+                    else if (isDashedPink || isDashedOrange)
                       Container(
                         width: size,
                         height: size,
@@ -3531,16 +4687,16 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       )
                     else
                       Container(
-                        width: size,
-                        height: size,
+                        width: size + 4,
+                        height: size + 4,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: Colors.white.withValues(alpha: 0.1),
+                          color: Colors.white.withValues(alpha: 0.16),
                           border: Border.all(
                             color: isLocked
-                                ? Colors.orange.withValues(alpha: 0.8)
-                                : Colors.white.withValues(alpha: 0.3),
-                            width: 2,
+                                ? Colors.white.withValues(alpha: 0.45)
+                                : Colors.white.withValues(alpha: 0.35),
+                            width: 1.5,
                           ),
                         ),
                       ),
@@ -3554,10 +4710,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         clipBehavior: Clip.none,
                         children: [
                           SpeakingRippleAnimation(
-                            isSpeaking: occupant.isSpeaker && !occupant.isMuted,
+                            key: ValueKey('speaking_ripple_${occupant.userId}_$seatNumber'),
+                            isSpeaking: !isOccupantMuted,
                             volumeNotifier: _getVolumeNotifier(occupant.userId),
                             minRadius: occupant.frameId != null ? 38 : 25,
-                            rippleColor: Colors.white.withValues(alpha: 0.5),
+                            rippleColor: const Color(0xFF00FF7F).withValues(alpha: 0.8),
                             userId: occupant.userId,
                             child: Builder(
                               builder: (context) {
@@ -3574,27 +4731,39 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               },
                             ),
                           ),
-                          if (occupant.isMuted)
-                            Positioned(
-                              bottom: -4,
-                              right: 0,
-                              child: Container(
-                                width: 12,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                  color:
-                                      const Color.fromARGB(200, 223, 10, 235),
-                                  shape: BoxShape.circle,
-                                  border:
-                                      Border.all(color: Colors.white, width: 1),
+                          ValueListenableBuilder<double>(
+                            valueListenable: _getVolumeNotifier(occupant.userId),
+                            builder: (context, currentVol, _) {
+                              final bool showMuted = isOccupantMuted && currentVol <= 0.02;
+                              if (!showMuted) return const SizedBox.shrink();
+                              return Positioned(
+                                bottom: -4,
+                                right: 0,
+                                child: Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: const Color.fromARGB(
+                                      200,
+                                      223,
+                                      10,
+                                      235,
+                                    ),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.mic_off,
+                                    color: Colors.white,
+                                    size: 7,
+                                  ),
                                 ),
-                                child: const Icon(
-                                  Icons.mic_off,
-                                  color: Colors.white,
-                                  size: 7,
-                                ),
-                              ),
-                            ),
+                              );
+                            },
+                          ),
                           if (occupant.activeEmojiUrl != null)
                             Positioned.fill(
                               child: Align(
@@ -3607,15 +4776,23 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   builder: (context, value, child) {
                                     return Transform.scale(
                                       scale: value * 1.8,
-                                      child: occupant!.activeEmojiUrl!
-                                              .startsWith('local_dice:')
+                                      child: (occupant!.activeEmojiUrl!.startsWith('local_dice:') || occupant.activeEmojiUrl == 'local_dice_action')
                                           ? SpinningDiceWidget(
-                                              targetNumber: int.parse(occupant
-                                                  .activeEmojiUrl!
-                                                  .split(':')[1]),
+                                              targetNumber: occupant.activeEmojiUrl!.contains(':')
+                                                  ? (int.tryParse(occupant.activeEmojiUrl!.split(':')[1]) ?? 6)
+                                                  : 6,
                                               size: size * 0.8,
+                                              diceStyle: 'classic',
                                             )
-                                          : CachedNetworkImage(
+                                          : (occupant.activeEmojiUrl!.startsWith('local_blue_dice:') || occupant.activeEmojiUrl == 'local_blue_dice_action')
+                                              ? SpinningDiceWidget(
+                                                  targetNumber: occupant.activeEmojiUrl!.contains(':')
+                                                      ? (int.tryParse(occupant.activeEmojiUrl!.split(':')[1]) ?? 6)
+                                                      : 6,
+                                                  size: size * 0.8,
+                                                  diceStyle: 'blue',
+                                                )
+                                              : CachedNetworkImage(
                                               imageUrl:
                                                   occupant.activeEmojiUrl!,
                                               width: size * 0.8,
@@ -3625,10 +4802,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                                   const SizedBox(),
                                               errorWidget:
                                                   (context, url, error) {
-                                                return const Icon(Icons.image,
-                                                    color: Colors.amber,
-                                                    size: 24);
-                                              },
+                                                    return const Icon(
+                                                      Icons.image,
+                                                      color: Colors.amber,
+                                                      size: 24,
+                                                    );
+                                                  },
                                             ),
                                     );
                                   },
@@ -3638,56 +4817,56 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         ],
                       ),
                     )
-                  else
-                  // Empty seat foreground
-                  if (!hasCustomSeatDecor)
-                    (isDashedPink || isDashedOrange) && !isOccupied
-                        ? (isLocked
-                            ? Icon(
-                                Icons.lock,
-                                color:
-                                    isDashedPink ? Colors.pink : Colors.orange,
-                                size: 20,
-                              )
-                            : (isDashedPink
-                                ? const Icon(
-                                    Icons.music_note,
-                                    color: Colors.pink,
-                                    size: 28,
-                                  )
-                                : Image.asset(
-                                    'assets/icons/sofa_ic.png',
-                                    width: 28,
-                                    height: 28,
-                                    color: Colors.orange,
-                                  )))
-                        : (isLocked
-                            ? Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: Colors.orange.withValues(alpha: 0.2),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.orange.withValues(alpha: 0.6),
-                                    width: 1.5,
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.lock,
-                                  color: Colors.orange,
-                                  size: 24,
-                                ),
-                              )
-                            : Image.asset(
-                                'assets/icons/sofa_ic.png',
-                                width: 36,
-                                height: 36,
-                                color: Colors.white.withValues(alpha: 0.6),
-                              ))
+                  else if (!isOccupied && !hasCustomSeatDecor)
+                    if (isPurpleMode)
+                      (isLocked
+                          ? const GoldenLockIcon(key: ValueKey('lock_purple'), width: 26, height: 29, isNeonPurple: true)
+                          : (seatNumber == 1
+                              ? const GoldenHomeIcon(key: ValueKey('home_purple'), width: 28, height: 28, isNeonPurple: true)
+                              : const GoldenSofaIcon(key: ValueKey('sofa_purple'), width: 30, height: 27, isNeonPurple: true)))
+                    else if (isGoldenMode)
+                      (isLocked
+                          ? const GoldenLockIcon(key: ValueKey('lock_golden'), width: 26, height: 29)
+                          : (seatNumber == 1
+                              ? const GoldenHomeIcon(key: ValueKey('home_golden'), width: 28, height: 28)
+                              : const GoldenSofaIcon(key: ValueKey('sofa_golden'), width: 30, height: 27)))
+                    else if (isDashedPink)
+                      (isLocked
+                          ? const Icon(Icons.lock, color: Colors.pink, size: 20)
+                          : const Icon(Icons.music_note, color: Colors.pink, size: 28))
+                    else if (isDashedOrange)
+                      (isLocked
+                          ? const Icon(Icons.lock, color: Colors.orange, size: 20)
+                          : Image.asset(
+                              'assets/icons/sofa_ic.webp',
+                              width: 28,
+                              height: 28,
+                              color: Colors.orange,
+                            ))
+                    else
+                      // Classic frosted mode
+                      (isLocked
+                          ? Icon(
+                              Icons.lock_rounded,
+                              color: Colors.white.withValues(alpha: 0.85),
+                              size: 26,
+                            )
+                          : (seatNumber == 1
+                              ? Icon(
+                                  Icons.home_rounded,
+                                  color: Colors.white.withValues(alpha: 0.9),
+                                  size: 28,
+                                )
+                              : Icon(
+                                  Icons.mic_rounded,
+                                  color: Colors.white.withValues(alpha: 0.75),
+                                  size: 26,
+                                )))
                   else if (isLocked &&
-                      (!hasCustomSeatDecor ||
-                          _currentRoom.settings.lockedSeatDecorUrl == null))
+                      hasCustomSeatDecor &&
+                      (_currentRoom.settings.lockedSeatDecorUrl == null ||
+                          _currentRoom.settings.lockedSeatDecorUrl!.trim().isEmpty ||
+                          _currentRoom.settings.lockedSeatDecorUrl == _currentRoom.settings.seatDecorUrl))
                     Container(
                       width: size + 8,
                       height: size + 8,
@@ -3695,11 +4874,16 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         shape: BoxShape.circle,
                         color: Colors.black.withValues(alpha: 0.4),
                       ),
-                      child: const Icon(
-                        Icons.lock,
-                        color: Colors.orange,
+                      child: Icon(
+                        Icons.lock_rounded,
+                        color: Colors.white.withValues(alpha: 0.85),
                         size: 20,
                       ),
+                    ),
+                  if (rightRelationship != null)
+                    Positioned(
+                      right: -27,
+                      child: _buildSeatConnectorBadge(rightRelationship),
                     ),
                 ],
               ),
@@ -3725,16 +4909,29 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               )
             else
               Text(
-                seatNumber.toString(),
+                (isGoldenMode || isPurpleMode)
+                    ? (seatNumber == 1 ? 'Host' : 'No.$seatNumber')
+                    : ((_currentRoom.settings.roomMode == RoomMode.lite ||
+                            _currentRoom.settings.roomMode.seatCount == 9)
+                        ? (seatNumber == 1 ? 'Owner' : 'No.${seatNumber - 1}')
+                        : (seatNumber == 1 ? 'Host' : 'No.$seatNumber')),
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
+                  color: Colors.white,
                   fontSize: 12,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
+                  shadows: const [
+                    Shadow(
+                      color: Colors.black87,
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
                 ),
               ),
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -3743,16 +4940,15 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Handle seat tap
   void _handleSeatTap(int seatNumber, AudioRoomParticipant? occupant) {
     try {
-      // Check if seat is locked (allow host to bypass)
-      if (_currentRoom.isSeatLocked(seatNumber) && !_isCurrentUserHost) {
+      // Check if seat is locked (allow host/admin to bypass)
+      if (_currentRoom.isSeatLocked(seatNumber) && !_isCurrentUserHostOrAdmin) {
         _showLockedSeatMessage(seatNumber);
         return;
       }
 
       if (occupant == null) {
         // Tapping empty seat
-        if (_isCurrentUserHost ||
-            _currentRoom.settings.adminIds.contains(_currentUser.userId)) {
+        if (_isCurrentUserHostOrAdmin) {
           // Admin/Owner tapping empty seat - show options (Take Seat or Invite)
           _showEmptySeatAdminOptions(seatNumber);
         } else {
@@ -3768,7 +4964,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         _showParticipantBottomSheet(occupant);
       }
     } catch (e) {
-      debugPrint('🪑 Error handling seat tap: $e');
+      debugPrint('ðŸª‘ Error handling seat tap: $e');
     }
   }
 
@@ -3823,8 +5019,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               value: _currentRoom.name,
             ),
             Obx(() {
-              final displayId =
-                  Get.find<PremiumRoomService>().getDisplayId(_currentRoom.id);
+              final displayId = PremiumRoomService.instance.getDisplayId(
+                _currentRoom.id,
+              );
               return _buildDetailItem(
                 icon: Icons.fingerprint,
                 label: 'Room ID',
@@ -3880,9 +5077,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text('Close',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -3942,7 +5140,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           Clipboard.setData(ClipboardData(text: value));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                                content: Text('ID copied to clipboard')),
+                              content: Text('ID copied to clipboard'),
+                            ),
                           );
                         },
                         child: const Icon(
@@ -3986,8 +5185,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   for (final doc in giftSnapshot.data!.docs) {
                     try {
                       final data = doc.data() as Map<String, dynamic>;
-                      final tx =
-                          GiftTransaction.fromJson({...data, 'id': doc.id});
+                      final tx = GiftTransaction.fromJson({
+                        ...data,
+                        'id': doc.id,
+                      });
                       allTransactions.add(tx);
 
                       userProfileCache[tx.senderId] = {
@@ -4033,8 +5234,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
                 // 1. ONLINE RANK (Online users ranked by 24h contribution)
                 final List<Map<String, dynamic>> onlineRankList = [];
-                final List<AudioRoomParticipant> onlineUsers =
-                    List.from(_currentRoom.participants);
+                final List<AudioRoomParticipant> onlineUsers = List.from(
+                  _currentRoom.participants,
+                );
 
                 onlineUsers.sort((a, b) {
                   final txA = transactionsBySender[a.userId] ?? [];
@@ -4068,25 +5270,33 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
                 // 2. WEEKLY RANK (All contributors ranked by weekly contribution > 0)
                 final List<Map<String, dynamic>> weeklyRankList = [];
-                final List<String> weeklyContributors =
-                    transactionsBySender.keys.where((userId) {
-                  final txs = transactionsBySender[userId] ?? [];
-                  return sumCredits(txs, last7days) > 0;
-                }).toList();
+                final List<String> weeklyContributors = transactionsBySender
+                    .keys
+                    .where((userId) {
+                      final txs = transactionsBySender[userId] ?? [];
+                      return sumCredits(txs, last7days) > 0;
+                    })
+                    .toList();
 
                 weeklyContributors.sort((a, b) {
-                  final conA =
-                      sumCredits(transactionsBySender[a] ?? [], last7days);
-                  final conB =
-                      sumCredits(transactionsBySender[b] ?? [], last7days);
+                  final conA = sumCredits(
+                    transactionsBySender[a] ?? [],
+                    last7days,
+                  );
+                  final conB = sumCredits(
+                    transactionsBySender[b] ?? [],
+                    last7days,
+                  );
                   return conB.compareTo(conA);
                 });
 
                 int weeklyRankCounter = 1;
                 for (final userId in weeklyContributors) {
                   final cache = userProfileCache[userId] ?? {};
-                  final con =
-                      sumCredits(transactionsBySender[userId] ?? [], last7days);
+                  final con = sumCredits(
+                    transactionsBySender[userId] ?? [],
+                    last7days,
+                  );
                   weeklyRankList.add({
                     'userId': userId,
                     'userName': cache['name'] ?? 'User',
@@ -4099,11 +5309,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
                 // 3. TOTAL RANK (All contributors ranked by lifetime contribution > 0)
                 final List<Map<String, dynamic>> totalRankList = [];
-                final List<String> totalContributors =
-                    transactionsBySender.keys.where((userId) {
-                  final txs = transactionsBySender[userId] ?? [];
-                  return sumCredits(txs, null) > 0;
-                }).toList();
+                final List<String> totalContributors = transactionsBySender.keys
+                    .where((userId) {
+                      final txs = transactionsBySender[userId] ?? [];
+                      return sumCredits(txs, null) > 0;
+                    })
+                    .toList();
 
                 totalContributors.sort((a, b) {
                   final conA = sumCredits(transactionsBySender[a] ?? [], null);
@@ -4114,8 +5325,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 int totalRankCounter = 1;
                 for (final userId in totalContributors) {
                   final cache = userProfileCache[userId] ?? {};
-                  final con =
-                      sumCredits(transactionsBySender[userId] ?? [], null);
+                  final con = sumCredits(
+                    transactionsBySender[userId] ?? [],
+                    null,
+                  );
                   totalRankList.add({
                     'userId': userId,
                     'userName': cache['name'] ?? 'User',
@@ -4149,8 +5362,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     (item) => item['userId'] == _currentUser.userId,
                     orElse: () {
                       final myWeeklyCon = sumCredits(
-                          transactionsBySender[_currentUser.userId] ?? [],
-                          last7days);
+                        transactionsBySender[_currentUser.userId] ?? [],
+                        last7days,
+                      );
                       return {
                         'userId': _currentUser.userId,
                         'userName': _currentUser.fullname,
@@ -4167,8 +5381,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     (item) => item['userId'] == _currentUser.userId,
                     orElse: () {
                       final myTotalCon = sumCredits(
-                          transactionsBySender[_currentUser.userId] ?? [],
-                          null);
+                        transactionsBySender[_currentUser.userId] ?? [],
+                        null,
+                      );
                       return {
                         'userId': _currentUser.userId,
                         'userName': _currentUser.fullname,
@@ -4185,8 +5400,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   height: MediaQuery.of(context).size.height * 0.75,
                   decoration: BoxDecoration(
                     color: const Color(0xFF161616),
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(24)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withValues(alpha: 0.5),
@@ -4241,7 +5457,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       // Description line with help icon
                       Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12),
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -4250,8 +5468,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                 activeTabIndex == 0
                                     ? 'Ranked by the value of gifts contributed by online users'
                                     : activeTabIndex == 1
-                                        ? 'Ranked by the value of weekly gifts contributed in this room'
-                                        : 'Ranked by the value of lifetime gifts contributed in this room',
+                                    ? 'Ranked by the value of weekly gifts contributed in this room'
+                                    : 'Ranked by the value of lifetime gifts contributed in this room',
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.5),
                                   fontSize: 12,
@@ -4268,8 +5486,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(16),
                                     ),
-                                    title: const Text('Ranking Rules',
-                                        style: TextStyle(color: Colors.white)),
+                                    title: const Text(
+                                      'Ranking Rules',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
                                     content: const Text(
                                       'Online Rank lists active users in the room by their 24h contribution.\n\n'
                                       'Weekly Rank lists all room contributors by their weekly contribution.\n\n'
@@ -4279,9 +5499,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                     actions: [
                                       TextButton(
                                         onPressed: () => Navigator.pop(context),
-                                        child: const Text('OK',
-                                            style: TextStyle(
-                                                color: Color(0xFF00BCD4))),
+                                        child: const Text(
+                                          'OK',
+                                          style: TextStyle(
+                                            color: Color(0xFF00BCD4),
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -4320,7 +5543,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       ),
 
                       // My Rank sticky banner at bottom (exactly matching provided screenshot)
-                      _buildMyRankBanner(myRankItem),
+                      Container(
+                        color: const Color(0xFF1E1E1E),
+                        child: SafeArea(
+                          top: false,
+                          child: _buildMyRankBanner(myRankItem),
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -4340,10 +5569,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         decoration: BoxDecoration(
           border: isActive
               ? const Border(
-                  bottom: BorderSide(
-                    color: Color(0xFF00BCD4),
-                    width: 2.0,
-                  ),
+                  bottom: BorderSide(color: Color(0xFF00BCD4), width: 2.0),
                 )
               : null,
         ),
@@ -4460,11 +5686,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   }
 
   Future<Map<String, String?>> _loadLevelImages(
-      int? sendingLevel, int? receivingLevel) async {
-    final result = <String, String?>{
-      'sending': null,
-      'receiving': null,
-    };
+    int? sendingLevel,
+    int? receivingLevel,
+  ) async {
+    final result = <String, String?>{'sending': null, 'receiving': null};
 
     try {
       if (sendingLevel != null) {
@@ -4503,7 +5728,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         }
       }
     } catch (e) {
-      debugPrint('❌ Error loading level images in _AudioRoomScreenState: $e');
+      debugPrint('âŒ Error loading level images in _AudioRoomScreenState: $e');
     }
 
     return result;
@@ -4533,8 +5758,18 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             (receivingLevelMap?['level'] as num?)?.toInt() ?? 1;
 
         final Map? customizationMap = uData?['customization'] as Map?;
-        final String? selectedNameplateId =
-            customizationMap?['selectedNameplateId'] as String?;
+        List<String> selectedNameplateIds = [];
+        if (customizationMap?['selectedNameplateIds'] != null) {
+          selectedNameplateIds =
+              (customizationMap!['selectedNameplateIds'] as List)
+                  .whereType<String>()
+                  .toList();
+        } else if (customizationMap?['selectedNameplateId'] != null &&
+            (customizationMap!['selectedNameplateId'] as String).isNotEmpty) {
+          selectedNameplateIds = [
+            customizationMap['selectedNameplateId'] as String,
+          ];
+        }
 
         return FutureBuilder<Map<String, String?>>(
           future: _loadLevelImages(sendLvl, receiveLvl),
@@ -4548,7 +5783,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 color: isMyRank ? const Color(0xFF1E1E1E) : Colors.transparent,
                 border: isMyRank
                     ? const Border(
-                        top: BorderSide(color: Colors.white10, width: 0.5))
+                        top: BorderSide(color: Colors.white10, width: 0.5),
+                      )
                     : null,
               ),
               child: GestureDetector(
@@ -4599,7 +5835,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             ),
                           ),
                           const SizedBox(height: 4),
-                          Row(
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               if (sendImageUrl != null &&
                                   sendImageUrl.isNotEmpty)
@@ -4613,21 +5852,24 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               else
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 4, vertical: 1),
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFFFD700)
-                                        .withValues(alpha: 0.15),
+                                    color: const Color(
+                                      0xFFFFD700,
+                                    ).withValues(alpha: 0.15),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
                                     'Send Lv.$sendLvl',
                                     style: const TextStyle(
-                                        color: Color(0xFFFFD700),
-                                        fontSize: 8,
-                                        fontWeight: FontWeight.bold),
+                                      color: Color(0xFFFFD700),
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
-                              const SizedBox(width: 6),
                               if (receiveImageUrl != null &&
                                   receiveImageUrl.isNotEmpty)
                                 CachedNetworkImage(
@@ -4640,39 +5882,79 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               else
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 4, vertical: 1),
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFEA4C89)
-                                        .withValues(alpha: 0.15),
+                                    color: const Color(
+                                      0xFFEA4C89,
+                                    ).withValues(alpha: 0.15),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
                                     'Recv Lv.$receiveLvl',
                                     style: const TextStyle(
-                                        color: Color(0xFFEA4C89),
-                                        fontSize: 8,
-                                        fontWeight: FontWeight.bold),
+                                      color: Color(0xFFEA4C89),
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
-                              if (selectedNameplateId != null &&
-                                  selectedNameplateId.isNotEmpty) ...[
-                                const SizedBox(width: 6),
-                                FutureBuilder<String?>(
-                                  future: NameplateHelper.getNameplateUrl(
-                                      selectedNameplateId),
+                              if (selectedNameplateIds.isNotEmpty) ...[
+                                FutureBuilder<List<String>>(
+                                  future: NameplateHelper.getNameplateUrls(
+                                    selectedNameplateIds,
+                                  ),
                                   builder: (context, snapshot) {
-                                    final nameplateUrl = snapshot.data;
-                                    if (nameplateUrl != null &&
-                                        nameplateUrl.isNotEmpty) {
-                                      return CachedNetworkImage(
-                                        imageUrl: nameplateUrl,
-                                        height: 18,
-                                        fit: BoxFit.contain,
-                                        errorWidget: (context, url, err) =>
-                                            const SizedBox.shrink(),
+                                    final urls = snapshot.data ?? [];
+                                    if (urls.isEmpty) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    // 5 per row
+                                    final rows = <List<String>>[];
+                                    for (int i = 0; i < urls.length; i += 5) {
+                                      rows.add(
+                                        urls.sublist(
+                                          i,
+                                          (i + 5).clamp(0, urls.length),
+                                        ),
                                       );
                                     }
-                                    return const SizedBox.shrink();
+                                    return Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: rows
+                                          .map(
+                                            (rowItems) => Padding(
+                                              padding: const EdgeInsets.only(
+                                                bottom: 2,
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: rowItems
+                                                    .map(
+                                                      (url) => Padding(
+                                                        padding:
+                                                            const EdgeInsets.only(
+                                                              right: 3,
+                                                            ),
+                                                        child: CachedNetworkImage(
+                                                          imageUrl: url,
+                                                          height: 14,
+                                                          fit: BoxFit.contain,
+                                                          errorWidget:
+                                                              (_, __, ___) =>
+                                                                  const SizedBox.shrink(),
+                                                        ),
+                                                      ),
+                                                    )
+                                                    .toList(),
+                                              ),
+                                            ),
+                                          )
+                                          .toList(),
+                                    );
                                   },
                                 ),
                               ],
@@ -4693,10 +5975,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             fit: BoxFit.contain,
                             errorBuilder: (context, error, stackTrace) =>
                                 const Icon(
-                              Icons.diamond_outlined,
-                              color: Color(0xFF00BCD4),
-                              size: 16,
-                            ),
+                                  Icons.diamond_outlined,
+                                  color: Color(0xFF00BCD4),
+                                  size: 16,
+                                ),
                           ),
                           const SizedBox(width: 4),
                           Text(
@@ -4751,7 +6033,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
       _showParticipantBottomSheet(targetParticipant);
     } catch (e) {
-      debugPrint('💬 Error handling message tap: $e');
+      debugPrint('ðŸ’¬ Error handling message tap: $e');
     }
   }
 
@@ -4783,7 +6065,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         _showOccupiedSeatMenu(seatNumber, occupant);
       }
     } catch (e) {
-      debugPrint('🪑 Error handling seat long press: $e');
+      debugPrint('ðŸª‘ Error handling seat long press: $e');
     }
   }
 
@@ -4832,7 +6114,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Show admin seat takeover confirmation dialog
   void _showAdminSeatTakeoverDialog(
-      int seatNumber, AudioRoomParticipant currentOccupant) {
+    int seatNumber,
+    AudioRoomParticipant currentOccupant,
+  ) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -4867,24 +6151,29 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Confirm admin seat takeover
   void _confirmAdminSeatTakeover(int seatNumber) {
     try {
-      debugPrint('🪑 [UI] Admin confirming seat takeover for seat $seatNumber');
+      debugPrint('ðŸª‘ [UI] Admin confirming seat takeover for seat $seatNumber');
 
       // Find current seat of admin
       final currentParticipant = _currentParticipant;
-      final currentSeat = currentParticipant?.seatNumber ?? 0;
+      final currentSeat = (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! > 0)
+          ? currentParticipant.seatNumber!
+          : -1;
 
       debugPrint(
-          '🪑 [UI] Admin moving from seat $currentSeat to seat $seatNumber (takeover)');
+        'ðŸª‘ [UI] Admin moving from seat $currentSeat to seat $seatNumber (takeover)',
+      );
 
       // Dispatch the move event
-      widget.audioRoomsBloc.add(MoveParticipantToSeat(
-        roomId: _currentRoom.id,
-        userId: _currentUser.userId,
-        fromSeat: currentSeat,
-        toSeat: seatNumber,
-      ));
+      widget.audioRoomsBloc.add(
+        MoveParticipantToSeat(
+          roomId: _currentRoom.id,
+          userId: _currentUser.userId,
+          fromSeat: currentSeat,
+          toSeat: seatNumber,
+        ),
+      );
     } catch (e) {
-      debugPrint('🪑 [UI] Error in admin seat takeover: $e');
+      debugPrint('ðŸª‘ [UI] Error in admin seat takeover: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to take over seat: ${e.toString()}'),
@@ -4897,25 +6186,44 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Move current user to seat
   void _moveToSeat(int seatNumber) {
     try {
-      debugPrint('🪑 [UI] Attempting to move to seat $seatNumber');
+      debugPrint('ðŸª‘ [UI] Attempting to move to seat $seatNumber');
       debugPrint(
-          '🪑 [UI] Seat locked: ${_currentRoom.isSeatLocked(seatNumber)}');
+        'ðŸª‘ [UI] Seat locked: ${_currentRoom.isSeatLocked(seatNumber)}',
+      );
       debugPrint(
-          '🪑 [UI] Seat occupied: ${_currentRoom.isSeatOccupied(seatNumber)}');
+        'ðŸª‘ [UI] Seat occupied: ${_currentRoom.isSeatOccupied(seatNumber)}',
+      );
       debugPrint(
-          '🪑 [UI] Can user move: ${_currentRoom.canUserMoveToSeat(_currentUser.userId, seatNumber)}');
+        'ðŸª‘ [UI] Can user move: ${_currentRoom.canUserMoveToSeat(_currentUser.userId, seatNumber)}',
+      );
 
       if (!_currentRoom.canUserMoveToSeat(_currentUser.userId, seatNumber)) {
+        final bool isUserCreatorOrAdmin = _currentRoom.isCreator(_currentUser.userId) ||
+            _currentRoom.settings.adminIds.contains(_currentUser.userId);
+        if (seatNumber == 1 && !isUserCreatorOrAdmin) {
+          debugPrint('ðŸª‘ [UI] Seat 1 is reserved for Host/Admin only');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Seat 1 is reserved for Room Host and Admins only.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return;
+        }
+
         if (_currentRoom.isSeatLocked(seatNumber)) {
           debugPrint(
-              '🪑 [UI] Seat $seatNumber is locked - showing lock message');
+            'ðŸª‘ [UI] Seat $seatNumber is locked - showing lock message',
+          );
           _showLockedSeatMessage(seatNumber);
         } else if (_currentRoom.isSeatOccupied(seatNumber)) {
           debugPrint(
-              '🪑 [UI] Seat $seatNumber is occupied - showing occupied message');
+            'ðŸª‘ [UI] Seat $seatNumber is occupied - showing occupied message',
+          );
           _showOccupiedSeatMessage(seatNumber);
         } else {
-          debugPrint('🪑 [UI] Seat $seatNumber unavailable for unknown reason');
+          debugPrint('ðŸª‘ [UI] Seat $seatNumber unavailable for unknown reason');
           _showLockedSeatMessage(seatNumber);
         }
         return;
@@ -4929,7 +6237,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         final currentOccupant = _currentRoom.getParticipantInSeat(seatNumber);
         if (currentOccupant != null) {
           debugPrint(
-              '🪑 [UI] Admin moving to occupied seat - showing confirmation');
+            'ðŸª‘ [UI] Admin moving to occupied seat - showing confirmation',
+          );
           _showAdminSeatTakeoverDialog(seatNumber, currentOccupant);
           return;
         }
@@ -4937,46 +6246,55 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
       // Find current seat of user
       final currentParticipant = _currentParticipant;
-      final currentSeat = currentParticipant?.seatNumber ?? 0;
+      final currentSeat = (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! > 0)
+          ? currentParticipant.seatNumber!
+          : -1;
 
-      debugPrint('🪑 [UI] ===== MOVE REQUEST START =====');
+      debugPrint('ðŸª‘ [UI] ===== MOVE REQUEST START =====');
       debugPrint(
-          '🪑 [UI] Current participant: ${currentParticipant?.userName}');
+        'ðŸª‘ [UI] Current participant: ${currentParticipant?.userName}',
+      );
       debugPrint(
-          '🪑 [UI] Current participant seat: ${currentParticipant?.seatNumber}');
+        'ðŸª‘ [UI] Current participant seat: ${currentParticipant?.seatNumber}',
+      );
       debugPrint(
-          '🪑 [UI] Moving user from seat $currentSeat to seat $seatNumber');
+        'ðŸª‘ [UI] Moving user from seat $currentSeat to seat $seatNumber',
+      );
 
       // Debug: Check all participants and their seats
-      debugPrint('🪑 [UI] All participants and their seats:');
+      debugPrint('ðŸª‘ [UI] All participants and their seats:');
       // for (final p in _currentRoom.participants) {
-      //   debugPrint('🪑 [UI] - ${p.userName}: seat ${p.seatNumber}');
+      //   debugPrint('ðŸª‘ [UI] - ${p.userName}: seat ${p.seatNumber}');
       // }
 
-      widget.audioRoomsBloc.add(MoveParticipantToSeat(
-        roomId: _currentRoom.id,
-        userId: _currentUser.userId,
-        fromSeat: currentSeat,
-        toSeat: seatNumber,
-      ));
+      widget.audioRoomsBloc.add(
+        MoveParticipantToSeat(
+          roomId: _currentRoom.id,
+          userId: _currentUser.userId,
+          fromSeat: currentSeat,
+          toSeat: seatNumber,
+        ),
+      );
 
       // Fix: Persist admin mute status on rejoin
       // If the user was previously muted by admin (as a listener/participant),
       // ensure this status carries over to the new seat assignment.
       if (currentParticipant != null && currentParticipant.isMutedByAdmin) {
-        debugPrint('🪑 [UI] User was muted by admin - re-applying mute status');
+        debugPrint('ðŸª‘ [UI] User was muted by admin - re-applying mute status');
         // We need to wait slightly for the move to process or just send the update
         // The bloc might process these sequentially.
         Future.delayed(const Duration(milliseconds: 500), () {
-          widget.audioRoomsBloc.add(UpdateRoomParticipant(
-            roomId: _currentRoom.id,
-            userId: _currentUser.userId,
-            updatedParticipant: currentParticipant.copyWith(
-              seatNumber: seatNumber,
-              isMutedByAdmin: true,
-              isMuted: true,
+          widget.audioRoomsBloc.add(
+            UpdateRoomParticipant(
+              roomId: _currentRoom.id,
+              userId: _currentUser.userId,
+              updatedParticipant: currentParticipant.copyWith(
+                seatNumber: seatNumber,
+                isMutedByAdmin: true,
+                isMuted: true,
+              ),
             ),
-          ));
+          );
         });
       }
 
@@ -4988,7 +6306,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       //   ),
       // );
     } catch (e) {
-      debugPrint('🪑 Error moving to seat: $e');
+      debugPrint('ðŸª‘ Error moving to seat: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Failed to move to seat'),
@@ -5003,114 +6321,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // SECURITY CHECK: Only host can see this menu
     if (!_isCurrentUserHost) return;
 
-    final isLocked = _currentRoom.isSeatLocked(seatNumber);
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle bar
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey[300]!, width: 2),
-                    ),
-                    child: Center(
-                      child: Text(
-                        seatNumber.toString(),
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Seat $seatNumber',
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        isLocked ? 'Locked' : 'Empty',
-                        style: TextStyle(
-                          color: isLocked ? Colors.orange : Colors.grey[600],
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // Menu options
-            if (isLocked) ...[
-              _buildMenuOption(
-                icon: Icons.lock_open,
-                title: 'Unlock Seat',
-                subtitle: 'Allow participants to sit here',
-                color: Colors.green,
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleSeatLock(seatNumber, false);
-                },
-              ),
-            ] else ...[
-              _buildMenuOption(
-                icon: Icons.lock,
-                title: 'Lock Seat',
-                subtitle: 'Prevent participants from sitting',
-                color: Colors.orange,
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleSeatLock(seatNumber, true);
-                },
-              ),
-              _buildMenuOption(
-                icon: Icons.person_add,
-                title: 'Invite Someone',
-                subtitle: 'Invite a listener to this seat',
-                color: Colors.blue,
-                onTap: () {
-                  Navigator.pop(context);
-                  _showInviteToSeatSheet(seatNumber);
-                },
-              ),
-            ],
-
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
+    _showEmptySeatAdminOptions(seatNumber);
   }
 
   /// Show cute popup menu for occupied seat (host only)
@@ -5136,167 +6347,185 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle bar
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
 
-            // Title with user info
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  CachedCircleAvatar(
-                    imageUrl: occupant.userImageUrl ?? '',
-                    radius: 20,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          occupant.userName,
-                          style: const TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                        // Admin/Viewer Tag
-                        Container(
-                          margin: const EdgeInsets.only(top: 4),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: (_currentRoom.isCreator(occupant.userId) ||
-                                    occupant.isHost)
-                                ? Colors.purple.withValues(alpha: 0.1)
-                                : Colors.grey.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                              color: (_currentRoom.isCreator(occupant.userId) ||
-                                      occupant.isHost)
-                                  ? Colors.purple.withValues(alpha: 0.5)
-                                  : Colors.grey.withValues(alpha: 0.5),
-                            ),
-                          ),
-                          child: Text(
-                            _currentRoom.isCreator(occupant.userId)
-                                ? 'Owner'
-                                : (occupant.isHost ? 'Admin' : 'Viewer'),
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: (_currentRoom.isCreator(occupant.userId) ||
-                                      occupant.isHost)
-                                  ? Colors.purple
-                                  : Colors.grey[700],
+              // Title with user info
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    CachedCircleAvatar(
+                      imageUrl: occupant.userImageUrl ?? '',
+                      radius: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            occupant.userName,
+                            style: const TextStyle(
+                              fontSize: 18,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ),
-
-                        Row(
-                          children: [
-                            Text(
-                              'Seat $seatNumber',
-                              style: TextStyle(
-                                  color: Colors.grey[600], fontSize: 14),
+                          // Admin/Viewer Tag
+                          Container(
+                            margin: const EdgeInsets.only(top: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
                             ),
-                            if (_currentRoom.isCreator(occupant.userId) ||
-                                occupant.isHost) ...[
-                              const SizedBox(width: 8),
-                              const Icon(Icons.star,
-                                  color: Colors.amber, size: 16),
+                            decoration: BoxDecoration(
+                              color:
+                                  (_currentRoom.isCreator(occupant.userId) ||
+                                      occupant.isHost)
+                                  ? Colors.purple.withValues(alpha: 0.1)
+                                  : Colors.grey.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color:
+                                    (_currentRoom.isCreator(occupant.userId) ||
+                                        occupant.isHost)
+                                    ? Colors.purple.withValues(alpha: 0.5)
+                                    : Colors.grey.withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: Text(
+                              _currentRoom.isCreator(occupant.userId)
+                                  ? 'Owner'
+                                  : (occupant.isHost ? 'Admin' : 'Viewer'),
+                              style: TextStyle(
+                                fontSize: 10,
+                                color:
+                                    (_currentRoom.isCreator(occupant.userId) ||
+                                        occupant.isHost)
+                                    ? Colors.purple
+                                    : Colors.grey[700],
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+
+                          Row(
+                            children: [
                               Text(
+                                'Seat $seatNumber',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 14,
+                                ),
+                              ),
+                              if (_currentRoom.isCreator(occupant.userId) ||
+                                  occupant.isHost) ...[
+                                const SizedBox(width: 8),
+                                const Icon(
+                                  Icons.star,
+                                  color: Colors.amber,
+                                  size: 16,
+                                ),
+                                Text(
                                   _currentRoom.isCreator(occupant.userId)
                                       ? ' Host'
                                       : ' Admin',
                                   style: const TextStyle(
-                                      color: Colors.amber, fontSize: 12)),
+                                    color: Colors.amber,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ],
-                          ],
-                        ),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
 
-            const SizedBox(height: 20),
+              const SizedBox(height: 20),
 
-            // Menu options
-            _buildMenuOption(
-              icon: Icons.chair_alt,
-              title: 'Remove from Seat',
-              subtitle: 'Move participant to listeners',
-              color: Colors.orange,
-              onTap: () {
-                Navigator.pop(context);
-                _removeParticipantFromSeat(seatNumber, occupant);
-              },
-            ),
-
-            // Mute/Unmute
-            _buildMenuOption(
-              icon: occupant.isMutedByAdmin ? Icons.mic : Icons.mic_off,
-              title: occupant.isMutedByAdmin ? 'Unmute' : 'Mute',
-              subtitle: occupant.isMutedByAdmin
-                  ? 'Allow participant to speak'
-                  : 'Prevent participant from speaking',
-              color: occupant.isMutedByAdmin ? Colors.green : Colors.red,
-              onTap: () {
-                Navigator.pop(context);
-                _toggleParticipantMute(occupant);
-              },
-            ),
-
-            // Make Admin (Only visible to Room Creator and if occupant is not already host)
-            if (_currentUser.userId == _currentRoom.creatorId &&
-                !occupant.isHost)
+              // Menu options
               _buildMenuOption(
-                icon: Icons.shield,
-                title: 'Make Admin',
-                subtitle: 'Give moderation privileges',
-                color: Colors.purple,
+                icon: Icons.chair_alt,
+                title: 'Remove from Seat',
+                subtitle: 'Move participant to listeners',
+                color: Colors.orange,
                 onTap: () {
                   Navigator.pop(context);
-                  _promoteToAdmin(occupant);
+                  _removeParticipantFromSeat(seatNumber, occupant);
                 },
               ),
 
-            // Kick/Block
-            _buildMenuOption(
-              icon: Icons.exit_to_app,
-              title: 'Kick from Room',
-              subtitle: 'Remove participant from room',
-              color: Colors.red,
-              onTap: () {
-                Navigator.pop(context);
-                _showKickConfirmation(occupant);
-              },
-            ),
+              // Mute/Unmute
+              _buildMenuOption(
+                icon: (occupant.isMutedByAdmin || occupant.isMuted) ? Icons.mic : Icons.mic_off,
+                title: (occupant.isMutedByAdmin || occupant.isMuted) ? 'Unmute' : 'Mute',
+                subtitle: (occupant.isMutedByAdmin || occupant.isMuted)
+                    ? 'Allow participant to speak'
+                    : 'Prevent participant from speaking',
+                color: (occupant.isMutedByAdmin || occupant.isMuted) ? Colors.green : Colors.red,
+                onTap: () {
+                  Navigator.pop(context);
+                  _toggleParticipantMute(occupant);
+                },
+              ),
 
-            _buildMenuOption(
-              icon: Icons.block,
-              title: 'Block Participant',
-              subtitle: 'Block and prevent from rejoining',
-              color: Colors.red[800]!,
-              onTap: () {
-                Navigator.pop(context);
-                _showBlockConfirmation(occupant);
-              },
-            ),
+              // Make Admin (Only visible to Room Creator and if occupant is not already host)
+              if (_currentUser.userId == _currentRoom.creatorId &&
+                  !occupant.isHost)
+                _buildMenuOption(
+                  icon: Icons.shield,
+                  title: 'Make Admin',
+                  subtitle: 'Give moderation privileges',
+                  color: Colors.purple,
+                  onTap: () {
+                    Navigator.pop(context);
+                    _promoteToAdmin(occupant);
+                  },
+                ),
 
-            const SizedBox(height: 20),
-          ],
+              // Kick/Block
+              _buildMenuOption(
+                icon: Icons.exit_to_app,
+                title: 'Kick from Room',
+                subtitle: 'Remove participant from room',
+                color: Colors.red,
+                onTap: () {
+                  Navigator.pop(context);
+                  _showKickConfirmation(occupant);
+                },
+              ),
+
+              _buildMenuOption(
+                icon: Icons.block,
+                title: 'Block Participant',
+                subtitle: 'Block and prevent from rejoining',
+                color: Colors.red[800]!,
+                onTap: () {
+                  Navigator.pop(context);
+                  _showBlockConfirmation(occupant);
+                },
+              ),
+
+              const SizedBox(height: 20),
+            ],
+          ),
         ),
       ),
     );
@@ -5310,45 +6539,49 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     required Color color,
     required VoidCallback onTap,
   }) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Icon(icon, color: color, size: 22),
+                ),
               ),
-              child: Icon(icon, color: color, size: 20),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1F1F24),
+                      ),
                     ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[600],
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            Icon(Icons.chevron_right, color: Colors.grey[400]),
-          ],
+              Icon(Icons.chevron_right_rounded, color: Colors.grey[400], size: 22),
+            ],
+          ),
         ),
       ),
     );
@@ -5357,14 +6590,16 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Toggle seat lock/unlock
   void _toggleSeatLock(int seatNumber, bool isLocked) {
     try {
-      debugPrint('🪑 Toggling seat $seatNumber lock to $isLocked');
+      debugPrint('ðŸª‘ Toggling seat $seatNumber lock to $isLocked');
 
-      widget.audioRoomsBloc.add(ToggleSeatLock(
-        roomId: _currentRoom.id,
-        hostId: _currentUser.userId,
-        seatNumber: seatNumber,
-        isLocked: isLocked,
-      ));
+      widget.audioRoomsBloc.add(
+        ToggleSeatLock(
+          roomId: _currentRoom.id,
+          hostId: _currentUser.userId,
+          seatNumber: seatNumber,
+          isLocked: isLocked,
+        ),
+      );
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -5374,22 +6609,26 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         ),
       );
     } catch (e) {
-      debugPrint('🪑 Error toggling seat lock: $e');
+      debugPrint('ðŸª‘ Error toggling seat lock: $e');
     }
   }
 
   /// Remove participant from seat
   void _removeParticipantFromSeat(
-      int seatNumber, AudioRoomParticipant participant) {
+    int seatNumber,
+    AudioRoomParticipant participant,
+  ) {
     try {
-      debugPrint('🪑 Removing ${participant.userName} from seat $seatNumber');
+      debugPrint('ðŸª‘ Removing ${participant.userName} from seat $seatNumber');
 
-      widget.audioRoomsBloc.add(RemoveParticipantFromSeat(
-        roomId: _currentRoom.id,
-        hostId: _currentUser.userId,
-        participantId: participant.userId,
-        seatNumber: seatNumber,
-      ));
+      widget.audioRoomsBloc.add(
+        RemoveParticipantFromSeat(
+          roomId: _currentRoom.id,
+          hostId: _currentUser.userId,
+          participantId: participant.userId,
+          seatNumber: seatNumber,
+        ),
+      );
 
       // ScaffoldMessenger.of(context).showSnackBar(
       //   SnackBar(
@@ -5399,7 +6638,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       //   ),
       // );
     } catch (e) {
-      debugPrint('🪑 Error removing participant from seat: $e');
+      debugPrint('ðŸª‘ Error removing participant from seat: $e');
     }
   }
 
@@ -5410,7 +6649,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       builder: (context) => AlertDialog(
         title: const Text('Make Admin?'),
         content: Text(
-            'Are you sure you want to promote ${participant.userName} to Admin? They will have moderation privileges.'),
+          'Are you sure you want to promote ${participant.userName} to Admin? They will have moderation privileges.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -5422,11 +6662,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
               final updatedParticipant = participant.copyWith(isHost: true);
 
-              widget.audioRoomsBloc.add(UpdateRoomParticipant(
-                roomId: _currentRoom.id,
-                userId: _currentUser.userId,
-                updatedParticipant: updatedParticipant,
-              ));
+              widget.audioRoomsBloc.add(
+                UpdateRoomParticipant(
+                  roomId: _currentRoom.id,
+                  userId: _currentUser.userId,
+                  updatedParticipant: updatedParticipant,
+                ),
+              );
 
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -5467,22 +6709,25 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         isMutedByAdmin: newMuteState,
       );
 
-      widget.audioRoomsBloc.add(UpdateRoomParticipant(
-        roomId: _currentRoom.id,
-        userId: _currentUser.userId,
-        updatedParticipant: updatedParticipant,
-      ));
+      widget.audioRoomsBloc.add(
+        UpdateRoomParticipant(
+          roomId: _currentRoom.id,
+          userId: _currentUser.userId,
+          updatedParticipant: updatedParticipant,
+        ),
+      );
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-              '${participant.userName} ${newMuteState ? 'muted by admin' : 'unmuted by admin'}'),
+            '${participant.userName} ${newMuteState ? 'muted by admin' : 'unmuted by admin'}',
+          ),
           backgroundColor: newMuteState ? Colors.red : Colors.green,
           duration: const Duration(seconds: 2),
         ),
       );
     } catch (e) {
-      debugPrint('🪑 Error toggling participant mute: $e');
+      debugPrint('ðŸª‘ Error toggling participant mute: $e');
     }
   }
 
@@ -5581,50 +6826,56 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Kick participant from room
   void _kickParticipant(AudioRoomParticipant participant) {
     try {
-      debugPrint('🚪 Kicking ${participant.userName} from room');
+      debugPrint('ðŸšª Kicking ${participant.userName} from room');
 
-      widget.audioRoomsBloc.add(KickParticipant(
-        roomId: _currentRoom.id,
-        hostId: _currentUser.userId,
-        participantId: participant.userId,
-        reason: 'Removed by host',
-      ));
+      widget.audioRoomsBloc.add(
+        KickParticipant(
+          roomId: _currentRoom.id,
+          hostId: _currentUser.userId,
+          participantId: participant.userId,
+          reason: 'Removed by host',
+        ),
+      );
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content:
-              Text('${participant.userName} has been kicked from the room'),
+          content: Text(
+            '${participant.userName} has been kicked from the room',
+          ),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 3),
         ),
       );
     } catch (e) {
-      debugPrint('🚪 Error kicking participant: $e');
+      debugPrint('ðŸšª Error kicking participant: $e');
     }
   }
 
   /// Block participant from room
   void _blockParticipant(AudioRoomParticipant participant) {
     try {
-      debugPrint('🚫 Blocking ${participant.userName} from room');
+      debugPrint('ðŸš« Blocking ${participant.userName} from room');
 
-      widget.audioRoomsBloc.add(BlockParticipant(
-        roomId: _currentRoom.id,
-        hostId: _currentUser.userId,
-        participantId: participant.userId,
-        reason: 'Blocked by host',
-      ));
+      widget.audioRoomsBloc.add(
+        BlockParticipant(
+          roomId: _currentRoom.id,
+          hostId: _currentUser.userId,
+          participantId: participant.userId,
+          reason: 'Blocked by host',
+        ),
+      );
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content:
-              Text('${participant.userName} has been blocked from the room'),
+          content: Text(
+            '${participant.userName} has been blocked from the room',
+          ),
           backgroundColor: Colors.red[800],
           duration: const Duration(seconds: 3),
         ),
       );
     } catch (e) {
-      debugPrint('🚫 Error blocking participant: $e');
+      debugPrint('ðŸš« Error blocking participant: $e');
     }
   }
 
@@ -5636,66 +6887,95 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       builder: (context) => Container(
         decoration: const BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle bar
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
 
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  CachedCircleAvatar(
-                    imageUrl: _currentUser.photoUrl,
-                    radius: 20,
-                  ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Your Seat',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        'Seat $seatNumber',
-                        style: TextStyle(color: Colors.grey[600], fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ],
+              // Title - User Profile Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    CachedCircleAvatar(
+                      imageUrl: _currentUser.photoUrl,
+                      radius: 22,
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _currentUser.fullname.isNotEmpty
+                              ? _currentUser.fullname
+                              : 'My Profile',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1F1F24),
+                          ),
+                        ),
+                        Text(
+                          'Seat $seatNumber',
+                          style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
 
-            const SizedBox(height: 20),
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 8),
 
-            // Menu options
-            _buildMenuOption(
-              icon: Icons.chair_alt,
-              title: 'Leave Seat',
-              subtitle: 'Move to listeners area',
-              color: Colors.orange,
-              onTap: () {
-                Navigator.pop(context);
-                _leaveSeat();
-              },
-            ),
+              // Option 1: View Profile
+              _buildMenuOption(
+                icon: Icons.person_outline_rounded,
+                title: 'View Profile',
+                subtitle: 'View your profile details',
+                color: const Color(0xFF6C63FF),
+                onTap: () {
+                  Navigator.pop(context);
+                  final selfParticipant = _currentParticipant ??
+                      AudioRoomParticipant(
+                        userId: _currentUser.userId,
+                        userName: _currentUser.fullname,
+                        userImageUrl: _currentUser.photoUrl,
+                        seatNumber: seatNumber,
+                        joinedAt: DateTime.now(),
+                      );
+                  _showParticipantBottomSheet(selfParticipant);
+                },
+              ),
 
-            const SizedBox(height: 20),
-          ],
+              // Option 2: Leave Seat
+              _buildMenuOption(
+                icon: Icons.chair_alt_rounded,
+                title: 'Leave Seat',
+                subtitle: 'Move to listeners area',
+                color: Colors.orangeAccent[700]!,
+                onTap: () {
+                  Navigator.pop(context);
+                  _leaveSeat();
+                },
+              ),
+
+              const SizedBox(height: 16),
+            ],
+          ),
         ),
       ),
     );
@@ -5708,16 +6988,35 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       if (currentParticipant?.seatNumber == null) return;
 
       debugPrint(
-          '🪑 [UI] User leaving their own seat ${currentParticipant!.seatNumber}');
+        'ðŸª‘ [UI] User leaving their own seat ${currentParticipant!.seatNumber}',
+      );
 
-      // For self-removal, we'll use MoveParticipantToSeat with seat 0 (no seat)
+      // If user on host seat (seat 1) leaves their seat, auto-close active Carrom or Ludo game
+      if (currentParticipant.seatNumber == 1) {
+        if (_currentRoom.isCarromActive) {
+          AudioRoomsRepository().updateCarromState(
+            roomId: _currentRoom.id,
+            isActive: false,
+          );
+        }
+        if (_currentRoom.isLudoActive) {
+          AudioRoomsRepository().updateLudoState(
+            roomId: _currentRoom.id,
+            isActive: false,
+          );
+        }
+      }
+
+      // For self-removal, we'll use MoveParticipantToSeat with seat -1 (leaving all seats)
       // This bypasses the host permission check since users can move themselves
-      widget.audioRoomsBloc.add(MoveParticipantToSeat(
-        roomId: _currentRoom.id,
-        userId: _currentUser.userId,
-        fromSeat: currentParticipant.seatNumber!,
-        toSeat: 0, // 0 means no seat (listener area)
-      ));
+      widget.audioRoomsBloc.add(
+        MoveParticipantToSeat(
+          roomId: _currentRoom.id,
+          userId: _currentUser.userId,
+          fromSeat: currentParticipant.seatNumber!,
+          toSeat: -1, // -1 means no seat (listener area)
+        ),
+      );
 
       // ScaffoldMessenger.of(context).showSnackBar(
       //   const SnackBar(
@@ -5727,129 +7026,145 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       //   ),
       // );
     } catch (e) {
-      debugPrint('🪑 Error leaving seat: $e');
+      debugPrint('ðŸª‘ Error leaving seat: $e');
     }
   }
 
   void _showEmptySeatAdminOptions(int seatNumber) {
     final isLocked = _currentRoom.isSeatLocked(seatNumber);
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF0F1724),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle bar
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
+      barrierColor: Colors.black.withOpacity(0.35),
+      barrierDismissible: true,
+      builder: (context) {
+        return Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              width: 190,
               decoration: BoxDecoration(
-                color: Colors.grey[700],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey[700]!, width: 2),
-                    ),
-                    child: Center(
-                      child: Text(
-                        seatNumber.toString(),
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, color: Colors.white),
-                      ),
-                    ),
+                color: const Color(0xFF22262E),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.4),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
                   ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Seat $seatNumber',
-                        style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white),
+                ],
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildCompactSeatOption(
+                    icon: const Icon(
+                      Icons.chair_outlined,
+                      color: Colors.white,
+                      size: 21,
+                    ),
+                    title: 'Take Mic',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _moveToSeat(seatNumber);
+                    },
+                  ),
+                  _buildCompactSeatOption(
+                    icon: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: Stack(
+                        children: [
+                          const Positioned(
+                            left: 0,
+                            top: 0,
+                            child: Icon(
+                              Icons.chair_outlined,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                          Positioned(
+                            right: 0,
+                            bottom: 0,
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF22262E),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.add,
+                                color: Colors.white,
+                                size: 11,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      Text(
-                        isLocked ? 'Locked' : 'Empty',
-                        style: TextStyle(
-                          color: isLocked ? Colors.orange : Colors.grey[400],
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
+                    ),
+                    title: 'Invite Speaker',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showInviteToSeatSheet(seatNumber);
+                    },
+                  ),
+                  _buildCompactSeatOption(
+                    icon: Icon(
+                      isLocked ? Icons.lock_open_outlined : Icons.lock_outline,
+                      color: Colors.white,
+                      size: 21,
+                    ),
+                    title: isLocked ? 'Unlock Mic' : 'Lock Mic',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _toggleSeatLock(seatNumber, !isLocked);
+                    },
                   ),
                 ],
               ),
             ),
+          ),
+        );
+      },
+    );
+  }
 
-            const SizedBox(height: 20),
-
-            // Menu options
-            _buildMenuOption(
-              icon: Icons.chair,
-              title: 'Take Seat',
-              subtitle: 'Sit in this empty seat',
-              color: Colors.green,
-              onTap: () {
-                Navigator.pop(context);
-                _moveToSeat(seatNumber);
-              },
-            ),
-            _buildMenuOption(
-              icon: Icons.person_add,
-              title: 'Invite Someone',
-              subtitle: 'Invite a user to this seat',
-              color: Colors.blue,
-              onTap: () {
-                Navigator.pop(context);
-                _showInviteToSeatSheet(seatNumber);
-              },
-            ),
-            if (isLocked) ...[
-              _buildMenuOption(
-                icon: Icons.lock_open,
-                title: 'Unlock Seat',
-                subtitle: 'Allow participants to sit here',
-                color: Colors.green,
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleSeatLock(seatNumber, false);
-                },
+  Widget _buildCompactSeatOption({
+    required Widget icon,
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        splashColor: Colors.white.withOpacity(0.1),
+        highlightColor: Colors.white.withOpacity(0.05),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: Center(child: icon),
               ),
-            ] else ...[
-              _buildMenuOption(
-                icon: Icons.lock,
-                title: 'Lock Seat',
-                subtitle: 'Prevent participants from sitting',
-                color: Colors.orange,
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleSeatLock(seatNumber, true);
-                },
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
               ),
             ],
-
-            const SizedBox(height: 20),
-          ],
+          ),
         ),
       ),
     );
@@ -5887,7 +7202,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     // Title
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 8),
+                        horizontal: 20,
+                        vertical: 8,
+                      ),
                       child: Text(
                         'Invite to Seat $seatNumber',
                         style: const TextStyle(
@@ -5969,13 +7286,22 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       _invitedUserIds.add(listener.userId);
                     });
                     _inviteToSeat(listener, seatNumber);
+                    Future.delayed(const Duration(seconds: 4), () {
+                      if (mounted) {
+                        setSheetState(() {
+                          _invitedUserIds.remove(listener.userId);
+                        });
+                      }
+                    });
                   },
             style: ElevatedButton.styleFrom(
-              backgroundColor:
-                  isInvited ? Colors.grey[800] : Colors.purpleAccent,
+              backgroundColor: isInvited
+                  ? Colors.grey[800]
+                  : Colors.purpleAccent,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
+                borderRadius: BorderRadius.circular(20),
+              ),
             ),
             child: Text(isInvited ? 'Invited' : 'Invite'),
           ),
@@ -6032,10 +7358,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
                 return ListTile(
                   tileColor: Colors.transparent,
-                  leading: CachedCircleAvatar(
-                    imageUrl: avatarUrl,
-                    radius: 20,
-                  ),
+                  leading: CachedCircleAvatar(imageUrl: avatarUrl, radius: 20),
                   title: Text(
                     name,
                     style: const TextStyle(color: Colors.white),
@@ -6048,13 +7371,22 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               _invitedUserIds.add(userId);
                             });
                             _inviteToSeat(userData, seatNumber);
+                            Future.delayed(const Duration(seconds: 4), () {
+                              if (mounted) {
+                                setSheetState(() {
+                                  _invitedUserIds.remove(userId);
+                                });
+                              }
+                            });
                           },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          isInvited ? Colors.grey[800] : Colors.purpleAccent,
+                      backgroundColor: isInvited
+                          ? Colors.grey[800]
+                          : Colors.purpleAccent,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20)),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
                     ),
                     child: Text(isInvited ? 'Invited' : 'Invite'),
                   ),
@@ -6107,14 +7439,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
             return ListTile(
               tileColor: Colors.transparent,
-              leading: CachedCircleAvatar(
-                imageUrl: avatarUrl,
-                radius: 20,
-              ),
-              title: Text(
-                name,
-                style: const TextStyle(color: Colors.white),
-              ),
+              leading: CachedCircleAvatar(imageUrl: avatarUrl, radius: 20),
+              title: Text(name, style: const TextStyle(color: Colors.white)),
               trailing: ElevatedButton(
                 onPressed: isInvited
                     ? null
@@ -6123,13 +7449,22 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           _invitedUserIds.add(userId);
                         });
                         _inviteToSeat(userData, seatNumber);
+                        Future.delayed(const Duration(seconds: 4), () {
+                          if (mounted) {
+                            setSheetState(() {
+                              _invitedUserIds.remove(userId);
+                            });
+                          }
+                        });
                       },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      isInvited ? Colors.grey[800] : Colors.purpleAccent,
+                  backgroundColor: isInvited
+                      ? Colors.grey[800]
+                      : Colors.purpleAccent,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20)),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
                 ),
                 child: Text(isInvited ? 'Invited' : 'Invite'),
               ),
@@ -6162,32 +7497,34 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           final allContributors = liveRoom.contributors.values.toList();
 
           // Daily Ranking
-          final dailyContributors = allContributors
-              .where((c) => c.dailyContribution > 0)
-              .toList()
-            ..sort(
-                (a, b) => b.dailyContribution.compareTo(a.dailyContribution));
+          final dailyContributors =
+              allContributors.where((c) => c.dailyContribution > 0).toList()
+                ..sort(
+                  (a, b) => b.dailyContribution.compareTo(a.dailyContribution),
+                );
 
           // Weekly Ranking
-          final weeklyContributors = allContributors
-              .where((c) => c.weeklyContribution > 0)
-              .toList()
-            ..sort(
-                (a, b) => b.weeklyContribution.compareTo(a.weeklyContribution));
+          final weeklyContributors =
+              allContributors.where((c) => c.weeklyContribution > 0).toList()
+                ..sort(
+                  (a, b) =>
+                      b.weeklyContribution.compareTo(a.weeklyContribution),
+                );
 
           // Monthly Ranking
-          final monthlyContributors = allContributors
-              .where((c) => c.monthlyContribution > 0)
-              .toList()
-            ..sort((a, b) =>
-                b.monthlyContribution.compareTo(a.monthlyContribution));
+          final monthlyContributors =
+              allContributors.where((c) => c.monthlyContribution > 0).toList()
+                ..sort(
+                  (a, b) =>
+                      b.monthlyContribution.compareTo(a.monthlyContribution),
+                );
 
           // All Time Ranking
-          final allTimeContributors = allContributors
-              .where((c) => c.totalContribution > 0)
-              .toList()
-            ..sort(
-                (a, b) => b.totalContribution.compareTo(a.totalContribution));
+          final allTimeContributors =
+              allContributors.where((c) => c.totalContribution > 0).toList()
+                ..sort(
+                  (a, b) => b.totalContribution.compareTo(a.totalContribution),
+                );
 
           return DefaultTabController(
             length: 4,
@@ -6219,8 +7556,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.emoji_events,
-                              color: Color(0xFFFFD700)),
+                          const Icon(
+                            Icons.emoji_events,
+                            color: Color(0xFFFFD700),
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             'Contributor Ranking',
@@ -6241,7 +7580,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       },
                       child: Container(
                         margin: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 0),
+                          horizontal: 20,
+                          vertical: 0,
+                        ),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: 0.05),
@@ -6255,7 +7596,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               style: TextStyle(color: Colors.white70),
                             ),
                             Text(
-                              _formatRevenue(_currentRoom.totalRevenue),
+                              _formatRevenue(liveRoom.totalRevenue),
                               style: const TextStyle(
                                 color: Color(0xFFFFD700),
                                 fontWeight: FontWeight.bold,
@@ -6263,8 +7604,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               ),
                             ),
                             const SizedBox(width: 4),
-                            const Icon(Icons.diamond,
-                                color: Color(0xFFFFD700), size: 14),
+                            const DynamicDiamondIcon(
+                              width: 16,
+                              height: 16,
+                            ),
                           ],
                         ),
                       ),
@@ -6296,7 +7639,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           _buildRankingListView(weeklyContributors, 'weekly'),
                           _buildRankingListView(monthlyContributors, 'monthly'),
                           _buildRankingListView(
-                              allTimeContributors, 'all time'),
+                            allTimeContributors,
+                            'all time',
+                          ),
                         ],
                       ),
                     ),
@@ -6311,20 +7656,23 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   }
 
   Widget _buildRankingListView(
-      List<RoomContributor> contributors, String type) {
+    List<RoomContributor> contributors,
+    String type,
+  ) {
     if (contributors.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.emoji_events_outlined,
-                size: 64, color: Colors.white.withValues(alpha: 0.2)),
+            Icon(
+              Icons.emoji_events_outlined,
+              size: 64,
+              color: Colors.white.withValues(alpha: 0.2),
+            ),
             const SizedBox(height: 16),
             Text(
               'No $type contributions yet',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.4),
-              ),
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
             ),
           ],
         ),
@@ -6375,7 +7723,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 ? LinearGradient(
                     colors: [
                       rankColor.withValues(alpha: 0.2),
-                      Colors.transparent
+                      Colors.transparent,
                     ],
                     begin: Alignment.centerLeft,
                     end: Alignment.centerRight,
@@ -6383,10 +7731,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 : null,
             border: rank <= 3
                 ? Border(
-                    bottom: BorderSide(color: rankColor.withValues(alpha: 0.3)))
+                    bottom: BorderSide(color: rankColor.withValues(alpha: 0.3)),
+                  )
                 : Border(
                     bottom: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.05))),
+                      color: Colors.white.withValues(alpha: 0.05),
+                    ),
+                  ),
           ),
           child: Row(
             children: [
@@ -6414,11 +7765,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         shape: BoxShape.circle,
                         border: Border.all(color: rankColor, width: 2),
                         boxShadow: [
-                            BoxShadow(
-                              color: rankColor.withValues(alpha: 0.3),
-                              blurRadius: 8,
-                            )
-                          ])
+                          BoxShadow(
+                            color: rankColor.withValues(alpha: 0.3),
+                            blurRadius: 8,
+                          ),
+                        ],
+                      )
                     : null,
                 child: CachedCircleAvatar(
                   imageUrl: contributor.userAvatar ?? '',
@@ -6461,7 +7813,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         ),
                       ),
                       const SizedBox(width: 4),
-                      Icon(Icons.diamond, size: 12, color: rankColor),
+                      const DynamicDiamondIcon(width: 14, height: 14),
                     ],
                   ),
                   Text(
@@ -6500,6 +7852,25 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
       if (userId.isEmpty) return;
 
+      // 1. Write mic invitation to Firestore in real-time
+      await FirebaseFirestore.instance
+          .collection('audio_rooms_v2')
+          .doc(_currentRoom.id)
+          .collection('mic_invites')
+          .doc(userId)
+          .set({
+        'roomId': _currentRoom.id,
+        'targetUserId': userId,
+        'targetUserName': userName,
+        'inviterId': _currentUser.userId,
+        'inviterName': _currentUser.fullname,
+        'inviterImageUrl': _currentUser.photoUrl,
+        'seatNumber': seatNumber,
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. Send push notification in case the user needs a ping
       final userDoc = await FirebaseFirestore.instance
           .collection('Users')
           .doc(userId)
@@ -6509,16 +7880,16 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       if (deviceToken.isNotEmpty) {
         await PushNotificationService.sendNotification(
           type: NotificationType.message,
-          title: 'Room Invitation',
+          title: 'Mic Invitation',
           body:
-              '${_currentUser.fullname} invited you to join room "${_currentRoom.name}"',
+              '${_currentUser.fullname} invited you to the mic in "${_currentRoom.name}"',
           deviceToken: deviceToken,
           call: {
-            'type': 'room_invite',
+            'type': 'mic_invite',
             'roomId': _currentRoom.id,
-            'title': 'Room Invitation',
+            'title': 'Mic Invitation',
             'message':
-                '${_currentUser.fullname} invited you to join room "${_currentRoom.name}"',
+                '${_currentUser.fullname} invited you to the mic in "${_currentRoom.name}"',
           },
         );
       }
@@ -6526,8 +7897,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Invited $userName to join room'),
+            content: Text('Invited $userName to the mic'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -6542,15 +7914,19 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   void _sendChatMessage(String message) {
     if (message.trim().isEmpty) return;
 
-    widget.audioRoomsBloc.add(SendChatMessage(
-      roomId: _currentRoom.id,
-      userId: _currentUser.userId,
-      username:
-          _currentUser.fullname.isNotEmpty ? _currentUser.fullname : 'User',
-      userAvatar:
-          _currentUser.photoUrl.isNotEmpty ? _currentUser.photoUrl : null,
-      message: message.trim(),
-    ));
+    widget.audioRoomsBloc.add(
+      SendChatMessage(
+        roomId: _currentRoom.id,
+        userId: _currentUser.userId,
+        username: _currentUser.fullname.isNotEmpty
+            ? _currentUser.fullname
+            : 'User',
+        userAvatar: _currentUser.photoUrl.isNotEmpty
+            ? _currentUser.photoUrl
+            : null,
+        message: message.trim(),
+      ),
+    );
 
     // Text field clearing is now handled in RoomControls widget
   }
@@ -6561,11 +7937,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Show VoiceRoom Customize sheet (slides from top, auto-sized)
   void _showVoiceRoomCustomize() {
-    if (!_isCurrentUserHost) {
+    if (!_isCurrentUserHostOrAdmin) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-              'Access Denied: Settings are only for Room Owners & Admins.'),
+            'Access Denied: Settings are only for Room Owners & Admins.',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -6576,125 +7953,236 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       context: context,
       barrierDismissible: true,
       barrierLabel: '',
-      barrierColor: Colors.black.withValues(alpha: 0.3),
+      barrierColor: Colors.black.withValues(alpha: 0.4),
       transitionDuration: const Duration(milliseconds: 300),
       pageBuilder: (context, animation, secondaryAnimation) {
         return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, -1),
-            end: const Offset(0, 0),
-          ).animate(CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeInOut,
-          )),
+          position:
+              Tween<Offset>(
+                begin: const Offset(0, -1),
+                end: const Offset(0, 0),
+              ).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeInOut),
+              ),
           child: Align(
             alignment: Alignment.topCenter,
             child: Material(
               color: Colors.transparent,
               child: Container(
                 width: double.infinity,
-                // Auto-size height based on content
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+                  gradient: const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
                     colors: [
-                      const Color(0xFF1E88E5),
-                      const Color(0xFF1565C0),
+                      Color(
+                        0xFA0F1F38,
+                      ), // Elegant deep dark navy with high opacity
+                      Color(
+                        0xFA08101E,
+                      ), // Elegant midnight black with high opacity
                     ],
                   ),
                   borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(20),
-                    bottomRight: Radius.circular(20),
+                    bottomLeft: Radius.circular(24),
+                    bottomRight: Radius.circular(24),
                   ),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      width: 1,
+                    ),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
                 child: SafeArea(
                   child: Column(
-                    mainAxisSize: MainAxisSize.min, // Only take needed space
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // Header
                       Padding(
-                        padding: const EdgeInsets.all(20),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 15,
+                        ),
                         child: Row(
                           children: [
                             const Text(
-                              'Room Settings',
+                              'VoiceRoom Customize',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
                               ),
                             ),
                             const Spacer(),
                             GestureDetector(
                               onTap: () => Navigator.of(context).pop(),
-                              child: const Icon(
-                                Icons.keyboard_arrow_up,
-                                color: Colors.white,
-                                size: 24,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.1),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.keyboard_arrow_up,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
                               ),
                             ),
                           ],
                         ),
                       ),
 
-                      // Content - Room Settings Horizontal List
+                      // 1. Room Mode Row
+                      _buildSectionHeader('Room Mode'),
+                      const SizedBox(height: 10),
                       SizedBox(
-                        height: 120,
+                        height: 95,
                         child: ListView(
                           scrollDirection: Axis.horizontal,
                           padding: const EdgeInsets.symmetric(horizontal: 20),
                           children: [
-                            if (_currentRoom
-                                .isCreator(_currentUser.userId)) ...[
-                              _buildSettingItem('Edit Room', Icons.edit),
-                              const SizedBox(width: 20),
-                              // YouTube Player
-                              _buildSettingItem(
-                                  'YouTube', Icons.video_collection),
-                              const SizedBox(width: 20),
-                              // Ludo Game
-                              _buildSettingItem('Ludo Game', Icons.gamepad),
-                              const SizedBox(width: 20),
-                              // Voting Feature
-                              _buildSettingItem('Voting', Icons.how_to_vote),
-                              const SizedBox(width: 20),
-                              // Custom Roulette Feature
-                              _buildSettingItem('Roulette', Icons.casino),
-                              const SizedBox(width: 20),
-                              // Clear Chat option for host
-                              _buildSettingItem(
-                                  'Clear Chat', Icons.delete_sweep),
-                              const SizedBox(width: 20),
-                              // Admins List
-                              _buildSettingItem('Admins', Icons.shield),
-                              const SizedBox(width: 20),
-                              // Seat Lock Option
-                              _buildSettingItem('Seat Lock', Icons.lock),
-                              const SizedBox(width: 20),
-                              // PK Battle
-                              _buildSettingItem(
-                                  'PK Battle', Icons.sports_kabaddi),
-                              const SizedBox(width: 20),
-                              _buildSettingItem(
-                                  'Music Player', Icons.music_note),
-                              const SizedBox(width: 20),
-                              // Live Multiple Mode (Live category only)
-                              if (_currentRoom.category == 'Live') ...[
-                                _buildSettingItem(
-                                    'Live Mode', Icons.video_call),
-                                const SizedBox(width: 20),
-                              ],
-                            ],
-                            _buildSettingItem('Room Decor', Icons.format_paint),
-                            const SizedBox(width: 20),
-                            _buildSettingItem(
-                                'Room Mode', Icons.dashboard_customize),
+                            _buildCustomizeItem('Ludo', Icons.gamepad, 'mode'),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Carrom',
+                              Icons.blur_circular,
+                              'mode',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'YouTube',
+                              Icons.video_collection,
+                              'mode',
+                            ),
                           ],
                         ),
                       ),
+                      const SizedBox(height: 15),
 
-                      const SizedBox(height: 30),
+                      // 2. Room Game Row
+                      _buildSectionHeader('Room Game'),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 95,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          children: [
+                            _buildCustomizeItem(
+                              'Ludo Champion',
+                              Icons.casino,
+                              'game',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Vote Pro',
+                              Icons.how_to_vote,
+                              'game',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem('Dice', Icons.casino, 'game'),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Custom Roulette',
+                              Icons.circle_notifications,
+                              'game',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'PK Battle',
+                              Icons.sports_kabaddi,
+                              'game',
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+
+                      // 3. Room Settings Row
+                      _buildSectionHeader('Room Settings'),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 95,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          children: [
+                            _buildCustomizeItem(
+                              'Music',
+                              Icons.music_note,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Decor',
+                              Icons.format_paint,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Announcement',
+                              Icons.campaign,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Switch Mode',
+                              Icons.rocket_launch,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Lock Mic',
+                              Icons.lock,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Mute Mic',
+                              Icons.mic_off,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Ban Comment',
+                              Icons.speaker_notes_off,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Clear Chat',
+                              Icons.delete_sweep,
+                              'settings',
+                            ),
+                            const SizedBox(width: 15),
+                            _buildCustomizeItem(
+                              'Admins',
+                              Icons.shield,
+                              'settings',
+                            ),
+                            if (_currentRoom.category == 'Live') ...[
+                              const SizedBox(width: 15),
+                              _buildCustomizeItem(
+                                'Live Mode',
+                                Icons.video_call,
+                                'settings',
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 25),
                     ],
                   ),
                 ),
@@ -6711,14 +8199,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF14141F),
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(24),
-              topRight: Radius.circular(24),
-            ),
+        return Material(
+          color: const Color(0xFF14141F),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
           ),
+          clipBehavior: Clip.antiAlias,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -6745,41 +8232,55 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               ListTile(
                 tileColor: Colors.transparent,
                 leading: const Icon(Icons.person, color: Colors.blue),
-                title: const Text('Single Host',
-                    style: TextStyle(color: Colors.white)),
-                subtitle: const Text('Only the host is visible',
-                    style: TextStyle(color: Colors.grey, fontSize: 12)),
+                title: const Text(
+                  'Single Host',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Only the host is visible',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
                 trailing: !_currentRoom.settings.isLiveMultipleMode
                     ? const Icon(Icons.check, color: Colors.blue)
                     : null,
                 onTap: () {
                   Navigator.pop(context);
-                  widget.audioRoomsBloc.add(UpdateRoomSettings(
-                    roomId: _currentRoom.id,
-                    userId: _currentUser.userId,
-                    settings: _currentRoom.settings
-                        .copyWith(isLiveMultipleMode: false),
-                  ));
+                  widget.audioRoomsBloc.add(
+                    UpdateRoomSettings(
+                      roomId: _currentRoom.id,
+                      userId: _currentUser.userId,
+                      settings: _currentRoom.settings.copyWith(
+                        isLiveMultipleMode: false,
+                      ),
+                    ),
+                  );
                 },
               ),
               ListTile(
                 tileColor: Colors.transparent,
                 leading: const Icon(Icons.group, color: Colors.blue),
-                title: const Text('Multiple Hosts',
-                    style: TextStyle(color: Colors.white)),
-                subtitle: const Text('Host + 4 guests',
-                    style: TextStyle(color: Colors.grey, fontSize: 12)),
+                title: const Text(
+                  'Multiple Hosts',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Host + 4 guests',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
                 trailing: _currentRoom.settings.isLiveMultipleMode
                     ? const Icon(Icons.check, color: Colors.blue)
                     : null,
                 onTap: () {
                   Navigator.pop(context);
-                  widget.audioRoomsBloc.add(UpdateRoomSettings(
-                    roomId: _currentRoom.id,
-                    userId: _currentUser.userId,
-                    settings: _currentRoom.settings
-                        .copyWith(isLiveMultipleMode: true),
-                  ));
+                  widget.audioRoomsBloc.add(
+                    UpdateRoomSettings(
+                      roomId: _currentRoom.id,
+                      userId: _currentUser.userId,
+                      settings: _currentRoom.settings.copyWith(
+                        isLiveMultipleMode: true,
+                      ),
+                    ),
+                  );
                 },
               ),
               const SizedBox(height: 20),
@@ -6792,75 +8293,374 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   void _showSeatLockOptions() {
     final audioRoomsBloc = widget.audioRoomsBloc;
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black45,
       builder: (context) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF14141F),
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(24),
-              topRight: Radius.circular(24),
+        return Center(
+          child: Material(
+            color: const Color(0xFF22252D),
+            borderRadius: BorderRadius.circular(12),
+            elevation: 8,
+            shadowColor: Colors.black45,
+            child: Container(
+              width: 180,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  width: 0.5,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Lock (All)
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                      audioRoomsBloc.add(
+                        ToggleAllSeatsLock(
+                          roomId: widget.room.id,
+                          hostId: _currentUser.userId,
+                          isLocked: true,
+                        ),
+                      );
+                    },
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock_outline_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Lock (All)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                              decoration: TextDecoration.none,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // Divider
+                  Container(
+                    height: 0.5,
+                    color: Colors.white.withValues(alpha: 0.1),
+                  ),
+
+                  // Unlock (All)
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                      audioRoomsBloc.add(
+                        ToggleAllSeatsLock(
+                          roomId: widget.room.id,
+                          hostId: _currentUser.userId,
+                          isLocked: false,
+                        ),
+                      );
+                    },
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock_open_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Unlock (All)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                              decoration: TextDecoration.none,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
+        );
+      },
+    );
+  }
+
+  void _showMuteMicOptions() {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black45,
+      builder: (context) {
+        return Center(
+          child: Material(
+            color: const Color(0xFF22252D),
+            borderRadius: BorderRadius.circular(12),
+            elevation: 8,
+            shadowColor: Colors.black45,
+            child: Container(
+              width: 180,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  width: 0.5,
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 16),
-                child: Text(
-                  'Seat Lock',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Mute (All)
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.audioRoomsBloc.add(
+                        ToggleAllMicsMute(
+                          roomId: widget.room.id,
+                          hostId: _currentUser.userId,
+                          muteAll: true,
+                        ),
+                      );
+                    },
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.mic_off_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Mute (All)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                              decoration: TextDecoration.none,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
+
+                  // Divider
+                  Container(
+                    height: 0.5,
+                    color: Colors.white.withValues(alpha: 0.1),
+                  ),
+
+                  // Unmute (All)
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.audioRoomsBloc.add(
+                        ToggleAllMicsMute(
+                          roomId: widget.room.id,
+                          hostId: _currentUser.userId,
+                          muteAll: false,
+                        ),
+                      );
+                    },
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.mic_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Unmute (All)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                              decoration: TextDecoration.none,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showBanCommentOptions() {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black45,
+      builder: (context) {
+        return Center(
+          child: Material(
+            color: const Color(0xFF22252D),
+            borderRadius: BorderRadius.circular(12),
+            elevation: 8,
+            shadowColor: Colors.black45,
+            child: Container(
+              width: 180,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  width: 0.5,
                 ),
               ),
-              ListTile(
-                tileColor: Colors.transparent,
-                leading: const Icon(Icons.lock, color: Colors.red),
-                title: const Text('Lock All Seats',
-                    style: TextStyle(color: Colors.white)),
-                onTap: () {
-                  Navigator.pop(context);
-                  audioRoomsBloc.add(
-                    ToggleAllSeatsLock(
-                      roomId: widget.room.id,
-                      hostId: _currentUser.userId,
-                      isLocked: true,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Ban (All)
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.audioRoomsBloc.add(
+                        ToggleAllCommentsBan(
+                          roomId: widget.room.id,
+                          hostId: _currentUser.userId,
+                          banAll: true,
+                        ),
+                      );
+                    },
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
                     ),
-                  );
-                },
-              ),
-              ListTile(
-                tileColor: Colors.transparent,
-                leading: const Icon(Icons.lock_open, color: Colors.green),
-                title: const Text('Unlock All Seats',
-                    style: TextStyle(color: Colors.white)),
-                onTap: () {
-                  Navigator.pop(context);
-                  audioRoomsBloc.add(
-                    ToggleAllSeatsLock(
-                      roomId: widget.room.id,
-                      hostId: _currentUser.userId,
-                      isLocked: false,
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.speaker_notes_off_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Ban (All)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                              decoration: TextDecoration.none,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  );
-                },
+                  ),
+
+                  // Divider
+                  Container(
+                    height: 0.5,
+                    color: Colors.white.withValues(alpha: 0.1),
+                  ),
+
+                  // Unban (All)
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.audioRoomsBloc.add(
+                        ToggleAllCommentsBan(
+                          roomId: widget.room.id,
+                          hostId: _currentUser.userId,
+                          banAll: false,
+                        ),
+                      );
+                    },
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.chat_bubble_outline_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Unban (All)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                              decoration: TextDecoration.none,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 20),
-            ],
+            ),
           ),
         );
       },
@@ -6869,9 +8669,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Build setting item
   void _showYoutubeSheet() {
-    final hostParticipant = _currentRoom.participants
-        .firstWhereOrNull((p) => p.userId == _currentRoom.creatorId);
-    final isHostInSeat1 = hostParticipant != null &&
+    final hostParticipant = _currentRoom.participants.firstWhereOrNull(
+      (p) => p.userId == _currentRoom.creatorId,
+    );
+    final isHostInSeat1 =
+        hostParticipant != null &&
         hostParticipant.isSeated &&
         hostParticipant.seatNumber == 1;
 
@@ -6904,34 +8706,200 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     );
   }
 
-  Widget _buildSettingItem(String title, IconData icon) {
+  String _getSettingKey(String title) {
+    switch (title) {
+      case 'Edit Room':
+        return 'edit_room';
+      case 'YouTube':
+        return 'youtube';
+      case 'Ludo Game':
+        return 'ludo_game';
+      case 'Carrom Game':
+        return 'carrom_game';
+      case 'Voting':
+        return 'voting';
+      case 'Roulette':
+        return 'roulette';
+      case 'Clear Chat':
+        return 'clear_chat';
+      case 'Admins':
+        return 'admins';
+      case 'Seat Lock':
+        return 'seat_lock';
+      case 'PK Battle':
+        return 'pk_battle';
+      case 'Music Player':
+        return 'music_player';
+      case 'Live Mode':
+        return 'live_mode';
+      case 'Room Decor':
+        return 'room_decor';
+      case 'Room Mode':
+        return 'room_mode';
+      case 'Mute Mic':
+        return 'mute_mic';
+      case 'Ban Comment':
+        return 'ban_comment';
+      default:
+        return title.toLowerCase().replaceAll(' ', '_');
+    }
+  }
+
+  String? _getCustomIconUrl(AppThemeService themeService, String settingKey) {
+    // 1. Try direct lookup in RxMap
+    if (themeService.roomSettingsIcons.containsKey(settingKey)) {
+      return themeService.roomSettingsIcons[settingKey];
+    }
+
+    // 2. Try fallbacks for naming format discrepancies between admin panel & sheet keys
+    String? fallbackKey;
+    switch (settingKey) {
+      case 'music':
+        fallbackKey = 'music_player';
+        break;
+      case 'music_player':
+        fallbackKey = 'music';
+        break;
+      case 'decor':
+        fallbackKey = 'room_decor';
+        break;
+      case 'room_decor':
+        fallbackKey = 'decor';
+        break;
+      case 'announcement':
+        fallbackKey = 'edit_room';
+        break;
+      case 'edit_room':
+        fallbackKey = 'announcement';
+        break;
+      case 'switch_mode':
+        fallbackKey = 'room_mode';
+        break;
+      case 'room_mode':
+        fallbackKey = 'switch_mode';
+        break;
+      case 'ludo':
+        fallbackKey = 'ludo_game';
+        break;
+      case 'ludo_game':
+        fallbackKey = 'ludo';
+        break;
+      case 'carrom':
+        fallbackKey = 'carrom_game';
+        break;
+      case 'carrom_game':
+        fallbackKey = 'carrom';
+        break;
+      case 'vote_pro':
+        fallbackKey = 'voting';
+        break;
+      case 'voting':
+        fallbackKey = 'vote_pro';
+        break;
+      case 'custom_roulette':
+        fallbackKey = 'roulette';
+        break;
+      case 'roulette':
+        fallbackKey = 'custom_roulette';
+        break;
+      case 'lock_mic':
+        fallbackKey = 'seat_lock';
+        break;
+      case 'seat_lock':
+        fallbackKey = 'lock_mic';
+        break;
+      case 'mute_mic':
+        fallbackKey = 'mute_all';
+        break;
+      case 'mute_all':
+        fallbackKey = 'mute_mic';
+        break;
+      case 'ban_comment':
+        fallbackKey = 'comment_ban';
+        break;
+      case 'comment_ban':
+        fallbackKey = 'ban_comment';
+        break;
+    }
+
+    if (fallbackKey != null &&
+        themeService.roomSettingsIcons.containsKey(fallbackKey)) {
+      return themeService.roomSettingsIcons[fallbackKey];
+    }
+
+    return null;
+  }
+
+
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          title,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.6),
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCustomizeItem(
+    String title,
+    IconData defaultIcon,
+    String category,
+  ) {
+    // Map the title to key for theme custom icons
+    String settingKey = '';
+    if (title == 'Music') {
+      settingKey = _getSettingKey('Music Player');
+    } else if (title == 'Decor') {
+      settingKey = _getSettingKey('Room Decor');
+    } else if (title == 'Announcement') {
+      settingKey = _getSettingKey('Edit Room');
+    } else if (title == 'Switch Mode') {
+      settingKey = _getSettingKey('Room Mode');
+    } else {
+      settingKey = _getSettingKey(title);
+    }
+
     return GestureDetector(
       onTap: () {
+        // First dismiss the customize dialog
         Navigator.of(context).pop();
-        if (title == 'Room Decor') {
-          _showRoomDecorSheet();
-        } else if (title == 'Room Mode') {
-          _showSeatConfiguration();
-        } else if (title == 'Edit Room') {
-          _showEditRoomDialog();
-        } else if (title == 'YouTube') {
-          _showYoutubeSheet();
-        } else if (title == 'Ludo Game') {
+
+        // Execute action based on title
+        if (title == 'Ludo Champion' || title == 'Ludo' || title == 'Ludo Game' || title == 'ludugame-1') {
           if (!_currentRoom.isLudoActive) {
             LudoSetupBottomSheet.show(context, _currentRoom);
           }
-        } else if (title == 'Voting') {
+        } else if (title == 'Carrom') {
+          if (!_currentRoom.isCarromActive) {
+            CarromSetupBottomSheet.show(context, _currentRoom);
+          }
+        } else if (title == 'Vote Pro') {
           if (!_currentRoom.isVotingActive) {
             VotingSetupSheet.show(context, _currentRoom, _currentUser.userId);
           }
-        } else if (title == 'Roulette') {
-          final rouletteController = Get.isRegistered<RouletteController>(
-                  tag: 'roulette_${widget.room.id}')
+        } else if (title == 'Custom Roulette') {
+          final rouletteController =
+              Get.isRegistered<RouletteController>(
+                tag: 'roulette_${widget.room.id}',
+              )
               ? Get.find<RouletteController>(tag: 'roulette_${widget.room.id}')
               : Get.put(
-                  RouletteController(widget.room.id,
-                      isHost: _isCurrentUserHost),
-                  tag: 'roulette_${widget.room.id}');
+                  RouletteController(
+                    widget.room.id,
+                    isHost: _isCurrentUserHostOrAdmin,
+                  ),
+                  tag: 'roulette_${widget.room.id}',
+                );
           showModalBottomSheet(
             context: context,
             isScrollControlled: true,
@@ -6939,55 +8907,322 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             builder: (context) =>
                 RouletteSelectionSheet(controller: rouletteController),
           );
-        } else if (title == 'Clear Chat') {
-          _showClearChatConfirmation();
+        } else if (title == 'Dice') {
+          // Send local dice roll!
+          final rolledNumber = Random().nextInt(6) + 1;
+          EmojiChatService.sendDiceMessage(
+            roomId: _currentRoom.id,
+            userId: _currentUser.userId,
+            username: _currentUser.fullname.isNotEmpty
+                ? _currentUser.fullname
+                : 'User',
+            userAvatar: _currentUser.photoUrl.isNotEmpty
+                ? _currentUser.photoUrl
+                : null,
+            rolledNumber: rolledNumber,
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Rolled a $rolledNumber!'),
+              duration: const Duration(seconds: 1),
+            ),
+          );
         } else if (title == 'PK Battle') {
           _showPKTypeSelectionSheet();
-        } else if (title == 'Music Player') {
+        } else if (title == 'Music') {
           setState(() {
             _showMusicPlayer = true;
           });
+        } else if (title == 'Decor') {
+          _showRoomDecorSheet();
+        } else if (title == 'Announcement') {
+          _showAnnouncementDialog();
+        } else if (title == 'Switch Mode') {
+          _showSeatConfiguration();
+        } else if (title == 'Lock Mic') {
+          _showSeatLockOptions();
+        } else if (title == 'Mute Mic') {
+          _showMuteMicOptions();
+        } else if (title == 'Ban Comment') {
+          _showBanCommentOptions();
+        } else if (title == 'Clear Chat') {
+          _showClearChatConfirmation();
         } else if (title == 'Admins') {
           _showAdminsListBottomSheet();
-        } else if (title == 'Seat Lock') {
-          _showSeatLockOptions();
+        } else if (title == 'YouTube') {
+          _showYoutubeSheet();
         } else if (title == 'Live Mode') {
           _showLiveModeSettings();
+        } else {
+          // Carrom, Jackaroo, Football, King Game, Password Box, Lucky Wheel, Mora, etc.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$title is coming soon!'),
+              backgroundColor: Colors.blueAccent,
+            ),
+          );
         }
       },
       child: SizedBox(
-        width: 100,
+        width: 75,
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 70,
-              height: 70,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Icon(
-                icon,
-                color: Colors.white,
-                size: 28,
-              ),
-            ),
-            const SizedBox(height: 12),
+            Obx(() {
+              String? customIconUrl;
+              if (Get.isRegistered<AppThemeService>()) {
+                final themeService = Get.find<AppThemeService>();
+                customIconUrl = _getCustomIconUrl(themeService, settingKey);
+              }
+
+              // Determine icon container styling
+              Widget iconWidget;
+              if (customIconUrl != null && customIconUrl.isNotEmpty) {
+                iconWidget = ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: CachedNetworkImage(
+                    key: ValueKey(customIconUrl),
+                    imageUrl: customIconUrl,
+                    width: 56,
+                    height: 56,
+                    fit: BoxFit.cover,
+                    errorWidget: (context, url, error) =>
+                        _buildFallbackIcon(defaultIcon, category, title),
+                  ),
+                );
+              } else {
+                iconWidget = _buildFallbackIcon(defaultIcon, category, title);
+              }
+
+              return iconWidget;
+            }),
+            const SizedBox(height: 8),
             Text(
               title,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 11,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w500,
               ),
               textAlign: TextAlign.center,
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildLudoBoardIcon() {
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildLudoQuadrant(const Color(0xFFE53935))),
+                const SizedBox(width: 3),
+                Expanded(child: _buildLudoQuadrant(const Color(0xFF43A047))),
+              ],
+            ),
+          ),
+          const SizedBox(height: 3),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildLudoQuadrant(const Color(0xFF1E88E5))),
+                const SizedBox(width: 3),
+                Expanded(child: _buildLudoQuadrant(const Color(0xFFFFB300))),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLudoQuadrant(Color color) {
+    return Container(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Center(
+        child: Container(
+          width: 12,
+          height: 12,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFallbackIcon(IconData icon, String category, String title) {
+    if (category == 'settings') {
+      // Circular border with slight opacity background (just like standard settings in screenshot)
+      return Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.25),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.2),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(icon, color: Colors.white, size: 24),
+      );
+    } else {
+      // Custom authentic 4-color Ludo board icon matching VoiceRoom Customize screenshot
+      if (title == 'Ludo' || title == 'Ludo Game') {
+        return _buildLudoBoardIcon();
+      }
+
+      // Colorful gradient background for game/mode icons to look highly premium and 3D-ish
+      Gradient gradient;
+      switch (title) {
+        case 'Ludo':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF00B4DB), Color(0xFF0083B0)],
+          );
+          break;
+        case 'YouTube':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFFF0000), Color(0xFF7F0000)],
+          );
+          break;
+        case 'Carrom':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFE65C00), Color(0xFFF9D423)],
+          );
+          break;
+        case 'Jackaroo':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
+          );
+          break;
+        case 'Football':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF11998E), Color(0xFF38EF7D)],
+          );
+          break;
+        case 'King Game':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFF2994A), Color(0xFFF2C94C)],
+          );
+          break;
+        case 'Password Box':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF833AB4), Color(0xFFFD1D1D)],
+          );
+          break;
+        case 'Vote Pro':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFFF8C00), Color(0xFFFF0080)],
+          );
+          break;
+        case 'Lucky Wheel':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFF000FF), Color(0xFF7B00FF)],
+          );
+          break;
+        case 'Dice':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF00C9FF), Color(0xFF92FE9D)],
+          );
+          break;
+        case 'Mora':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFFF512F), Color(0xFFDD2476)],
+          );
+          break;
+        case 'Custom Roulette':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1D976C), Color(0xFF93F9B9)],
+          );
+          break;
+        case 'PK Battle':
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF0052D4), Color(0xFF4364F7)],
+          );
+          break;
+        default:
+          gradient = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF4B6CB7), Color(0xFF182848)],
+          );
+      }
+
+      return Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          gradient: gradient,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Icon(icon, color: Colors.white, size: 26),
+      );
+    }
   }
 
   void _showPKTypeSelectionSheet() {
@@ -7008,28 +9243,42 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                      color: Colors.white24,
-                      borderRadius: BorderRadius.circular(2)),
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
-              const Text('Select PK Type',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold)),
+              const Text(
+                'Select PK Type',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 24),
               ListTile(
-                leading: const Icon(Icons.people,
-                    color: Colors.blueAccent, size: 30),
-                title: const Text('In-Room PK',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: const Text('PK between users in this room',
-                    style: TextStyle(color: Colors.white70)),
+                leading: const Icon(
+                  Icons.people,
+                  color: Colors.blueAccent,
+                  size: 30,
+                ),
+                title: const Text(
+                  'In-Room PK',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: const Text(
+                  'PK between users in this room',
+                  style: TextStyle(color: Colors.white70),
+                ),
                 tileColor: Colors.white12,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   _showPKConfigurationSheet();
@@ -7037,16 +9286,26 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               ),
               const SizedBox(height: 16),
               ListTile(
-                leading: const Icon(Icons.public,
-                    color: Colors.pinkAccent, size: 30),
-                title: const Text('Room vs Room PK',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: const Text('PK against another audio room',
-                    style: TextStyle(color: Colors.white70)),
+                leading: const Icon(
+                  Icons.public,
+                  color: Colors.pinkAccent,
+                  size: 30,
+                ),
+                title: const Text(
+                  'Room vs Room PK',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: const Text(
+                  'PK against another audio room',
+                  style: TextStyle(color: Colors.white70),
+                ),
                 tileColor: Colors.white12,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   showModalBottomSheet(
@@ -7055,7 +9314,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     backgroundColor: Colors.transparent,
                     builder: (context) => Padding(
                       padding: EdgeInsets.only(
-                          bottom: MediaQuery.of(context).viewInsets.bottom),
+                        bottom: MediaQuery.of(context).viewInsets.bottom > 0
+                            ? MediaQuery.of(context).viewInsets.bottom
+                            : MediaQuery.of(context).padding.bottom,
+                      ),
                       child: RoomPKSettingsSheet(room: _currentRoom),
                     ),
                   );
@@ -7071,17 +9333,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   void _showPKConfigurationSheet() {
     // Verify Seat 1
-    final seat1Participant =
-        _currentRoom.participants.cast<AudioRoomParticipant?>().firstWhere(
-              (p) => p?.seatNumber == 1,
-              orElse: () => null,
-            );
+    final seat1Participant = _currentRoom.participants
+        .cast<AudioRoomParticipant?>()
+        .firstWhere((p) => p?.seatNumber == 1, orElse: () => null);
     if (seat1Participant?.userId != _currentUser.userId) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content:
-                Text('Only the user in Seat 1 can start or extend PK battles.'),
-            backgroundColor: Colors.red),
+          content: Text(
+            'Only the user in Seat 1 can start or extend PK battles.',
+          ),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
@@ -7096,8 +9358,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     int selectedTeamSize = 1;
     String? leftUserId;
     String? rightUserId;
-    final seatedUsers =
-        _currentRoom.participants.where((p) => p.isSeated).toList();
+    final seatedUsers = _currentRoom.participants
+        .where((p) => p.isSeated)
+        .toList();
 
     showModalBottomSheet(
       context: context,
@@ -7114,7 +9377,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 left: 20,
                 right: 20,
                 top: 16,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                bottom: MediaQuery.of(context).viewInsets.bottom > 0
+                    ? MediaQuery.of(context).viewInsets.bottom + 24
+                    : MediaQuery.of(context).padding.bottom + 24,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -7125,22 +9390,29 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                          color: Colors.white24,
-                          borderRadius: BorderRadius.circular(2)),
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text('PK Battle Configuration',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold)),
+                  const Text(
+                    'PK Battle Configuration',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 24),
-                  const Text('Duration',
-                      style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500)),
+                  const Text(
+                    'Duration',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -7151,33 +9423,40 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             setState(() => selectedDuration = duration),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: isSelected ? Colors.pink : Colors.white12,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                                color: isSelected
-                                    ? Colors.pinkAccent
-                                    : Colors.transparent),
+                              color: isSelected
+                                  ? Colors.pinkAccent
+                                  : Colors.transparent,
+                            ),
                           ),
-                          child: Text('$duration min',
-                              style: TextStyle(
-                                  color: isSelected
-                                      ? Colors.white
-                                      : Colors.white70,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal)),
+                          child: Text(
+                            '$duration min',
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : Colors.white70,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
+                          ),
                         ),
                       );
                     }).toList(),
                   ),
                   const SizedBox(height: 24),
-                  const Text('Team Size',
-                      style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500)),
+                  const Text(
+                    'Team Size',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -7193,40 +9472,49 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         }),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
-                            color:
-                                isSelected ? Colors.blueAccent : Colors.white12,
+                            color: isSelected
+                                ? Colors.blueAccent
+                                : Colors.white12,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                                color: isSelected
-                                    ? Colors.lightBlueAccent
-                                    : Colors.transparent),
+                              color: isSelected
+                                  ? Colors.lightBlueAccent
+                                  : Colors.transparent,
+                            ),
                           ),
-                          child: Text('${size}vs$size',
-                              style: TextStyle(
-                                  color: isSelected
-                                      ? Colors.white
-                                      : Colors.white70,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal)),
+                          child: Text(
+                            '${size}vs$size',
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : Colors.white70,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
+                          ),
                         ),
                       );
                     }).toList(),
                   ),
                   if (selectedTeamSize == 1) ...[
                     const SizedBox(height: 24),
-                    const Text('Select Users for 1v1',
-                        style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500)),
+                    const Text(
+                      'Select Users for 1v1',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     if (seatedUsers.length < 2)
-                      const Text('Not enough users seated to start 1v1',
-                          style:
-                              TextStyle(color: Colors.redAccent, fontSize: 13))
+                      const Text(
+                        'Not enough users seated to start 1v1',
+                        style: TextStyle(color: Colors.redAccent, fontSize: 13),
+                      )
                     else
                       SizedBox(
                         height: 120,
@@ -7258,16 +9546,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   color: isLeft
                                       ? Colors.blueAccent.withValues(alpha: 0.2)
                                       : (isRight
-                                          ? Colors.redAccent
-                                              .withValues(alpha: 0.2)
-                                          : Colors.white12),
+                                            ? Colors.redAccent.withValues(
+                                                alpha: 0.2,
+                                              )
+                                            : Colors.white12),
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: isLeft
                                         ? Colors.blueAccent
                                         : (isRight
-                                            ? Colors.redAccent
-                                            : Colors.transparent),
+                                              ? Colors.redAccent
+                                              : Colors.transparent),
                                     width: 2,
                                   ),
                                 ),
@@ -7275,30 +9564,37 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     CircleAvatar(
-                                        radius: 20,
-                                        backgroundImage: u.userImageUrl != null
-                                            ? NetworkImage(u.userImageUrl!)
-                                            : null,
-                                        child: u.userImageUrl == null
-                                            ? const Icon(Icons.person, size: 20)
-                                            : null),
+                                      radius: 20,
+                                      backgroundImage: u.userImageUrl != null
+                                          ? NetworkImage(u.userImageUrl!)
+                                          : null,
+                                      child: u.userImageUrl == null
+                                          ? const Icon(Icons.person, size: 20)
+                                          : null,
+                                    ),
                                     const SizedBox(height: 8),
-                                    Text(u.userName,
-                                        style: const TextStyle(
-                                            color: Colors.white, fontSize: 10),
-                                        overflow: TextOverflow.ellipsis),
                                     Text(
-                                        isLeft
-                                            ? 'Team A'
-                                            : (isRight ? 'Team B' : 'Select'),
-                                        style: TextStyle(
-                                            color: isLeft
-                                                ? Colors.blueAccent
-                                                : (isRight
-                                                    ? Colors.redAccent
-                                                    : Colors.white54),
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold)),
+                                      u.userName,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text(
+                                      isLeft
+                                          ? 'Team A'
+                                          : (isRight ? 'Team B' : 'Select'),
+                                      style: TextStyle(
+                                        color: isLeft
+                                            ? Colors.blueAccent
+                                            : (isRight
+                                                  ? Colors.redAccent
+                                                  : Colors.white54),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -7316,10 +9612,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         if (selectedTeamSize == 1 &&
                             (leftUserId == null || rightUserId == null)) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text(
-                                      'Please select two users for 1v1 PK.'),
-                                  backgroundColor: Colors.red));
+                            const SnackBar(
+                              content: Text(
+                                'Please select two users for 1v1 PK.',
+                              ),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
                           return;
                         }
                         Navigator.pop(context);
@@ -7331,27 +9630,36 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           startTime: DateTime.now(),
                           leftTeamScore: 0,
                           rightTeamScore: 0,
-                          leftTeamUserIds:
-                              leftUserId != null ? [leftUserId!] : [],
-                          rightTeamUserIds:
-                              rightUserId != null ? [rightUserId!] : [],
+                          leftTeamUserIds: leftUserId != null
+                              ? [leftUserId!]
+                              : [],
+                          rightTeamUserIds: rightUserId != null
+                              ? [rightUserId!]
+                              : [],
                         );
 
-                        widget.audioRoomsBloc.add(UpdatePKBattleState(
-                          roomId: _currentRoom.id,
-                          userId: _currentUser.userId,
-                          pkBattleState: newPkState,
-                        ));
+                        widget.audioRoomsBloc.add(
+                          UpdatePKBattleState(
+                            roomId: _currentRoom.id,
+                            userId: _currentUser.userId,
+                            pkBattleState: newPkState,
+                          ),
+                        );
                       },
                       style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.pinkAccent,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(25))),
-                      child: const Text('Start PK Battle',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold)),
+                        backgroundColor: Colors.pinkAccent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25),
+                        ),
+                      ),
+                      child: const Text(
+                        'Start PK Battle',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -7370,8 +9678,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       context: context,
       backgroundColor: const Color(0xFF0F1724),
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      builder: (context) {
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setState) {
             return Padding(
@@ -7380,12 +9689,34 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Extend PK Time',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 24),
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'PK Battle Controls',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Extend Time',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [1, 2, 5, 10].map((duration) {
@@ -7395,56 +9726,101 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             setState(() => additionalDuration = duration),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: isSelected ? Colors.green : Colors.white12,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                                color: isSelected
-                                    ? Colors.greenAccent
-                                    : Colors.transparent),
+                              color: isSelected
+                                  ? Colors.greenAccent
+                                  : Colors.transparent,
+                            ),
                           ),
-                          child: Text('+$duration min',
-                              style: TextStyle(
-                                  color: isSelected
-                                      ? Colors.white
-                                      : Colors.white70,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal)),
+                          child: Text(
+                            '+$duration min',
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : Colors.white70,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
+                          ),
                         ),
                       );
                     }).toList(),
                   ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(context);
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 48,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
 
-                        final currentState = _currentRoom.pkBattleState;
-                        final newDuration =
-                            currentState.durationMinutes + additionalDuration;
+                              final currentState = _currentRoom.pkBattleState;
+                              final newDuration =
+                                  currentState.durationMinutes + additionalDuration;
 
-                        widget.audioRoomsBloc.add(UpdatePKBattleState(
-                          roomId: _currentRoom.id,
-                          userId: _currentUser.userId,
-                          pkBattleState: currentState.copyWith(
-                              durationMinutes: newDuration),
-                        ));
-                      },
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(25))),
-                      child: const Text('Extend Time',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold)),
-                    ),
+                              widget.audioRoomsBloc.add(
+                                UpdatePKBattleState(
+                                  roomId: _currentRoom.id,
+                                  userId: _currentUser.userId,
+                                  pkBattleState: currentState.copyWith(
+                                    durationMinutes: newDuration,
+                                  ),
+                                ),
+                              );
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                            ),
+                            icon: const Icon(Icons.add_alarm, color: Colors.white, size: 18),
+                            label: const Text(
+                              'Extend Time',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: SizedBox(
+                          height: 48,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              _showConfirmEndPKDialogFromRoomScreen();
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.redAccent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                            ),
+                            icon: const Icon(Icons.stop_circle_outlined, color: Colors.white, size: 18),
+                            label: const Text(
+                              'End PK Battle',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -7455,6 +9831,55 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     );
   }
 
+  void _showConfirmEndPKDialogFromRoomScreen() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'End PK Battle?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Are you sure you want to end the PK battle early? Whichever team has earned more points will win.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              final currentState = _currentRoom.pkBattleState;
+              if (!currentState.isActive) return;
+
+              final endedState = currentState.copyWith(
+                durationMinutes: 0,
+                startTime: DateTime.now().subtract(const Duration(minutes: 10)),
+              );
+
+              widget.audioRoomsBloc.add(
+                UpdatePKBattleState(
+                  roomId: _currentRoom.id,
+                  userId: _currentUser.userId,
+                  pkBattleState: endedState,
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('End PK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Show Clear Chat confirmation dialog
   void _showClearChatConfirmation() {
     showDialog(
@@ -7462,7 +9887,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       builder: (context) => AlertDialog(
         title: const Text('Clear Chat History'),
         content: const Text(
-            'Are you sure you want to delete ALL messages in this room? This cannot be undone.'),
+          'Are you sure you want to delete ALL messages in this room? This cannot be undone.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -7487,130 +9913,88 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     );
   }
 
-  /// Show edit room dialog
-  void _showEditRoomDialog() {
-    final nameController = TextEditingController(text: _currentRoom.name);
-    final descriptionController =
-        TextEditingController(text: _currentRoom.description);
-    File? pickedImage;
+  void _showAnnouncementDialog() {
+    final announcementController = TextEditingController(
+      text: _currentRoom.settings.announcement ?? '',
+    );
 
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          backgroundColor: const Color(0xFF1E1E1E),
-          title: const Text('Edit Room', style: TextStyle(color: Colors.white)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                GestureDetector(
-                  onTap: () async {
-                    final picker = ImagePicker();
-                    final image =
-                        await picker.pickImage(source: ImageSource.gallery);
-                    if (image != null) {
-                      setState(() {
-                        pickedImage = File(image.path);
-                      });
-                    }
-                  },
-                  child: CircleAvatar(
-                    radius: 40,
-                    backgroundImage: pickedImage != null
-                        ? FileImage(pickedImage!) as ImageProvider
-                        : (_currentRoom.imageUrl != null
-                            ? CachedNetworkImageProvider(_currentRoom.imageUrl!)
-                            : null),
-                    child:
-                        (pickedImage == null && _currentRoom.imageUrl == null)
-                            ? const Icon(Icons.add_a_photo, color: Colors.white)
-                            : null,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: nameController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    labelText: 'Room Name',
-                    labelStyle: const TextStyle(color: Colors.grey),
-                    filled: true,
-                    fillColor: Colors.black,
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Colors.grey),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFF00BCD4)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: descriptionController,
-                  style: const TextStyle(color: Colors.white),
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    labelText: 'Description',
-                    labelStyle: const TextStyle(color: Colors.grey),
-                    filled: true,
-                    fillColor: Colors.black,
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Colors.grey),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFF00BCD4)),
-                    ),
-                  ),
-                ),
-              ],
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E142B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Room Announcement',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+          ),
+        ),
+        content: TextField(
+          controller: announcementController,
+          maxLines: 4,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Enter announcement here...',
+            hintStyle: const TextStyle(color: Colors.white30),
+            filled: true,
+            fillColor: Colors.white.withValues(alpha: 0.05),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.all(12),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white70),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ElevatedButton(
+            onPressed: () {
+              final newAnnouncement = announcementController.text.trim();
+              Navigator.pop(context);
+              widget.audioRoomsBloc.add(
+                UpdateRoomAnnouncement(
+                  roomId: _currentRoom.id,
+                  userId: _currentUser.userId,
+                  announcement: newAnnouncement.isEmpty
+                      ? null
+                      : newAnnouncement,
+                ),
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Announcement updated successfully!'),
+                  backgroundColor: Colors.purpleAccent,
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purpleAccent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            TextButton(
-              onPressed: () {
-                if (nameController.text.isNotEmpty &&
-                    nameController.text != _currentRoom.name) {
-                  widget.audioRoomsBloc.add(UpdateRoomName(
-                    roomId: _currentRoom.id,
-                    userId: _currentUser.userId,
-                    newName: nameController.text,
-                  ));
-                }
-                if (descriptionController.text.isNotEmpty &&
-                    descriptionController.text != _currentRoom.description) {
-                  // Dispatch update description event
-                  widget.audioRoomsBloc.add(UpdateRoomDescription(
-                    roomId: _currentRoom.id,
-                    userId: _currentUser.userId,
-                    newDescription: descriptionController.text,
-                  ));
-                }
-                if (pickedImage != null) {
-                  widget.audioRoomsBloc.add(UpdateRoomImage(
-                    roomId: _currentRoom.id,
-                    userId: _currentUser.userId,
-                    imageFile: pickedImage!,
-                  ));
-                }
-                Navigator.pop(context);
-              },
-              child: const Text('Save',
-                  style: TextStyle(color: Color(0xFF00BCD4))),
+            child: const Text(
+              'Save',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+
+
 
   /// Show music settings
 
@@ -7622,22 +10006,20 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             RoomModeSelectorPage(
-          currentRoom: _currentRoom,
-          audioRoomsBloc: widget.audioRoomsBloc,
-          currentUser: _currentUser,
-        ),
+              currentRoom: _currentRoom,
+              audioRoomsBloc: widget.audioRoomsBloc,
+              currentUser: _currentUser,
+            ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           // Cool slide up animation
           return SlideTransition(
             position: animation.drive(
-              Tween(begin: const Offset(0.0, 1.0), end: Offset.zero).chain(
-                CurveTween(curve: Curves.easeOutCubic),
-              ),
+              Tween(
+                begin: const Offset(0.0, 1.0),
+                end: Offset.zero,
+              ).chain(CurveTween(curve: Curves.easeOutCubic)),
             ),
-            child: FadeTransition(
-              opacity: animation,
-              child: child,
-            ),
+            child: FadeTransition(opacity: animation, child: child),
           );
         },
         transitionDuration: const Duration(milliseconds: 400),
@@ -7673,8 +10055,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               SizedBox(
                 width: 150,
                 height: 150,
-                child: Image.network(_currentRoom.roomFrameUrl!,
-                    fit: BoxFit.cover),
+                child: Image.network(
+                  _currentRoom.roomFrameUrl!,
+                  fit: BoxFit.cover,
+                ),
               ),
           ],
         ),
@@ -7692,9 +10076,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             return _buildHostProfilePlaceholder();
           }
           return SizedBox.expand(
-            child: AgoraVideoView(
-              controller: _getVideoController(0, engine),
-            ),
+            child: AgoraVideoView(controller: _getVideoController(0, engine)),
           );
         } else {
           final hostUid = _generateUid(_currentRoom.creatorId);
@@ -7713,7 +10095,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         }
       } else {
         return const Center(
-            child: CircularProgressIndicator(color: Colors.white));
+          child: CircularProgressIndicator(color: Colors.white),
+        );
       }
     }
 
@@ -7740,7 +10123,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
-        errorBuilder: (context, error, stackTrace) => _buildAppThemeOrAssetFallback(),
+        errorBuilder: (context, error, stackTrace) =>
+            _buildAppThemeOrAssetFallback(),
       );
     } else {
       // Default background from AppThemeService (Admin Panel real-time theme) or default asset fallback
@@ -7762,9 +10146,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             fit: BoxFit.cover,
             width: double.infinity,
             height: double.infinity,
-            placeholder: (context, url) => Container(
-              color: globalRoomColor ?? const Color(0xFF16213E),
-            ),
+            placeholder: (context, url) =>
+                Container(color: globalRoomColor ?? const Color(0xFF16213E)),
             errorWidget: (context, url, error) => Container(
               decoration: const BoxDecoration(
                 image: DecorationImage(
@@ -7829,7 +10212,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             currentUserId: _currentUser.userId,
             followController: _followController,
             onMessage: () => _handleMessageUser(participant),
-            onSendGift: () => _showGiftSelection(participant),
+            onSendGift: () {
+              Navigator.pop(context);
+              _showGiftSelection(participant);
+            },
+            onInviteToMic: (p) => _inviteToSeat(p, 0),
           );
         },
       ),
@@ -7844,6 +10231,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     required FollowController followController,
     required VoidCallback onMessage,
     required VoidCallback onSendGift,
+    void Function(AudioRoomParticipant)? onInviteToMic,
   }) {
     return _AnimatedProfileSheet(
       participant: participant,
@@ -7857,6 +10245,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       formatJoinTime: _formatJoinTime,
       buildStatusBadge: _buildStatusBadge,
       audioRoomsBloc: widget.audioRoomsBloc,
+      onInviteToMic: onInviteToMic,
     );
   }
 
@@ -7864,7 +10253,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Fetch user's equipped badge info
   Future<Map<String, dynamic>?> _getUserBadgeInfo(String userId) async {
     try {
-      debugPrint('🎖️ [Badge] Fetching badge for userId: $userId');
+      debugPrint('ðŸŽ–ï¸ [Badge] Fetching badge for userId: $userId');
 
       // Fetch user document
       final userDoc = await FirebaseFirestore.instance
@@ -7873,7 +10262,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           .get();
 
       if (!userDoc.exists) {
-        debugPrint('🎖️ [Badge] User document not found');
+        debugPrint('ðŸŽ–ï¸ [Badge] User document not found');
         return null;
       }
 
@@ -7881,10 +10270,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       final customization = userData?['customization'];
       final selectedBadgeId = customization?['selectedBadgeId'];
 
-      debugPrint('🎖️ [Badge] selectedBadgeId: $selectedBadgeId');
+      debugPrint('ðŸŽ–ï¸ [Badge] selectedBadgeId: $selectedBadgeId');
 
       if (selectedBadgeId == null || selectedBadgeId.isEmpty) {
-        debugPrint('🎖️ [Badge] No badge equipped');
+        debugPrint('ðŸŽ–ï¸ [Badge] No badge equipped');
         return null;
       }
 
@@ -7895,7 +10284,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           .get();
 
       if (!badgeDoc.exists) {
-        debugPrint('🎖️ [Badge] Badge not found in store');
+        debugPrint('ðŸŽ–ï¸ [Badge] Badge not found in store');
         return null;
       }
 
@@ -7906,10 +10295,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         'imageUrl': badgeData?['imageUrl'] ?? badgeData?['image'],
       };
 
-      debugPrint('🎖️ [Badge] Found badge: ${badgeInfo['name']}');
+      debugPrint('ðŸŽ–ï¸ [Badge] Found badge: ${badgeInfo['name']}');
       return badgeInfo;
     } catch (e) {
-      debugPrint('❌ [Badge] Error fetching badge info: $e');
+      debugPrint('âŒ [Badge] Error fetching badge info: $e');
       return null;
     }
   }
@@ -8004,10 +10393,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => MessageScreen(
-            isGroup: false,
-            user: user,
-          ),
+          builder: (context) => MessageScreen(isGroup: false, user: user),
         ),
       );
     } catch (e) {
@@ -8019,17 +10405,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Show error snackbar
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
   /// Show Admins List Bottom Sheet
   void _showAdminsListBottomSheet() {
-    final admins = _currentRoom.participants
-        .where((p) => p.isHost && p.userId != _currentRoom.creatorId)
+    final adminIds = _currentRoom.settings.adminIds
+        .where((id) => id != _currentRoom.creatorId)
         .toList();
 
     showModalBottomSheet(
@@ -8061,18 +10444,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 children: [
                   const Text(
                     'Admins',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const Spacer(),
                   Text(
-                    '${admins.length} Admins',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 14,
-                    ),
+                    '${adminIds.length} Admins',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 14),
                   ),
                 ],
               ),
@@ -8081,7 +10458,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             const SizedBox(height: 10),
 
             // List of Admins
-            if (admins.isEmpty)
+            if (adminIds.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(40.0),
                 child: Text('No admins yet'),
@@ -8089,73 +10466,175 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             else
               ListView.builder(
                 shrinkWrap: true,
-                itemCount: admins.length,
+                itemCount: adminIds.length,
                 itemBuilder: (context, index) {
-                  final admin = admins[index];
-                  return ListTile(
-                    tileColor: Colors.transparent,
-                    leading: CachedCircleAvatar(
-                      imageUrl: admin.userImageUrl ?? '',
-                      radius: 20,
-                    ),
-                    title: Text(admin.userName),
-                    trailing: TextButton(
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.red,
-                      ),
-                      onPressed: () {
-                        // Demote logic
-                        showDialog(
+                  final adminId = adminIds[index];
+
+                  // Find if they are in the participants list (active inside the room)
+                  AudioRoomParticipant? activeAdmin;
+                  for (final p in _currentRoom.participants) {
+                    if (p.userId == adminId) {
+                      activeAdmin = p;
+                      break;
+                    }
+                  }
+
+                  if (activeAdmin != null) {
+                    return _buildAdminRowWidget(
+                      context: context,
+                      userId: adminId,
+                      name: activeAdmin.userName,
+                      imageUrl: activeAdmin.userImageUrl ?? '',
+                      isActiveInRoom: true,
+                    );
+                  } else {
+                    return FutureBuilder<DocumentSnapshot>(
+                      future: FirebaseFirestore.instance
+                          .collection('Users')
+                          .doc(adminId)
+                          .get(),
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData) {
+                          return const SizedBox(
+                            height: 50,
+                            child: Center(
+                              child: SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.5,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.grey,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+
+                        final Map<String, dynamic>? uData =
+                            snapshot.data?.data() as Map<String, dynamic>?;
+                        final String fullname = uData?['fullname'] ?? 'User';
+                        final String userImageUrl = uData?['photoUrl'] ?? '';
+
+                        return _buildAdminRowWidget(
                           context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Remove Admin?'),
-                            content: Text(
-                                'Are you sure you want to remove ${admin.userName} from admins?'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () {
-                                  Navigator.pop(context); // Close dialog
-                                  Navigator.pop(
-                                      context); // Close sheet (optional, maybe keep it open?)
-                                  // Re-open sheet logic is tricky, let's close it for simplicity or user can reopen
-
-                                  final updatedParticipant =
-                                      admin.copyWith(isHost: false);
-
-                                  widget.audioRoomsBloc
-                                      .add(UpdateRoomParticipant(
-                                    roomId: _currentRoom.id,
-                                    userId: _currentUser.userId,
-                                    updatedParticipant: updatedParticipant,
-                                  ));
-
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                          '${admin.userName} removed from admins'),
-                                      backgroundColor: Colors.orange,
-                                    ),
-                                  );
-                                },
-                                child: const Text('Remove'),
-                              ),
-                            ],
-                          ),
+                          userId: adminId,
+                          name: fullname,
+                          imageUrl: userImageUrl,
+                          isActiveInRoom: false,
                         );
                       },
-                      child: const Text('Remove'),
-                    ),
-                  );
+                    );
+                  }
                 },
               ),
             const SizedBox(height: 20),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAdminRowWidget({
+    required BuildContext context,
+    required String userId,
+    required String name,
+    required String imageUrl,
+    required bool isActiveInRoom,
+  }) {
+    return ListTile(
+      leading: CachedCircleAvatar(imageUrl: imageUrl, radius: 20),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+          if (!isActiveInRoom) ...[
+            const SizedBox(width: 8),
+            Text(
+              '(Offline)',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+      trailing: (_currentUser.userId == _currentRoom.creatorId)
+          ? TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () {
+                // Demote logic
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Remove Admin?'),
+                    content: Text(
+                      'Are you sure you want to remove $name from admins?',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          Navigator.pop(context); // Close dialog
+                          Navigator.pop(context); // Close sheet
+
+                          try {
+                            final DocumentReference roomRef = FirebaseFirestore
+                                .instance
+                                .collection('audio_rooms_v2')
+                                .doc(_currentRoom.id);
+
+                            // 1. Remove from settings.adminIds
+                            final List<dynamic> updatedAdminIds = List.from(
+                              _currentRoom.settings.adminIds,
+                            );
+                            updatedAdminIds.remove(userId);
+
+                            // 2. Update isHost field in active participants list if they are in the room
+                            List<dynamic> updatedParticipants = _currentRoom
+                                .participants
+                                .map((p) => p.toJson())
+                                .toList();
+                            for (var p in updatedParticipants) {
+                              if (p is Map && p['userId'] == userId) {
+                                p['isHost'] = false;
+                              }
+                            }
+
+                            await roomRef.update({
+                              'settings.adminIds': updatedAdminIds,
+                              'participants': updatedParticipants,
+                            });
+
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('$name removed from admins'),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error removing admin: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                        child: const Text('Remove'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              child: const Text('Remove'),
+            )
+          : null,
     );
   }
 
@@ -8176,22 +10655,27 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            final String searchText =
-                searchController.text.trim().toLowerCase();
+            final String searchText = searchController.text
+                .trim()
+                .toLowerCase();
 
             // Filter chats by search query
-            final List<chat_model.Chat> filteredChats =
-                chatController.chats.where((chat) {
-              if (chat.receiver == null) return false;
-              return chat.receiver!.fullname.toLowerCase().contains(searchText);
-            }).toList();
+            final List<chat_model.Chat> filteredChats = chatController.chats
+                .where((chat) {
+                  if (chat.receiver == null) return false;
+                  return chat.receiver!.fullname.toLowerCase().contains(
+                    searchText,
+                  );
+                })
+                .toList();
 
             return Container(
               height: MediaQuery.of(context).size.height * 0.75,
               decoration: BoxDecoration(
                 color: const Color(0xFF1E1B26), // Premium dark background
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
                 border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
               ),
               child: Column(
@@ -8243,8 +10727,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               color: Colors.white.withValues(alpha: 0.08),
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(Icons.close_rounded,
-                                color: Colors.white, size: 20),
+                            child: const Icon(
+                              Icons.close_rounded,
+                              color: Colors.white,
+                              size: 20,
+                            ),
                           ),
                         ),
                       ],
@@ -8252,48 +10739,105 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   ),
                   const SizedBox(height: 12),
 
-                  // Copy Link Button
+                  // Actions: Copy Link & Share via Apps
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: GestureDetector(
-                      onTap: () {
-                        final link =
-                            DeepLinkService.generateRoomLink(_currentRoom.id);
-                        Clipboard.setData(ClipboardData(text: link));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Room link copied to clipboard'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                        Navigator.pop(
-                            context); // Optional: close sheet after copy
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          color: primaryColor.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                              color: primaryColor.withValues(alpha: 0.3)),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.copy_rounded,
-                                color: primaryColor, size: 20),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Copy Link',
-                              style: TextStyle(
-                                color: primaryColor,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
+                    child: Row(
+                      children: [
+                        // Copy Link Button
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              final link = DeepLinkService.generateRoomLink(
+                                _currentRoom.id,
+                              );
+                              Clipboard.setData(ClipboardData(text: link));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Room link copied to clipboard'),
+                                  backgroundColor: Colors.green,
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: primaryColor.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: primaryColor.withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.copy_rounded,
+                                    color: primaryColor,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Copy Link',
+                                    style: TextStyle(
+                                      color: primaryColor,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 10),
+                        // Share via other apps
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              final link = DeepLinkService.generateRoomLink(
+                                _currentRoom.id,
+                              );
+                              Navigator.pop(context);
+                              SharePlus.instance.share(
+                                ShareParams(
+                                  text: 'Join my voice room "${_currentRoom.name}" on imChat:\n$link',
+                                ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.blue.withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.share_rounded,
+                                    color: Colors.blueAccent,
+                                    size: 18,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Share via...',
+                                    style: TextStyle(
+                                      color: Colors.blueAccent,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -8306,7 +10850,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         color: Colors.white.withValues(alpha: 0.05),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.05)),
+                          color: Colors.white.withValues(alpha: 0.05),
+                        ),
                       ),
                       child: TextField(
                         controller: searchController,
@@ -8314,14 +10859,18 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         decoration: InputDecoration(
                           hintText: 'Search friends...',
                           hintStyle: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.3),
-                              fontSize: 14),
-                          prefixIcon: Icon(Icons.search_rounded,
-                              color: Colors.white.withValues(alpha: 0.4),
-                              size: 20),
+                            color: Colors.white.withValues(alpha: 0.3),
+                            fontSize: 14,
+                          ),
+                          prefixIcon: Icon(
+                            Icons.search_rounded,
+                            color: Colors.white.withValues(alpha: 0.4),
+                            size: 20,
+                          ),
                           border: InputBorder.none,
-                          contentPadding:
-                              const EdgeInsets.symmetric(vertical: 14),
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 14,
+                          ),
                         ),
                         onChanged: (val) {
                           setSheetState(() {});
@@ -8338,9 +10887,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.forum_outlined,
-                                    color: Colors.white.withValues(alpha: 0.2),
-                                    size: 48),
+                                Icon(
+                                  Icons.forum_outlined,
+                                  color: Colors.white.withValues(alpha: 0.2),
+                                  size: 48,
+                                ),
                                 const SizedBox(height: 12),
                                 Text(
                                   'No chats found',
@@ -8354,15 +10905,18 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           )
                         : ListView.builder(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 8),
+                              horizontal: 20,
+                              vertical: 8,
+                            ),
                             itemCount: filteredChats.length,
                             itemBuilder: (context, index) {
                               final chat = filteredChats[index];
                               final user = chat.receiver;
                               if (user == null) return const SizedBox.shrink();
 
-                              final isInvited =
-                                  _invitedUserIds.contains(user.userId);
+                              final isInvited = _invitedUserIds.contains(
+                                user.userId,
+                              );
 
                               return Container(
                                 margin: const EdgeInsets.only(bottom: 12),
@@ -8371,8 +10925,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   color: Colors.white.withValues(alpha: 0.03),
                                   borderRadius: BorderRadius.circular(16),
                                   border: Border.all(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.03)),
+                                    color: Colors.white.withValues(alpha: 0.03),
+                                  ),
                                 ),
                                 child: Row(
                                   children: [
@@ -8402,8 +10956,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                                 .replaceAll(' ', '')
                                                 .toLowerCase(),
                                             style: TextStyle(
-                                              color: Colors.white
-                                                  .withValues(alpha: 0.3),
+                                              color: Colors.white.withValues(
+                                                alpha: 0.3,
+                                              ),
                                               fontSize: 11,
                                             ),
                                           ),
@@ -8417,8 +10972,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                           ? null
                                           : () async {
                                               setSheetState(() {
-                                                _invitedUserIds
-                                                    .add(user.userId);
+                                                _invitedUserIds.add(
+                                                  user.userId,
+                                                );
                                               });
 
                                               final roomShare = RoomShare(
@@ -8426,11 +10982,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                                 roomName: _currentRoom.name,
                                                 roomImage:
                                                     _currentRoom.imageUrl ??
-                                                        _currentRoom
-                                                            .creatorImageUrl ??
-                                                        '',
-                                                description: _currentRoom
-                                                        .description.isNotEmpty
+                                                    _currentRoom
+                                                        .creatorImageUrl ??
+                                                    '',
+                                                description:
+                                                    _currentRoom
+                                                        .description
+                                                        .isNotEmpty
                                                     ? _currentRoom.description
                                                     : 'Come join my Voice Room!',
                                               );
@@ -8439,7 +10997,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                                 msgId: AppHelper.generateID,
                                                 senderId: _currentUser.userId,
                                                 type: message_model
-                                                    .MessageType.roomShare,
+                                                    .MessageType
+                                                    .roomShare,
                                                 textMsg:
                                                     'Shared a Voice Room: ${_currentRoom.name}',
                                                 roomShare: roomShare,
@@ -8451,29 +11010,36 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                               );
                                             },
                                       child: AnimatedContainer(
-                                        duration:
-                                            const Duration(milliseconds: 250),
+                                        duration: const Duration(
+                                          milliseconds: 250,
+                                        ),
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 16, vertical: 8),
+                                          horizontal: 16,
+                                          vertical: 8,
+                                        ),
                                         decoration: BoxDecoration(
                                           gradient: isInvited
                                               ? null
                                               : const LinearGradient(
                                                   colors: [
                                                     Color(0xFFE91E63),
-                                                    Color(0xFFFF4081)
+                                                    Color(0xFFFF4081),
                                                   ],
                                                 ),
                                           color: isInvited
-                                              ? const Color(0xFF2E7D32)
-                                                  .withValues(alpha: 0.2)
+                                              ? const Color(
+                                                  0xFF2E7D32,
+                                                ).withValues(alpha: 0.2)
                                               : null,
-                                          borderRadius:
-                                              BorderRadius.circular(20),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
                                           border: isInvited
                                               ? Border.all(
-                                                  color:
-                                                      const Color(0xFF81C784))
+                                                  color: const Color(
+                                                    0xFF81C784,
+                                                  ),
+                                                )
                                               : null,
                                         ),
                                         child: Text(
@@ -8519,6 +11085,7 @@ class _AnimatedProfileSheet extends StatefulWidget {
   final String Function(DateTime) formatJoinTime;
   final Widget Function(String, Color, IconData) buildStatusBadge;
   final AudioRoomsBloc audioRoomsBloc;
+  final void Function(AudioRoomParticipant)? onInviteToMic;
 
   const _AnimatedProfileSheet({
     required this.participant,
@@ -8532,6 +11099,7 @@ class _AnimatedProfileSheet extends StatefulWidget {
     required this.formatJoinTime,
     required this.buildStatusBadge,
     required this.audioRoomsBloc,
+    this.onInviteToMic,
   });
 
   @override
@@ -8545,6 +11113,10 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
   late Animation<double> _fadeIn;
   late Animation<Offset> _slideUp;
   late Animation<double> _buttonsFade;
+
+  DocumentSnapshot? _lastDocSnapshot;
+  Future<Map<String, dynamic>>? _badgeFuture;
+  late Future<Map<String, dynamic>?> _userBadgeInfoFuture;
 
   Stream<Map<String, dynamic>> _getFriendshipStatusStream() {
     final currentId = widget.currentUserId;
@@ -8567,47 +11139,46 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         .doc('${targetId}_$currentId')
         .snapshots();
 
-    return rx.Rx.combineLatest3<DocumentSnapshot, DocumentSnapshot,
-        DocumentSnapshot, Map<String, dynamic>>(
-      contactStream,
-      sentRequestStream,
-      receivedRequestStream,
-      (contactSnap, sentSnap, receivedSnap) {
-        return {
-          'isFriend': contactSnap.exists,
-          'sentPending': sentSnap.exists &&
-              (sentSnap.data() as Map<String, dynamic>?)?['status'] ==
-                  'pending',
-          'receivedPending': receivedSnap.exists &&
-              (receivedSnap.data() as Map<String, dynamic>?)?['status'] ==
-                  'pending',
-        };
-      },
-    );
+    return rx.Rx.combineLatest3<
+      DocumentSnapshot,
+      DocumentSnapshot,
+      DocumentSnapshot,
+      Map<String, dynamic>
+    >(contactStream, sentRequestStream, receivedRequestStream, (
+      contactSnap,
+      sentSnap,
+      receivedSnap,
+    ) {
+      return {
+        'isFriend': contactSnap.exists,
+        'sentPending':
+            sentSnap.exists &&
+            (sentSnap.data() as Map<String, dynamic>?)?['status'] == 'pending',
+        'receivedPending':
+            receivedSnap.exists &&
+            (receivedSnap.data() as Map<String, dynamic>?)?['status'] ==
+                'pending',
+      };
+    });
   }
 
   Future<void> _sendFriendRequest() async {
     try {
-      final currentId = widget.currentUserId;
       final targetId = widget.participant.userId;
 
-      await FirebaseFirestore.instance
-          .collection('friend_requests')
-          .doc('${currentId}_$targetId')
-          .set({
-        'senderId': currentId,
-        'receiverId': targetId,
-        'senderName': AuthController.instance.currentUser.fullname,
-        'senderImageUrl': AuthController.instance.currentUser.photoUrl,
-        'status': 'pending',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      await ContactApi.sendFriendRequest(
+        targetUserId: targetId,
+        roomTitle: widget.currentRoom.name,
+        roomId: widget.currentRoom.id,
+        showMsg: false,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content:
-                Text('Friend request sent to ${widget.participant.userName}!'),
+            content: Text(
+              'Friend request sent to ${widget.participant.userName}!',
+            ),
             backgroundColor: Colors.green,
           ),
         );
@@ -8619,23 +11190,19 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 
   Future<void> _acceptFriendRequest() async {
     try {
-      final currentId = widget.currentUserId;
       final targetId = widget.participant.userId;
 
-      // 1. Add as contact on both sides
-      await ContactApi.addContact(userId: targetId, showMsg: false);
-
-      // 2. Mark friend request as accepted
-      await FirebaseFirestore.instance
-          .collection('friend_requests')
-          .doc('${targetId}_$currentId')
-          .update({'status': 'accepted'});
+      await ContactApi.acceptFriendRequest(
+        senderId: targetId,
+        showMsg: false,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'You are now friends with ${widget.participant.userName}!'),
+              'You are now friends with ${widget.participant.userName}!',
+            ),
             backgroundColor: Colors.green,
           ),
         );
@@ -8647,20 +11214,19 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 
   Future<void> _rejectFriendRequest() async {
     try {
-      final currentId = widget.currentUserId;
       final targetId = widget.participant.userId;
 
-      // Delete the request
-      await FirebaseFirestore.instance
-          .collection('friend_requests')
-          .doc('${targetId}_$currentId')
-          .delete();
+      await ContactApi.rejectFriendRequest(
+        senderId: targetId,
+        showMsg: false,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Friend request from ${widget.participant.userName} rejected.'),
+              'Friend request from ${widget.participant.userName} rejected.',
+            ),
             backgroundColor: Colors.orange,
           ),
         );
@@ -8673,6 +11239,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
   @override
   void initState() {
     super.initState();
+    _userBadgeInfoFuture = widget.getUserBadgeInfo(widget.participant.userId);
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -8692,15 +11259,13 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       ),
     );
 
-    _slideUp = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.2, 0.7, curve: Curves.easeOutCubic),
-      ),
-    );
+    _slideUp = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.2, 0.7, curve: Curves.easeOutCubic),
+          ),
+        );
 
     _buttonsFade = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
@@ -8719,12 +11284,44 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
     super.dispose();
   }
 
+  Future<Map<String, dynamic>> _getBadgeFuture(DocumentSnapshot? doc) {
+    if (_badgeFuture != null && _lastDocSnapshot == doc) {
+      return _badgeFuture!;
+    }
+    _lastDocSnapshot = doc;
+    final userData = doc?.data() as Map<String, dynamic>?;
+    _badgeFuture = () async {
+      final customizationMap = userData?['customization'] as Map?;
+      List<String> nameplateIds = [];
+      if (customizationMap?['selectedNameplateIds'] != null) {
+        nameplateIds = (customizationMap!['selectedNameplateIds'] as List)
+            .whereType<String>()
+            .toList();
+      } else if (customizationMap?['selectedNameplateId'] != null &&
+          (customizationMap!['selectedNameplateId'] as String).isNotEmpty) {
+        nameplateIds = [customizationMap['selectedNameplateId'] as String];
+      }
+      final levelImages = await _loadLevelImages(
+        (userData?['sendingLevel'] as Map?)?['level'] as int?,
+        (userData?['receivingLevel'] as Map?)?['level'] as int?,
+      );
+      final nameplateUrls = nameplateIds.isNotEmpty
+          ? await NameplateHelper.getNameplateUrls(nameplateIds)
+          : <String>[];
+      return {
+        'sendImageUrl': levelImages['sending'],
+        'receiveImageUrl': levelImages['receiving'],
+        'nameplateUrls': nameplateUrls,
+      };
+    }();
+    return _badgeFuture!;
+  }
+
   Future<Map<String, String?>> _loadLevelImages(
-      int? sendingLevel, int? receivingLevel) async {
-    final result = <String, String?>{
-      'sending': null,
-      'receiving': null,
-    };
+    int? sendingLevel,
+    int? receivingLevel,
+  ) async {
+    final result = <String, String?>{'sending': null, 'receiving': null};
 
     try {
       if (sendingLevel != null) {
@@ -8763,7 +11360,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         }
       }
     } catch (e) {
-      debugPrint('❌ Error loading level images: $e');
+      debugPrint('âŒ Error loading level images: $e');
     }
 
     return result;
@@ -8801,7 +11398,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         return StatefulBuilder(
           builder: (context, setSheetState) {
             // Get fresh status of participant from current room
-            final currentP = widget.currentRoom.participants
+            final currentP =
+                widget.currentRoom.participants
                     .where((part) => part.userId == p.userId)
                     .firstOrNull ??
                 p;
@@ -8826,7 +11424,9 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 8),
+                        horizontal: 20,
+                        vertical: 8,
+                      ),
                       child: Text(
                         'Moderation: ${currentP.userName}',
                         style: const TextStyle(
@@ -8839,76 +11439,296 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                     const Divider(color: Colors.white10),
                     if (currentP.isSeated)
                       ListTile(
-                        tileColor: Colors.transparent,
-                        leading: const Icon(Icons.logout,
-                            color: Colors.orangeAccent),
-                        title: const Text('Kick from seat',
-                            style: TextStyle(color: Colors.white)),
+                        leading: const Icon(
+                          Icons.logout,
+                          color: Colors.orangeAccent,
+                        ),
+                        title: const Text(
+                          'Kick from seat',
+                          style: TextStyle(color: Colors.white),
+                        ),
                         onTap: () {
                           Navigator.pop(context);
-                          widget.audioRoomsBloc.add(RemoveParticipantFromSeat(
-                            roomId: widget.currentRoom.id,
-                            hostId: widget.currentUserId,
-                            participantId: currentP.userId,
-                            seatNumber: currentP.seatNumber ?? 0,
-                          ));
+                          widget.audioRoomsBloc.add(
+                            RemoveParticipantFromSeat(
+                              roomId: widget.currentRoom.id,
+                              hostId: widget.currentUserId,
+                              participantId: currentP.userId,
+                              seatNumber: currentP.seatNumber ?? 0,
+                            ),
+                          );
+                        },
+                      )
+                    else
+                      ListTile(
+                        leading: const Icon(
+                          Icons.mic,
+                          color: Color(0xFFFFC107),
+                        ),
+                        title: const Text(
+                          'Invite to Mic',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          widget.onInviteToMic?.call(currentP);
                         },
                       ),
                     ListTile(
-                      tileColor: Colors.transparent,
                       leading: Icon(
-                        currentP.isMutedByAdmin ? Icons.mic : Icons.mic_off,
-                        color:
-                            currentP.isMutedByAdmin ? Colors.green : Colors.red,
+                        (currentP.isMutedByAdmin || currentP.isMuted) ? Icons.mic : Icons.mic_off,
+                        color: (currentP.isMutedByAdmin || currentP.isMuted)
+                            ? Colors.green
+                            : Colors.red,
                       ),
                       title: Text(
-                        currentP.isMutedByAdmin ? 'Unmute' : 'Mute',
+                        (currentP.isMutedByAdmin || currentP.isMuted) ? 'Unmute' : 'Mute',
                         style: const TextStyle(color: Colors.white),
                       ),
                       onTap: () {
                         setSheetState(() {
-                          widget.audioRoomsBloc.add(ToggleAdminMute(
-                            roomId: widget.currentRoom.id,
-                            participantId: currentP.userId,
-                            mutedByAdmin: !currentP.isMutedByAdmin,
-                          ));
+                          widget.audioRoomsBloc.add(
+                            ToggleAdminMute(
+                              roomId: widget.currentRoom.id,
+                              participantId: currentP.userId,
+                              mutedByAdmin: !currentP.isMutedByAdmin,
+                            ),
+                          );
                         });
                         Navigator.pop(context);
                       },
                     ),
+                    if (widget.currentUserId ==
+                        widget.currentRoom.creatorId) ...[
+                      if (widget.currentRoom.settings.adminIds.contains(
+                        currentP.userId,
+                      ))
+                        ListTile(
+                          leading: const Icon(
+                            Icons.shield_outlined,
+                            color: Colors.orangeAccent,
+                          ),
+                          title: const Text(
+                            'Dismiss Admin Role',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          onTap: () {
+                            Navigator.pop(context); // Close moderation sheet
+                            // Demote logic
+                            showDialog(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Remove Admin?'),
+                                content: Text(
+                                  'Are you sure you want to remove ${currentP.userName} from admins?',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () async {
+                                      Navigator.pop(context); // Close dialog
+
+                                      try {
+                                        final DocumentReference roomRef =
+                                            FirebaseFirestore.instance
+                                                .collection('audio_rooms_v2')
+                                                .doc(widget.currentRoom.id);
+
+                                        // 1. Remove from settings.adminIds
+                                        final List<dynamic>
+                                        updatedAdminIds = List.from(
+                                          widget.currentRoom.settings.adminIds,
+                                        );
+                                        updatedAdminIds.remove(currentP.userId);
+
+                                        // 2. Update isHost field in active participants list if they are in the room
+                                        List<dynamic> updatedParticipants =
+                                            widget.currentRoom.participants
+                                                .map((p) => p.toJson())
+                                                .toList();
+                                        for (var p in updatedParticipants) {
+                                          if (p is Map &&
+                                              p['userId'] == currentP.userId) {
+                                            p['isHost'] = false;
+                                          }
+                                        }
+
+                                        await roomRef.update({
+                                          'settings.adminIds': updatedAdminIds,
+                                          'participants': updatedParticipants,
+                                        });
+
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              '${currentP.userName} removed from admins',
+                                            ),
+                                            backgroundColor: Colors.orange,
+                                          ),
+                                        );
+                                      } catch (e) {
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Error removing admin: $e',
+                                            ),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Text('Remove'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        )
+                      else
+                        ListTile(
+                          leading: const Icon(
+                            Icons.shield,
+                            color: Colors.purpleAccent,
+                          ),
+                          title: const Text(
+                            'Make Admin',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          onTap: () {
+                            Navigator.pop(context); // Close moderation sheet
+                            // Promote logic
+                            showDialog(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Make Admin?'),
+                                content: Text(
+                                  'Are you sure you want to promote ${currentP.userName} to Admin? They will have moderation privileges.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () async {
+                                      Navigator.pop(context); // Close dialog
+
+                                      try {
+                                        final DocumentReference roomRef =
+                                            FirebaseFirestore.instance
+                                                .collection('audio_rooms_v2')
+                                                .doc(widget.currentRoom.id);
+
+                                        // 1. Add to settings.adminIds
+                                        final List<dynamic>
+                                        updatedAdminIds = List.from(
+                                          widget.currentRoom.settings.adminIds,
+                                        );
+                                        if (!updatedAdminIds.contains(
+                                          currentP.userId,
+                                        )) {
+                                          updatedAdminIds.add(currentP.userId);
+                                        }
+
+                                        // 2. Update isHost field in active participants list if they are in the room
+                                        List<dynamic> updatedParticipants =
+                                            widget.currentRoom.participants
+                                                .map((p) => p.toJson())
+                                                .toList();
+                                        for (var p in updatedParticipants) {
+                                          if (p is Map &&
+                                              p['userId'] == currentP.userId) {
+                                            p['isHost'] = true;
+                                          }
+                                        }
+
+                                        await roomRef.update({
+                                          'settings.adminIds': updatedAdminIds,
+                                          'participants': updatedParticipants,
+                                        });
+
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              '${currentP.userName} is now an Admin',
+                                            ),
+                                            backgroundColor: Colors.purple,
+                                          ),
+                                        );
+                                      } catch (e) {
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Error making admin: $e',
+                                            ),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Text('Make Admin'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                    ],
                     ListTile(
-                      tileColor: Colors.transparent,
-                      leading: const Icon(Icons.exit_to_app,
-                          color: Colors.redAccent),
-                      title: const Text('Remove from room',
-                          style: TextStyle(color: Colors.white)),
+                      leading: const Icon(
+                        Icons.exit_to_app,
+                        color: Colors.redAccent,
+                      ),
+                      title: const Text(
+                        'Remove from room',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       onTap: () {
                         Navigator.pop(context);
-                        widget.audioRoomsBloc.add(KickParticipant(
-                          roomId: widget.currentRoom.id,
-                          hostId: widget.currentUserId,
-                          participantId: currentP.userId,
-                          reason: 'Removed by admin',
-                        ));
+                        widget.audioRoomsBloc.add(
+                          KickParticipant(
+                            roomId: widget.currentRoom.id,
+                            hostId: widget.currentUserId,
+                            participantId: currentP.userId,
+                            reason: 'Removed by admin',
+                          ),
+                        );
                       },
                     ),
                     ListTile(
-                      tileColor: Colors.transparent,
                       leading: const Icon(Icons.block, color: Colors.red),
-                      title: const Text('Block user from room',
-                          style: TextStyle(color: Colors.white)),
+                      title: const Text(
+                        'Block user from room',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       onTap: () {
                         Navigator.pop(context);
-                        widget.audioRoomsBloc.add(BlockParticipant(
-                          roomId: widget.currentRoom.id,
-                          hostId: widget.currentUserId,
-                          participantId: currentP.userId,
-                          reason: 'Blocked by admin',
-                        ));
+                        widget.audioRoomsBloc.add(
+                          BlockParticipant(
+                            roomId: widget.currentRoom.id,
+                            hostId: widget.currentUserId,
+                            participantId: currentP.userId,
+                            reason: 'Blocked by admin',
+                          ),
+                        );
                       },
                     ),
                     ListTile(
-                      tileColor: Colors.transparent,
                       leading: Icon(
                         currentP.isMessagingBlocked
                             ? Icons.chat
@@ -8925,17 +11745,18 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                       ),
                       onTap: () {
                         setSheetState(() {
-                          widget.audioRoomsBloc.add(ToggleMessagingBlock(
-                            roomId: widget.currentRoom.id,
-                            participantId: currentP.userId,
-                            isBlocked: !currentP.isMessagingBlocked,
-                          ));
+                          widget.audioRoomsBloc.add(
+                            ToggleMessagingBlock(
+                              roomId: widget.currentRoom.id,
+                              participantId: currentP.userId,
+                              isBlocked: !currentP.isMessagingBlocked,
+                            ),
+                          );
                         });
                         Navigator.pop(context);
                       },
                     ),
                     ListTile(
-                      tileColor: Colors.transparent,
                       leading: Icon(
                         currentP.isSeatBlocked ? Icons.chair : Icons.chair_alt,
                         color: currentP.isSeatBlocked
@@ -8950,11 +11771,13 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                       ),
                       onTap: () {
                         setSheetState(() {
-                          widget.audioRoomsBloc.add(ToggleSeatBlock(
-                            roomId: widget.currentRoom.id,
-                            participantId: currentP.userId,
-                            isBlocked: !currentP.isSeatBlocked,
-                          ));
+                          widget.audioRoomsBloc.add(
+                            ToggleSeatBlock(
+                              roomId: widget.currentRoom.id,
+                              participantId: currentP.userId,
+                              isBlocked: !currentP.isSeatBlocked,
+                            ),
+                          );
                         });
                         Navigator.pop(context);
                       },
@@ -8973,8 +11796,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
   String? _profileSkinUrl; // SVG/image background for this participant's sheet
 
   /// Loads the participant's selected Profile Skin from Firestore.
-  /// Fetches customization.selectedBackgroundThemeId → then resolves the
-  /// file URL from the market_items (store) catalog.
+  /// Fetches customization.selectedBackgroundThemeId â†’ then resolves the
+  /// file URL from StoreService, market_items catalog, or user_store_items.
   Future<void> _loadProfileSkin() async {
     try {
       final userDoc = await FirebaseFirestore.instance
@@ -8986,35 +11809,59 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       if (data == null) return;
 
       final customization = data['customization'] as Map<String, dynamic>?;
-      final themeId = customization?['selectedBackgroundThemeId'] as String?;
+      final themeId = (customization?['selectedBackgroundThemeId'] ?? customization?['selectedBackgroundTheme']) as String?;
       if (themeId == null || themeId.isEmpty) return;
 
-      // Resolve the skin's file URL from the store catalog
-      final storeDoc = await FirebaseFirestore.instance
-          .collection('market_items')
-          .doc(themeId)
-          .get();
+      if (themeId.startsWith('http://') || themeId.startsWith('https://') || themeId.startsWith('assets/')) {
+        if (mounted) setState(() => _profileSkinUrl = themeId);
+        return;
+      }
 
-      if (!storeDoc.exists) return;
-      final storeData = storeDoc.data()!;
-      final url = storeData['fileUrl'] as String? ??
-          storeData['thumbnailUrl'] as String? ??
-          storeData['imageUrl'] as String? ??
-          storeData['svgUrl'] as String?;
+      // 1. Try StoreService (supports market_items, VIP, SVIP configs)
+      final details = await StoreService().getStoreItemDetails(themeId);
+      String? url = details?['fileUrl'] ?? details?['thumbnailUrl'] ?? details?['imageUrl'] ?? details?['svgUrl'];
+
+      // 2. Fallback to market_items directly if not found
+      if (url == null || url.isEmpty) {
+        final storeDoc = await FirebaseFirestore.instance
+            .collection('market_items')
+            .doc(themeId)
+            .get();
+        if (storeDoc.exists) {
+          final storeData = storeDoc.data()!;
+          url = storeData['fileUrl'] as String? ??
+              storeData['thumbnailUrl'] as String? ??
+              storeData['imageUrl'] as String? ??
+              storeData['svgUrl'] as String?;
+        }
+      }
+
+      // 3. Fallback to user_store_items
+      if (url == null || url.isEmpty) {
+        final userStoreDoc = await FirebaseFirestore.instance
+            .collection('user_store_items')
+            .doc('${widget.participant.userId}_$themeId')
+            .get();
+        if (userStoreDoc.exists) {
+          final uData = userStoreDoc.data()!;
+          url = uData['fileUrl'] as String? ??
+              uData['thumbnailUrl'] as String? ??
+              uData['imageUrl'] as String? ??
+              uData['image'] as String?;
+        }
+      }
 
       if (url != null && url.isNotEmpty && mounted) {
         setState(() => _profileSkinUrl = url);
       }
     } catch (e) {
-      debugPrint('❌ Error loading profile skin: $e');
+      debugPrint('âŒ Error loading profile skin: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final p = widget.participant;
-    final bool isOwnerOwnProfile = p.userId == widget.currentRoom.creatorId &&
-        widget.currentUserId == widget.currentRoom.creatorId;
 
     const Color textColor = Color(0xFF1F1F24);
     const Color subTextColor = Color(0xFF75757F);
@@ -9026,7 +11873,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       clipBehavior: Clip.none,
       alignment: Alignment.topCenter,
       children: [
-        // Sheet body – pushed down to make room for the avatar overlap
+        // Sheet body â€“ pushed down to make room for the avatar overlap
         Container(
           margin: EdgeInsets.only(top: _avatarOverlap),
           // Use ClipRRect so the skin image respects the border radius
@@ -9046,29 +11893,28 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                       ? SvgPicture.network(
                           _profileSkinUrl!,
                           fit: BoxFit.cover,
-                          placeholderBuilder: (_) => Container(
-                            color: Colors.white,
-                          ),
+                          placeholderBuilder: (_) =>
+                              Container(color: Colors.white),
                         )
                       : _profileSkinUrl!.toLowerCase().contains('.mp4')
-                          ? _SkinVideoPlayer(url: _profileSkinUrl!)
-                          : _profileSkinUrl!.toLowerCase().contains('.svga')
-                              ? SVGAEasyPlayer(
-                                  resUrl: _profileSkinUrl!,
-                                  fit: BoxFit.cover,
-                                )
-                              : Image.network(
-                                  _profileSkinUrl!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    color: Colors.white,
-                                  ),
-                                ),
+                      ? _SkinVideoPlayer(url: _profileSkinUrl!)
+                      : _profileSkinUrl!.toLowerCase().contains('.svga')
+                      ? SVGAEasyPlayer(
+                          resUrl: _profileSkinUrl!,
+                          fit: BoxFit.cover,
+                        )
+                      : Image.network(
+                          _profileSkinUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              Container(color: Colors.white),
+                        ),
                 ),
               // Settings Button for Admin/Owner
               if ((widget.currentUserId == widget.currentRoom.creatorId ||
-                      widget.currentRoom.settings.adminIds
-                          .contains(widget.currentUserId)) &&
+                      widget.currentRoom.settings.adminIds.contains(
+                        widget.currentUserId,
+                      )) &&
                   widget.participant.userId != widget.currentUserId)
                 Positioned(
                   top: 12,
@@ -9081,7 +11927,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                     },
                   ),
                 ),
-              // ── Sheet content ────────────────────────────────────────
+              // â”€â”€ Sheet content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -9141,8 +11987,9 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                 .doc(p.userId)
                                 .snapshots(),
                             builder: (context, snapshot) {
-                              final userData = snapshot.data?.data()
-                                  as Map<String, dynamic>?;
+                              final userData =
+                                  snapshot.data?.data()
+                                      as Map<String, dynamic>?;
                               final searchId = userData?['searchId'] ?? '...';
                               final followersCount =
                                   userData?['followers'] ?? 0;
@@ -9153,7 +12000,9 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                   // ID & Followers Horizontal Premium Pill
                                   Container(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 14, vertical: 6),
+                                      horizontal: 14,
+                                      vertical: 6,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: pillBgColor,
                                       borderRadius: BorderRadius.circular(20),
@@ -9179,21 +12028,25 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                         const SizedBox(width: 6),
                                         GestureDetector(
                                           onTap: () {
-                                            final idToCopy = searchId
+                                            final idToCopy =
+                                                searchId
                                                         ?.toString()
                                                         .isNotEmpty ==
                                                     true
                                                 ? searchId.toString()
                                                 : p.userId;
                                             Clipboard.setData(
-                                                ClipboardData(text: idToCopy));
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
+                                              ClipboardData(text: idToCopy),
+                                            );
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
                                               const SnackBar(
                                                 content: Text('ID Copied'),
                                                 backgroundColor: Colors.black87,
                                                 duration: Duration(
-                                                    milliseconds: 1000),
+                                                  milliseconds: 1000,
+                                                ),
                                               ),
                                             );
                                           },
@@ -9205,12 +12058,14 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                         ),
                                         Padding(
                                           padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
+                                            horizontal: 8,
+                                          ),
                                           child: Text(
                                             '|',
                                             style: TextStyle(
                                               color: subTextColor.withValues(
-                                                  alpha: 0.5),
+                                                alpha: 0.5,
+                                              ),
                                               fontSize: 12,
                                               fontWeight: FontWeight.w300,
                                             ),
@@ -9230,96 +12085,114 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 
                                   const SizedBox(height: 16),
 
-                                  FutureBuilder<Map<String, String?>>(
-                                    future: _loadLevelImages(
-                                      (userData?['sendingLevel']
-                                          as Map?)?['level'] as int?,
-                                      (userData?['receivingLevel']
-                                          as Map?)?['level'] as int?,
-                                    ),
-                                    builder: (context, levelSnapshot) {
+                                  FutureBuilder<Map<String, dynamic>>(
+                                    future: _getBadgeFuture(snapshot.data),
+                                    builder: (context, snapshot) {
+                                      final data = snapshot.data;
                                       final sendImageUrl =
-                                          levelSnapshot.data?['sending'];
+                                          data?['sendImageUrl'] as String?;
                                       final receiveImageUrl =
-                                          levelSnapshot.data?['receiving'];
-                                      final customizationMap =
-                                          userData?['customization'] as Map?;
-                                      final selectedNameplateId =
-                                          customizationMap?[
-                                              'selectedNameplateId'] as String?;
+                                          data?['receiveImageUrl'] as String?;
+                                      final nameplateUrls =
+                                          (data?['nameplateUrls']
+                                              as List<String>?) ??
+                                          [];
 
-                                      return Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
+                                      if (!snapshot.hasData) {
+                                        return const SizedBox(height: 22);
+                                      }
+
+                                      if (sendImageUrl == null &&
+                                          receiveImageUrl == null &&
+                                          nameplateUrls.isEmpty) {
+                                        return Text(
+                                          'Level badges unavailable',
+                                          style: TextStyle(
+                                            color: subTextColor,
+                                            fontSize: 12,
+                                          ),
+                                        );
+                                      }
+
+                                      // chunk nameplates 5 per row
+                                      final npRows = <List<String>>[];
+                                      for (
+                                        int i = 0;
+                                        i < nameplateUrls.length;
+                                        i += 5
+                                      ) {
+                                        npRows.add(
+                                          nameplateUrls.sublist(
+                                            i,
+                                            (i + 5).clamp(
+                                              0,
+                                              nameplateUrls.length,
+                                            ),
+                                          ),
+                                        );
+                                      }
+
+                                      return Column(
+                                        mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          if (sendImageUrl != null)
-                                            _buildLevelImageBadge(sendImageUrl),
-                                          if (sendImageUrl != null &&
+                                          // Level badges
+                                          if (sendImageUrl != null ||
                                               receiveImageUrl != null)
-                                            const SizedBox(width: 16),
-                                          if (receiveImageUrl != null)
-                                            _buildLevelImageBadge(
-                                                receiveImageUrl),
-                                          if (selectedNameplateId != null &&
-                                              selectedNameplateId
-                                                  .isNotEmpty) ...[
-                                            if (sendImageUrl != null ||
-                                                receiveImageUrl != null)
-                                              const SizedBox(width: 16),
-                                            FutureBuilder<String?>(
-                                              future: NameplateHelper
-                                                  .getNameplateUrl(
-                                                      selectedNameplateId),
-                                              builder: (context, snapshot) {
-                                                final nameplateUrl =
-                                                    snapshot.data;
-                                                if (nameplateUrl != null &&
-                                                    nameplateUrl.isNotEmpty) {
-                                                  return ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    child: CachedNetworkImage(
-                                                      imageUrl: nameplateUrl,
-                                                      height: 36,
-                                                      fit: BoxFit.contain,
-                                                      placeholder:
-                                                          (context, url) =>
-                                                              Container(
-                                                        width: 36,
-                                                        height: 36,
-                                                        color: Colors.white12,
-                                                        child: const Center(
-                                                          child:
-                                                              CircularProgressIndicator(
-                                                            strokeWidth: 2,
-                                                            color:
-                                                                Colors.white70,
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                if (sendImageUrl != null)
+                                                  _buildLevelImageBadge(
+                                                    sendImageUrl,
+                                                  ),
+                                                if (sendImageUrl != null &&
+                                                    receiveImageUrl != null)
+                                                  const SizedBox(width: 8),
+                                                if (receiveImageUrl != null)
+                                                  _buildLevelImageBadge(
+                                                    receiveImageUrl,
+                                                  ),
+                                              ],
+                                            ),
+                                          // Nameplate rows (5 per row, height 22)
+                                          ...npRows.map(
+                                            (rowItems) => Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 4,
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: rowItems
+                                                    .map(
+                                                      (url) => Padding(
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 3,
+                                                            ),
+                                                        child: ClipRRect(
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                6,
+                                                              ),
+                                                          child: CachedNetworkImage(
+                                                            imageUrl: url,
+                                                            height: 22,
+                                                            fit: BoxFit.contain,
+                                                            errorWidget:
+                                                                (_, __, ___) =>
+                                                                    const SizedBox.shrink(),
                                                           ),
                                                         ),
                                                       ),
-                                                      errorWidget: (context,
-                                                              url, error) =>
-                                                          const SizedBox
-                                                              .shrink(),
-                                                    ),
-                                                  );
-                                                }
-                                                return const SizedBox.shrink();
-                                              },
-                                            ),
-                                          ],
-                                          if (sendImageUrl == null &&
-                                              receiveImageUrl == null &&
-                                              (selectedNameplateId == null ||
-                                                  selectedNameplateId.isEmpty))
-                                            Text(
-                                              'Level badges unavailable',
-                                              style: TextStyle(
-                                                color: subTextColor,
-                                                fontSize: 12,
+                                                    )
+                                                    .toList(),
                                               ),
                                             ),
+                                          ),
                                         ],
                                       );
                                     },
@@ -9329,7 +12202,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 
                                   // Status Badges (Level, Agency, Host Status, and Official Badge)
                                   FutureBuilder<Map<String, dynamic>?>(
-                                    future: widget.getUserBadgeInfo(p.userId),
+                                    future: _userBadgeInfoFuture,
                                     builder: (context, badgeSnapshot) {
                                       return Wrap(
                                         spacing: 8,
@@ -9358,16 +12231,19 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                           // Host Status Badge (Owner/Admin)
                                           if (widget.isParticipantHost)
                                             widget.buildStatusBadge(
-                                              widget.currentRoom
-                                                      .isCreator(p.userId)
+                                              widget.currentRoom.isCreator(
+                                                    p.userId,
+                                                  )
                                                   ? 'Owner'
                                                   : 'Admin',
-                                              widget.currentRoom
-                                                      .isCreator(p.userId)
+                                              widget.currentRoom.isCreator(
+                                                    p.userId,
+                                                  )
                                                   ? Colors.amber
                                                   : Colors.purple,
-                                              widget.currentRoom
-                                                      .isCreator(p.userId)
+                                              widget.currentRoom.isCreator(
+                                                    p.userId,
+                                                  )
                                                   ? Icons.workspace_premium
                                                   : Icons.shield,
                                             ),
@@ -9376,9 +12252,10 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                           if (!widget.isParticipantHost &&
                                               !p.isSpeaker)
                                             widget.buildStatusBadge(
-                                                'Viewer',
-                                                Colors.grey,
-                                                Icons.remove_red_eye),
+                                              'Viewer',
+                                              Colors.grey,
+                                              Icons.remove_red_eye,
+                                            ),
                                         ],
                                       );
                                     },
@@ -9409,14 +12286,15 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                 gradient: const LinearGradient(
                                   colors: [
                                     Color(0xFF6C63FF),
-                                    Color(0xFFE91E63)
+                                    Color(0xFFE91E63),
                                   ],
                                 ),
                                 borderRadius: BorderRadius.circular(16),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: const Color(0xFF6C63FF)
-                                        .withValues(alpha: 0.3),
+                                    color: const Color(
+                                      0xFF6C63FF,
+                                    ).withValues(alpha: 0.3),
                                     blurRadius: 12,
                                     offset: const Offset(0, 4),
                                   ),
@@ -9424,8 +12302,10 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                               ),
                               child: ElevatedButton.icon(
                                 onPressed: widget.onSendGift,
-                                icon: const Icon(Icons.card_giftcard,
-                                    color: Colors.white),
+                                icon: const Icon(
+                                  Icons.card_giftcard,
+                                  color: Colors.white,
+                                ),
                                 label: const Text(
                                   'Send Gift',
                                   style: TextStyle(
@@ -9437,8 +12317,9 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.transparent,
                                   shadowColor: Colors.transparent,
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 16),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(16),
                                   ),
@@ -9453,7 +12334,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                             StreamBuilder<Map<String, dynamic>>(
                               stream: _getFriendshipStatusStream(),
                               builder: (context, snapshot) {
-                                final data = snapshot.data ??
+                                final data =
+                                    snapshot.data ??
                                     {
                                       'isFriend': false,
                                       'sentPending': false,
@@ -9480,8 +12362,9 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                             .followController
                                             .isFollowing(p.userId),
                                         textColor: const Color(0xFF6C63FF),
-                                        borderColor: const Color(0xFF6C63FF)
-                                            .withValues(alpha: 0.4),
+                                        borderColor: const Color(
+                                          0xFF6C63FF,
+                                        ).withValues(alpha: 0.4),
                                       ),
                                     ),
                                     const SizedBox(width: 12),
@@ -9494,21 +12377,26 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                           return OutlinedButton.icon(
                                             onPressed: widget.onMessage,
                                             icon: const Icon(
-                                                Icons.chat_bubble_outline,
-                                                color: Color(0xFF6C63FF),
-                                                size: 18),
+                                              Icons.chat_bubble_outline,
+                                              color: Color(0xFF6C63FF),
+                                              size: 18,
+                                            ),
                                             label: const Text(
                                               'Message',
                                               style: TextStyle(
-                                                  color: Color(0xFF6C63FF)),
+                                                color: Color(0xFF6C63FF),
+                                              ),
                                             ),
                                             style: OutlinedButton.styleFrom(
                                               side: BorderSide(
-                                                  color: const Color(0xFF6C63FF)
-                                                      .withValues(alpha: 0.4)),
+                                                color: const Color(
+                                                  0xFF6C63FF,
+                                                ).withValues(alpha: 0.4),
+                                              ),
                                               padding:
                                                   const EdgeInsets.symmetric(
-                                                      vertical: 12),
+                                                    vertical: 12,
+                                                  ),
                                               shape: RoundedRectangleBorder(
                                                 borderRadius:
                                                     BorderRadius.circular(14),
@@ -9520,20 +12408,24 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                           return OutlinedButton.icon(
                                             onPressed: null,
                                             icon: const Icon(
-                                                Icons.hourglass_empty,
-                                                color: Colors.grey,
-                                                size: 18),
+                                              Icons.hourglass_empty,
+                                              color: Colors.grey,
+                                              size: 18,
+                                            ),
                                             label: const Text(
                                               'Pending',
-                                              style:
-                                                  TextStyle(color: Colors.grey),
+                                              style: TextStyle(
+                                                color: Colors.grey,
+                                              ),
                                             ),
                                             style: OutlinedButton.styleFrom(
                                               side: const BorderSide(
-                                                  color: Colors.grey),
+                                                color: Colors.grey,
+                                              ),
                                               padding:
                                                   const EdgeInsets.symmetric(
-                                                      vertical: 12),
+                                                    vertical: 12,
+                                                  ),
                                               shape: RoundedRectangleBorder(
                                                 borderRadius:
                                                     BorderRadius.circular(14),
@@ -9548,27 +12440,30 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                                 child: ElevatedButton(
                                                   onPressed: () =>
                                                       _acceptFriendRequest(),
-                                                  style:
-                                                      ElevatedButton.styleFrom(
+                                                  style: ElevatedButton.styleFrom(
                                                     backgroundColor:
                                                         Colors.green,
                                                     foregroundColor:
                                                         Colors.white,
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                        vertical: 12),
-                                                    shape:
-                                                        RoundedRectangleBorder(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          vertical: 12,
+                                                        ),
+                                                    shape: RoundedRectangleBorder(
                                                       borderRadius:
                                                           BorderRadius.circular(
-                                                              12),
+                                                            12,
+                                                          ),
                                                     ),
                                                   ),
-                                                  child: const Text('Accept',
-                                                      style: TextStyle(
-                                                          fontSize: 11,
-                                                          fontWeight:
-                                                              FontWeight.bold)),
+                                                  child: const Text(
+                                                    'Accept',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                               const SizedBox(width: 4),
@@ -9576,26 +12471,30 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                                 child: OutlinedButton(
                                                   onPressed: () =>
                                                       _rejectFriendRequest(),
-                                                  style:
-                                                      OutlinedButton.styleFrom(
+                                                  style: OutlinedButton.styleFrom(
                                                     foregroundColor: Colors.red,
                                                     side: const BorderSide(
-                                                        color: Colors.red),
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                        vertical: 12),
-                                                    shape:
-                                                        RoundedRectangleBorder(
+                                                      color: Colors.red,
+                                                    ),
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          vertical: 12,
+                                                        ),
+                                                    shape: RoundedRectangleBorder(
                                                       borderRadius:
                                                           BorderRadius.circular(
-                                                              12),
+                                                            12,
+                                                          ),
                                                     ),
                                                   ),
-                                                  child: const Text('Reject',
-                                                      style: TextStyle(
-                                                          fontSize: 11,
-                                                          fontWeight:
-                                                              FontWeight.bold)),
+                                                  child: const Text(
+                                                    'Reject',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                             ],
@@ -9605,20 +12504,26 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                           return ElevatedButton.icon(
                                             onPressed: () =>
                                                 _sendFriendRequest(),
-                                            icon: const Icon(Icons.person_add,
-                                                color: Colors.white, size: 18),
+                                            icon: const Icon(
+                                              Icons.person_add,
+                                              color: Colors.white,
+                                              size: 18,
+                                            ),
                                             label: const Text(
                                               'ADD+',
                                               style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold),
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             ),
                                             style: ElevatedButton.styleFrom(
-                                              backgroundColor:
-                                                  const Color(0xFF6C63FF),
+                                              backgroundColor: const Color(
+                                                0xFF6C63FF,
+                                              ),
                                               padding:
                                                   const EdgeInsets.symmetric(
-                                                      vertical: 12),
+                                                    vertical: 12,
+                                                  ),
                                               shape: RoundedRectangleBorder(
                                                 borderRadius:
                                                     BorderRadius.circular(14),
@@ -9632,6 +12537,44 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                 );
                               },
                             ),
+
+                            // Invite to Mic button (if host or admin and participant is not seated)
+                            if ((widget.currentUserId == widget.currentRoom.creatorId ||
+                                    widget.currentRoom.settings.adminIds.contains(widget.currentUserId)) &&
+                                !p.isSeated) ...[
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 46,
+                                child: ElevatedButton.icon(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    widget.onInviteToMic?.call(p);
+                                  },
+                                  icon: const Icon(
+                                    Icons.mic,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                  label: const Text(
+                                    'Invite to Mic',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFFFC107),
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ],
                       ),
@@ -9645,7 +12588,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
           ), // Stack
         ),
 
-        // Avatar floating above the sheet — tap to open full profile
+        // Avatar floating above the sheet â€” tap to open full profile
         Positioned(
           top: 0,
           child: GestureDetector(
@@ -9669,10 +12612,11 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: (widget.isParticipantHost
-                              ? Colors.amber
-                              : const Color(0xFF6C63FF))
-                          .withValues(alpha: 0.4),
+                      color:
+                          (widget.isParticipantHost
+                                  ? Colors.amber
+                                  : const Color(0xFF6C63FF))
+                              .withValues(alpha: 0.4),
                       blurRadius: 24,
                       spreadRadius: 4,
                     ),
@@ -9706,10 +12650,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 class UserGiftingStatsWidget extends StatelessWidget {
   final List<GiftTransaction> transactions;
 
-  const UserGiftingStatsWidget({
-    super.key,
-    required this.transactions,
-  });
+  const UserGiftingStatsWidget({super.key, required this.transactions});
 
   @override
   Widget build(BuildContext context) {
@@ -9773,11 +12714,7 @@ class UserGiftingStatsWidget extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 2),
-        const Icon(
-          Icons.diamond_outlined,
-          color: Color(0xFF00BCD4),
-          size: 10,
-        ),
+        const DynamicDiamondIcon(width: 10, height: 10),
       ],
     );
   }
@@ -9858,9 +12795,10 @@ class _AnimatedPremiumIdState extends State<AnimatedPremiumId>
   @override
   void initState() {
     super.initState();
-    _controller =
-        AnimationController(vsync: this, duration: const Duration(seconds: 2))
-          ..repeat();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
   }
 
   @override
@@ -9880,7 +12818,7 @@ class _AnimatedPremiumIdState extends State<AnimatedPremiumId>
         Colors.blueAccent,
         Colors.lightBlueAccent,
         Colors.cyan,
-        Colors.blueAccent
+        Colors.blueAccent,
       ];
     } else if (len <= 2) {
       colors = [Colors.amber, Colors.orange, Colors.yellow, Colors.amber];
@@ -9889,15 +12827,19 @@ class _AnimatedPremiumIdState extends State<AnimatedPremiumId>
         Colors.purpleAccent,
         Colors.deepPurple,
         Colors.pinkAccent,
-        Colors.purpleAccent
+        Colors.purpleAccent,
       ];
     } else if (len <= 6) {
       colors = [Colors.blue, Colors.lightBlue, Colors.cyan, Colors.blue];
     } else {
       // Normal 7-8 digits (fallback if somehow animated)
-      return Text('ID: ${widget.idStr}',
-          style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.6), fontSize: 11));
+      return Text(
+        'ID: ${widget.idStr}',
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: 0.6),
+          fontSize: 11,
+        ),
+      );
     }
 
     return RepaintBoundary(
@@ -9927,3 +12869,5 @@ class _AnimatedPremiumIdState extends State<AnimatedPremiumId>
     );
   }
 }
+
+

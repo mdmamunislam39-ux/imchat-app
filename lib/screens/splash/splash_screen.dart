@@ -17,36 +17,55 @@ class SplashScreen extends StatelessWidget {
 
     return Obx(() {
       final bgColor = themeService.splashColor.value;
+      final textColor = themeService.splashTextColor.value;
       final bgImageUrl = themeService.splashImageUrl.value;
 
-      return Scaffold(
-        backgroundColor: bgColor ?? Theme.of(context).scaffoldBackgroundColor,
-        body: Container(
-          width: double.infinity,
-          height: double.infinity,
-          decoration: bgImageUrl.isNotEmpty
-              ? BoxDecoration(
-                  image: DecorationImage(
-                    image: CachedNetworkImageProvider(bgImageUrl),
-                    fit: BoxFit.cover,
-                  ),
+      return Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: textColor != null
+              ? Theme.of(context).colorScheme.copyWith(primary: textColor)
+              : null,
+          textTheme: textColor != null
+              ? Theme.of(context).textTheme.apply(
+                  bodyColor: textColor,
+                  displayColor: textColor,
                 )
               : null,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // App logo
-              Center(
-                child: Column(
-                  children: [
-                    const AppLogo(),
-                    const SizedBox(height: 16),
-                    const Center(child: LoadingIndicator(size: 50)),
-                  ],
+        ),
+        child: Scaffold(
+          backgroundColor: bgColor ?? Theme.of(context).scaffoldBackgroundColor,
+          body: Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: bgImageUrl.isNotEmpty
+                ? BoxDecoration(
+                    image: DecorationImage(
+                      image: CachedNetworkImageProvider(bgImageUrl),
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                : null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // App logo
+                Center(
+                  child: Column(
+                    children: [
+                      const AppLogo(),
+                      const SizedBox(height: 16),
+                      Center(
+                        child: LoadingIndicator(
+                          size: 50,
+                          color: textColor ?? Theme.of(context).primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );

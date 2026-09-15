@@ -9,7 +9,6 @@ import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_controller.dart';
-import 'package:get/get.dart';
 import 'package:chat_messenger/services/premium_room_service.dart';
 
 class RoomIdSearchScreen extends StatefulWidget {
@@ -43,7 +42,7 @@ class _RoomIdSearchScreenState extends State<RoomIdSearchScreen> {
     });
 
     try {
-      final premiumService = Get.find<PremiumRoomService>();
+      final premiumService = PremiumRoomService.instance;
       final targetRoomId = await premiumService.resolveRoomId(id);
 
       if (!mounted) return;
@@ -131,62 +130,81 @@ class _RoomIdSearchScreenState extends State<RoomIdSearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = isDark ? const Color(0xFF0D0917) : const Color(0xFFF7F8FA);
+    final appBarColor = isDark ? const Color(0xFF120C1C) : Colors.white;
+    final cardColor = isDark ? const Color(0xFF1E162B) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subTextColor = isDark ? Colors.white70 : Colors.grey[700]!;
+    final hintColor = isDark ? Colors.white38 : Colors.grey[400]!;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0917),
+      backgroundColor: bgColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF120C1C),
-        elevation: 0,
+        backgroundColor: appBarColor,
+        elevation: 0.5,
         centerTitle: true,
-        title: const Text(
+        title: Text(
           '🔍 Search by Room ID',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
+          style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 17),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(color: textColor),
       ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Enter Room ID',
-              style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500),
+              style: TextStyle(color: subTextColor, fontSize: 14, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 10),
             // Search Input
             Container(
               decoration: BoxDecoration(
+                color: cardColor,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: primaryColor.withValues(alpha: 0.5), width: 1.5),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF4A148C), Color(0xFF311B92)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+                border: Border.all(
+                  color: isDark ? primaryColor.withValues(alpha: 0.4) : Colors.grey[300]!,
+                  width: 1.5,
                 ),
+                boxShadow: isDark
+                    ? []
+                    : [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.04),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
               ),
               child: Row(
                 children: [
                   const SizedBox(width: 16),
-                  const Icon(IconlyLight.search, color: Colors.black54, size: 20),
+                  Icon(IconlyLight.search, color: isDark ? Colors.white70 : Colors.grey[600], size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
                       controller: _controller,
                       autofocus: true,
                       keyboardType: TextInputType.number,
-                      style: const TextStyle(color: Colors.black, fontSize: 16, letterSpacing: 1.2, fontWeight: FontWeight.bold),
-                      cursorColor: Colors.black,
-                      decoration: const InputDecoration(
+                      style: TextStyle(color: textColor, fontSize: 16, letterSpacing: 1.2, fontWeight: FontWeight.bold),
+                      cursorColor: primaryColor,
+                      decoration: InputDecoration(
+                        filled: false,
                         border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
                         hintText: 'e.g. 12345678',
-                        hintStyle: TextStyle(color: Colors.black54),
+                        hintStyle: TextStyle(color: hintColor, fontWeight: FontWeight.normal),
                       ),
                       onSubmitted: (_) => _searchById(),
                     ),
                   ),
                   if (_controller.text.isNotEmpty)
                     IconButton(
-                      icon: const Icon(Icons.clear, color: Colors.black54, size: 18),
+                      icon: Icon(Icons.clear, color: isDark ? Colors.white70 : Colors.grey[600], size: 18),
                       onPressed: () {
                         _controller.clear();
                         setState(() {
@@ -361,7 +379,10 @@ class _RoomIdSearchScreenState extends State<RoomIdSearchScreen> {
               child: Text(
                 'Room IDs are 7–8 digit numbers\nassigned when a room is created.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 13),
+                style: TextStyle(
+                  color: isDark ? Colors.white.withValues(alpha: 0.35) : Colors.grey[600],
+                  fontSize: 13,
+                ),
               ),
             ),
           ],

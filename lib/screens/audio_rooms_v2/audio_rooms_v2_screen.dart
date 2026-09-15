@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
+import 'package:flutter_svga/flutter_svga.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
@@ -21,7 +23,10 @@ import 'package:chat_messenger/screens/audio_rooms_v2/widgets/room_top_rankings_
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/room_id_search_screen.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/banner_carousel.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
+import 'package:chat_messenger/services/social_affinity_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:chat_messenger/helpers/country_helper.dart';
+import 'package:chat_messenger/api/user_api.dart';
 
 /// Audio Rooms v2 Screen - Main page for audio rooms
 class AudioRoomsV2Screen extends StatefulWidget {
@@ -37,11 +42,15 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
   late TabController _tabController;
   late AudioRoomsBloc _audioRoomsBloc;
   User? _currentUser;
-  String _selectedCategory = 'All Rooms';
+  String _selectedCategory = 'Trending';
+  String _selectedCountryCode = 'ALL'; // 'ALL' or 2-letter ISO code (e.g., 'BD', 'IN', 'SA')
+  final Map<String, String> _creatorCountryCache = {}; // creatorId -> countryCode
 
   // Cache the last loaded rooms so room-stream states don't wipe the list
   AudioRoomsLoaded? _cachedLoadedState;
   late Worker _settingsWorker;
+  bool _isNavigatingToRoom = false;
+  Timer? _trendingCycleTimer;
 
   @override
   void initState() {
@@ -72,6 +81,9 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
       }
     });
     _currentUser = AuthController.instance.currentUser;
+    if (_currentUser != null) {
+      SocialAffinityService().init(_currentUser!.userId);
+    }
 
     // Initialize BLoC
     _audioRoomsBloc = AudioRoomsBloc(
@@ -81,6 +93,14 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
     // Load initial data
     _loadInitialData();
 
+    // 2-minute periodic refresh timer to smoothly climb rooms with high active user counts to the top
+    _trendingCycleTimer = Timer.periodic(const Duration(minutes: 2), (timer) {
+      if (mounted) {
+        debugPrint('🔄 [AudioRoomsV2Screen] 2-minute live user trending refresh triggered');
+        setState(() {});
+      }
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DailyCheckInService.checkAndShowCheckIn(context);
     });
@@ -88,6 +108,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
 
   @override
   void dispose() {
+    _trendingCycleTimer?.cancel();
     _settingsWorker.dispose();
     _tabController.dispose();
 
@@ -130,8 +151,14 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
 
   /// Handle room tap
   void _handleRoomTap(AudioRoomV2 room) {
+    if (_isNavigatingToRoom) {
+      debugPrint('🎯 Already navigating to room, ignoring duplicate tap');
+      return;
+    }
+    _isNavigatingToRoom = true;
     try {
       if (_currentUser == null) {
+        _isNavigatingToRoom = false;
         _showErrorSnackBar('Please log in to view rooms');
         return;
       }
@@ -143,8 +170,12 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
           debugPrint('🎯 Navigating directly to room for instant join...');
           _navigateToRoom(room);
         },
+        onCancel: () {
+          _isNavigatingToRoom = false;
+        },
       );
     } catch (e) {
+      _isNavigatingToRoom = false;
       debugPrint('🎯 Error in _handleRoomTap: $e');
       _showErrorSnackBar('Failed to access room. Please try again.');
     }
@@ -152,13 +183,20 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
 
   /// Handle join room
   void _handleJoinRoom(AudioRoomV2 room) {
+    if (_isNavigatingToRoom) {
+      debugPrint('🎯 Already navigating to room, ignoring duplicate join');
+      return;
+    }
+    _isNavigatingToRoom = true;
     try {
       if (_currentUser == null) {
+        _isNavigatingToRoom = false;
         _showErrorSnackBar('Please log in to join a room');
         return;
       }
 
       if (room.isFull) {
+        _isNavigatingToRoom = false;
         _showErrorSnackBar('Room is full');
         return;
       }
@@ -170,8 +208,12 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
           debugPrint('🎯 Navigating directly to room for instant join...');
           _navigateToRoom(room);
         },
+        onCancel: () {
+          _isNavigatingToRoom = false;
+        },
       );
     } catch (e) {
+      _isNavigatingToRoom = false;
       debugPrint('🎯 Error in _handleJoinRoom: $e');
       _showErrorSnackBar('Failed to join room. Please try again.');
     }
@@ -180,21 +222,32 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
   /// Navigate to room screen
   void _navigateToRoom(AudioRoomV2 room) async {
     try {
+      final minimizedController = Get.isRegistered<MinimizedRoomController>()
+          ? Get.find<MinimizedRoomController>()
+          : null;
+
+      final AudioRoomsBloc roomBloc = (minimizedController != null &&
+              minimizedController.minimizedRoom?.id == room.id &&
+              minimizedController.audioRoomsBloc != null &&
+              !minimizedController.audioRoomsBloc!.isClosed)
+          ? minimizedController.audioRoomsBloc!
+          : AudioRoomsBloc(repository: AudioRoomsRepository());
+
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => AudioRoomScreen(
             room: room,
-            audioRoomsBloc: _audioRoomsBloc,
+            audioRoomsBloc: roomBloc,
           ),
         ),
       );
-      // Reload rooms list when returning (e.g. after minimizing a room),
-      // because the BLoC state may be AudioRoomJoined which the list
-      // builders don't handle, causing an empty list.
+      // Reload rooms list when returning (e.g. after minimizing or exiting a room)
       _loadInitialData();
     } catch (e) {
       debugPrint('🎯 Error navigating to room: $e');
       _showErrorSnackBar('Failed to open room. Please try again.');
+    } finally {
+      _isNavigatingToRoom = false;
     }
   }
 
@@ -303,27 +356,46 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
         },
         child: Obx(() {
           final themeService = Get.find<AppThemeService>();
-          final bool isStandalone = widget.showAppBar;
           
           final String? bgUrl = themeService.getScreenBgUrl('room');
           final Color? bgColor = themeService.getScreenColor('room');
+          final bool isLightBg = bgColor != null && bgColor.computeLuminance() > 0.5;
+
+          final Color primaryTextColor = themeService.getScreenTextColor('room') ??
+              (isLightBg ? Colors.black87 : Colors.white);
+          final Color secondaryTextColor =
+              themeService.getScreenSecondaryTextColor('room') ??
+                  (isLightBg ? Colors.black54 : Colors.white70);
+
+          final effectiveBgUrl = bgUrl;
+          final effectiveBgColor = bgColor;
 
           return Container(
-            decoration: (isStandalone && bgUrl != null)
+            decoration: (effectiveBgUrl != null && effectiveBgUrl.isNotEmpty)
                 ? BoxDecoration(
                     image: DecorationImage(
-                      image: CachedNetworkImageProvider(bgUrl),
+                      image: CachedNetworkImageProvider(effectiveBgUrl),
                       fit: BoxFit.cover,
                     ),
                   )
                 : null,
-            child: Scaffold(
-              backgroundColor: isStandalone 
-                  ? (bgColor ?? const Color(0xFF120C1C))
-                  : Colors.transparent,
-              appBar: widget.showAppBar ? _buildAppBar() : null,
-              body: _buildBody(),
-              floatingActionButton: _buildFloatingActionButton(),
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                textTheme: Theme.of(context).textTheme.apply(
+                  bodyColor: primaryTextColor,
+                  displayColor: primaryTextColor,
+                ),
+              ),
+              child: Scaffold(
+                backgroundColor: (effectiveBgUrl != null && effectiveBgUrl.isNotEmpty)
+                    ? Colors.transparent
+                    : (effectiveBgColor ?? const Color(0xFF120C1C)),
+                appBar: widget.showAppBar
+                    ? _buildAppBar(primaryTextColor, secondaryTextColor, isLightBg)
+                    : null,
+                body: _buildBody(primaryTextColor, secondaryTextColor, isLightBg),
+                floatingActionButton: _buildFloatingActionButton(),
+              ),
             ),
           );
         }),
@@ -332,17 +404,49 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
   }
 
   /// Build app bar
-  PreferredSizeWidget _buildAppBar() {
+  PreferredSizeWidget _buildAppBar(
+    Color primaryTextColor,
+    Color secondaryTextColor,
+    bool isLightBg,
+  ) {
     return AppBar(
       backgroundColor: Colors.transparent,
       elevation: 0,
       automaticallyImplyLeading: false,
       title: Row(
         children: [
-          _buildTopNavTab('Mine', 0, isActive: _tabController.index == 0),
-          _buildTopNavTab('All', 1, isActive: _tabController.index == 1),
-          _buildTopNavTab('Party', 2, isActive: _tabController.index == 2),
-          _buildTopNavTab('Live', 3, isActive: _tabController.index == 3),
+          _buildTopNavTab(
+            'Mine',
+            0,
+            isActive: _tabController.index == 0,
+            primaryTextColor: primaryTextColor,
+            secondaryTextColor: secondaryTextColor,
+            isLightBg: isLightBg,
+          ),
+          _buildTopNavTab(
+            'All',
+            1,
+            isActive: _tabController.index == 1,
+            primaryTextColor: primaryTextColor,
+            secondaryTextColor: secondaryTextColor,
+            isLightBg: isLightBg,
+          ),
+          _buildTopNavTab(
+            'Party',
+            2,
+            isActive: _tabController.index == 2,
+            primaryTextColor: primaryTextColor,
+            secondaryTextColor: secondaryTextColor,
+            isLightBg: isLightBg,
+          ),
+          _buildTopNavTab(
+            'Live',
+            3,
+            isActive: _tabController.index == 3,
+            primaryTextColor: primaryTextColor,
+            secondaryTextColor: secondaryTextColor,
+            isLightBg: isLightBg,
+          ),
         ],
       ),
       actions: [
@@ -355,30 +459,82 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
           onPressed: () {},
         ),
         // Top Rankings icon
-        IconButton(
+        Obx(() => IconButton(
           tooltip: 'Top Rankings',
-          icon: const Icon(Icons.emoji_events_rounded, color: Color(0xFFFFD700)),
+          iconSize: 46,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          icon: _buildDynamicHeaderIcon(
+            customUrl: Get.find<AppThemeService>().trophyIconUrl.value,
+            fallbackIcon: const Icon(Icons.emoji_events_rounded, color: Color(0xFFFFD700), size: 40),
+            size: 46,
+          ),
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => RoomTopRankingsScreen(audioRoomsBloc: _audioRoomsBloc),
             ),
           ),
-        ),
+        )),
         // Room ID Search icon
-        IconButton(
+        Obx(() => IconButton(
           tooltip: 'Search by Room ID',
-          icon: const Icon(IconlyLight.search, color: Colors.white70),
+          iconSize: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          icon: _buildDynamicHeaderIcon(
+            customUrl: Get.find<AppThemeService>().searchIconUrl.value,
+            fallbackIcon: Icon(IconlyLight.search, color: secondaryTextColor, size: 36),
+            size: 42,
+          ),
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => RoomIdSearchScreen(audioRoomsBloc: _audioRoomsBloc),
             ),
           ),
-        ),
+        )),
       ],
     );
   }
+  Widget _buildDynamicHeaderIcon({
+    required String customUrl,
+    required Widget fallbackIcon,
+    double size = 24,
+  }) {
+    final String trimmed = customUrl.trim();
+    if (trimmed.isNotEmpty) {
+      final lower = trimmed.toLowerCase();
+      if (lower.contains('.svga')) {
+        return SizedBox(
+          width: size,
+          height: size,
+          child: SVGAEasyPlayer(resUrl: trimmed),
+        );
+      }
+      return SizedBox(
+        width: size,
+        height: size,
+        child: Image.network(
+          trimmed,
+          width: size,
+          height: size,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => fallbackIcon,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return fallbackIcon;
+          },
+        ),
+      );
+    }
+    return fallbackIcon;
+  }
 
-  Widget _buildTopNavTab(String label, int index, {bool isActive = false}) {
+  Widget _buildTopNavTab(
+    String label,
+    int index, {
+    bool isActive = false,
+    required Color primaryTextColor,
+    required Color secondaryTextColor,
+    bool isLightBg = false,
+  }) {
     return GestureDetector(
       onTap: () => _tabController.animateTo(index),
       child: Padding(
@@ -389,8 +545,8 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
             Text(
               label,
               style: TextStyle(
-                color: isActive ? Colors.white : Colors.white54,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                color: isActive ? primaryTextColor : secondaryTextColor,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
                 fontSize: 18,
               ),
             ),
@@ -400,7 +556,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
                 height: 3,
                 width: 20,
                 decoration: BoxDecoration(
-                  color: Colors.blueAccent,
+                  color: isLightBg ? Colors.blueAccent : primaryTextColor,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -410,7 +566,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody([Color primaryTextColor = Colors.white, Color secondaryTextColor = Colors.white70, bool isLightBg = false]) {
     return BlocConsumer<AudioRoomsBloc, AudioRoomsState>(
       listener: (context, state) {
         // Cache loaded state so room-stream emissions don't wipe the list
@@ -419,14 +575,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
         }
 
         if (state is AudioRoomJoined) {
-          debugPrint('🎯 Room joined successfully, check visibility...');
-          // Only navigate if this screen is the current top screen
-          if (ModalRoute.of(context)?.isCurrent == true) {
-            debugPrint('🎯 Screen is visible, navigating to room...');
-            _navigateToRoom(state.room);
-          } else {
-            debugPrint('🎯 Screen is in background, skipping navigation.');
-          }
+          debugPrint('🎯 Room joined successfully');
         } else if (state is AudioRoomJoinFailed) {
           debugPrint('🎯 Room join failed: ${state.message}');
           _showErrorSnackBar(state.message);
@@ -463,36 +612,79 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
                 child: Row(
                   children: [
                     const SizedBox(width: 12),
-                    _buildTopNavTab('Mine', 0, isActive: _tabController.index == 0),
-                    _buildTopNavTab('All', 1, isActive: _tabController.index == 1),
-                    _buildTopNavTab('Party', 2, isActive: _tabController.index == 2),
+                    _buildTopNavTab(
+                      'Mine',
+                      0,
+                      isActive: _tabController.index == 0,
+                      primaryTextColor: primaryTextColor,
+                      secondaryTextColor: secondaryTextColor,
+                      isLightBg: isLightBg,
+                    ),
+                    _buildTopNavTab(
+                      'All',
+                      1,
+                      isActive: _tabController.index == 1,
+                      primaryTextColor: primaryTextColor,
+                      secondaryTextColor: secondaryTextColor,
+                      isLightBg: isLightBg,
+                    ),
+                    _buildTopNavTab(
+                      'Party',
+                      2,
+                      isActive: _tabController.index == 2,
+                      primaryTextColor: primaryTextColor,
+                      secondaryTextColor: secondaryTextColor,
+                      isLightBg: isLightBg,
+                    ),
                     if (Get.find<GlobalSettingsService>().isLiveVideoRoomEnabled.value)
-                      _buildTopNavTab('Live', 3, isActive: _tabController.index == 3),
+                      _buildTopNavTab(
+                        'Live',
+                        3,
+                        isActive: _tabController.index == 3,
+                        primaryTextColor: primaryTextColor,
+                        secondaryTextColor: secondaryTextColor,
+                        isLightBg: isLightBg,
+                      ),
                     const Spacer(),
                     // Top Rankings icon
-                    IconButton(
-                      padding: const EdgeInsets.all(6),
+                    Obx(() => IconButton(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
                       constraints: const BoxConstraints(),
                       tooltip: 'Top Rankings',
-                      icon: const Icon(Icons.emoji_events_rounded, color: Color(0xFFFFD700), size: 24),
+                      iconSize: 46,
+                      icon: _buildDynamicHeaderIcon(
+                        customUrl: Get.find<AppThemeService>().trophyIconUrl.value,
+                        fallbackIcon: const Icon(Icons.emoji_events_rounded, color: Color(0xFFFFD700), size: 40),
+                        size: 46,
+                      ),
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => RoomTopRankingsScreen(audioRoomsBloc: _audioRoomsBloc),
                         ),
                       ),
-                    ),
+                    )),
+                    const SizedBox(width: 4),
                     // Room ID Search icon
-                    IconButton(
-                      padding: const EdgeInsets.all(6),
+                    Obx(() => IconButton(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
                       constraints: const BoxConstraints(),
                       tooltip: 'Search by Room ID',
-                      icon: const Icon(IconlyLight.search, color: Colors.white70, size: 22),
+                      iconSize: 42,
+                      icon: _buildDynamicHeaderIcon(
+                        customUrl: Get.find<AppThemeService>().searchIconUrl.value,
+                        fallbackIcon: Icon(
+                          IconlyLight.search,
+                          color: secondaryTextColor,
+                          size: 36,
+                        ),
+                        size: 42,
+                      ),
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => RoomIdSearchScreen(audioRoomsBloc: _audioRoomsBloc),
                         ),
                       ),
-                    ),
+                    )),
                     const SizedBox(width: 4),
                   ],
                 ),
@@ -523,6 +715,71 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
     );
   }
 
+  String _getRoomCountryCode(AudioRoomV2 room) {
+    if (room.countryCode != null && room.countryCode!.isNotEmpty) {
+      return CountryHelper.detectCountryCodeFromPhoneOrUser(countryStr: room.countryCode);
+    }
+    if (room.creatorCountry != null && room.creatorCountry!.isNotEmpty) {
+      return CountryHelper.detectCountryCodeFromPhoneOrUser(countryStr: room.creatorCountry);
+    }
+    if (room.creatorPhone != null && room.creatorPhone!.isNotEmpty) {
+      return CountryHelper.detectCountryCodeFromPhoneOrUser(phone: room.creatorPhone);
+    }
+    if (_creatorCountryCache.containsKey(room.creatorId)) {
+      return _creatorCountryCache[room.creatorId]!;
+    }
+    if (_currentUser != null && _currentUser!.userId == room.creatorId) {
+      final code = CountryHelper.detectCountryCodeFromPhoneOrUser(
+        phone: _currentUser!.number,
+        countryStr: _currentUser!.country,
+      );
+      _creatorCountryCache[room.creatorId] = code;
+      return code;
+    }
+    return 'BD';
+  }
+
+  void _preloadCreatorCountries(List<AudioRoomV2> rooms) {
+    for (final room in rooms) {
+      if (room.creatorId.isEmpty) continue;
+      if (_creatorCountryCache.containsKey(room.creatorId)) continue;
+      if (_currentUser != null && _currentUser!.userId == room.creatorId) continue;
+
+      // Mark as pending to avoid redundant calls
+      _creatorCountryCache[room.creatorId] = room.countryCode ?? 'BD';
+
+      UserApi.getUser(room.creatorId).then((user) {
+        if (user != null) {
+          final code = CountryHelper.detectCountryCodeFromPhoneOrUser(
+            phone: user.number,
+            countryStr: user.country,
+          );
+          _creatorCountryCache[room.creatorId] = code;
+        }
+      }).catchError((_) {});
+    }
+  }
+
+  void _showCountryPickerBottomSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return _CountryPickerSheetWidget(
+          selectedCountryCode: _selectedCountryCode,
+          onSelectCountry: (code) {
+            setState(() {
+              _selectedCountryCode = code;
+              _selectedCategory = 'All Rooms';
+            });
+            Navigator.of(ctx).pop();
+          },
+        );
+      },
+    );
+  }
+
   /// Build All Rooms tab (Audio + Video)
   Widget _buildAllRoomsTab(AudioRoomsState state) {
     final headerWidget = Column(
@@ -544,10 +801,54 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
 
     if (state is AudioRoomsLoaded) {
       final allRooms = state.isSearching ? state.searchResults : state.popularRooms;
-      final filteredRooms = _selectedCategory == 'All Rooms'
-          ? allRooms
-          : allRooms.where((room) => room.category == _selectedCategory).toList();
+      _preloadCreatorCountries(allRooms);
+      List<AudioRoomV2> filteredRooms;
+      if (_selectedCategory == 'Trending' || _selectedCategory == 'Trending 🔥') {
+        final affinity = SocialAffinityService();
+        filteredRooms = List<AudioRoomV2>.from(allRooms)..sort((a, b) {
+          final scoreA = affinity.calculateBoostedScore(
+            a.trendingScore,
+            a.creatorId,
+            participantIds: a.participants.map((p) => p.userId).toList(),
+            participantCount: a.onlineCount > 0 ? a.onlineCount : a.participants.length,
+            seatedCount: a.activeSpeakers > 0 ? a.activeSpeakers : a.participants.where((p) => p.isSeated || p.isSpeaker).length,
+            uniqueJoiners10m: a.uniqueJoiners10m,
+            giftCoins10m: a.giftCoins10m > 0 ? a.giftCoins10m : a.recentGiftsDiamonds,
+            likes10m: a.likes10m,
+            messages10m: a.messages10m,
+            growthRate: a.growthRate,
+            avgStayTime: a.avgStayTime,
+            itemUniqueId: a.id,
+          );
+          final scoreB = affinity.calculateBoostedScore(
+            b.trendingScore,
+            b.creatorId,
+            participantIds: b.participants.map((p) => p.userId).toList(),
+            participantCount: b.onlineCount > 0 ? b.onlineCount : b.participants.length,
+            seatedCount: b.activeSpeakers > 0 ? b.activeSpeakers : b.participants.where((p) => p.isSeated || p.isSpeaker).length,
+            uniqueJoiners10m: b.uniqueJoiners10m,
+            giftCoins10m: b.giftCoins10m > 0 ? b.giftCoins10m : b.recentGiftsDiamonds,
+            likes10m: b.likes10m,
+            messages10m: b.messages10m,
+            growthRate: b.growthRate,
+            avgStayTime: b.avgStayTime,
+            itemUniqueId: b.id,
+          );
+          return scoreB.compareTo(scoreA);
+        });
+      } else if (_selectedCategory == 'All Rooms') {
+        filteredRooms = allRooms;
+      } else {
+        filteredRooms = allRooms.where((room) => room.category == _selectedCategory).toList();
+      }
 
+      if (_selectedCountryCode != 'ALL') {
+        filteredRooms = filteredRooms.where((room) {
+          return _getRoomCountryCode(room).toUpperCase() == _selectedCountryCode.toUpperCase();
+        }).toList();
+      }
+
+      final countryData = _selectedCountryCode != 'ALL' ? CountryHelper.getCountryData(_selectedCountryCode) : null;
       return RoomList(
         rooms: filteredRooms,
         title: state.isSearching ? 'Search Results' : 'All Rooms',
@@ -556,9 +857,11 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
         headerWidget: headerWidget,
         onRoomTap: _handleRoomTap,
         onJoinRoom: _handleJoinRoom,
-        emptyMessage: state.isSearching
-            ? 'No rooms found for "${state.searchQuery}"'
-            : 'No rooms available in this category',
+        emptyMessage: _selectedCountryCode != 'ALL'
+            ? 'No rooms available for ${countryData?.flag ?? ''} ${countryData?.code ?? _selectedCountryCode}'
+            : (state.isSearching
+                ? 'No rooms found for "${state.searchQuery}"'
+                : 'No rooms available in this category'),
       );
     }
 
@@ -597,10 +900,54 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
     if (state is AudioRoomsLoaded) {
       final allRooms = state.isSearching ? state.searchResults : state.popularRooms;
       final audioRooms = allRooms.where((room) => room.category != 'Live').toList();
-      final filteredRooms = _selectedCategory == 'All Rooms'
-          ? audioRooms
-          : audioRooms.where((room) => room.category == _selectedCategory).toList();
+      _preloadCreatorCountries(audioRooms);
+      List<AudioRoomV2> filteredRooms;
+      if (_selectedCategory == 'Trending' || _selectedCategory == 'Trending 🔥') {
+        final affinity = SocialAffinityService();
+        filteredRooms = List<AudioRoomV2>.from(audioRooms)..sort((a, b) {
+          final scoreA = affinity.calculateBoostedScore(
+            a.trendingScore,
+            a.creatorId,
+            participantIds: a.participants.map((p) => p.userId).toList(),
+            participantCount: a.onlineCount > 0 ? a.onlineCount : a.participants.length,
+            seatedCount: a.activeSpeakers > 0 ? a.activeSpeakers : a.participants.where((p) => p.isSeated || p.isSpeaker).length,
+            uniqueJoiners10m: a.uniqueJoiners10m,
+            giftCoins10m: a.giftCoins10m > 0 ? a.giftCoins10m : a.recentGiftsDiamonds,
+            likes10m: a.likes10m,
+            messages10m: a.messages10m,
+            growthRate: a.growthRate,
+            avgStayTime: a.avgStayTime,
+            itemUniqueId: a.id,
+          );
+          final scoreB = affinity.calculateBoostedScore(
+            b.trendingScore,
+            b.creatorId,
+            participantIds: b.participants.map((p) => p.userId).toList(),
+            participantCount: b.onlineCount > 0 ? b.onlineCount : b.participants.length,
+            seatedCount: b.activeSpeakers > 0 ? b.activeSpeakers : b.participants.where((p) => p.isSeated || p.isSpeaker).length,
+            uniqueJoiners10m: b.uniqueJoiners10m,
+            giftCoins10m: b.giftCoins10m > 0 ? b.giftCoins10m : b.recentGiftsDiamonds,
+            likes10m: b.likes10m,
+            messages10m: b.messages10m,
+            growthRate: b.growthRate,
+            avgStayTime: b.avgStayTime,
+            itemUniqueId: b.id,
+          );
+          return scoreB.compareTo(scoreA);
+        });
+      } else if (_selectedCategory == 'All Rooms') {
+        filteredRooms = audioRooms;
+      } else {
+        filteredRooms = audioRooms.where((room) => room.category == _selectedCategory).toList();
+      }
 
+      if (_selectedCountryCode != 'ALL') {
+        filteredRooms = filteredRooms.where((room) {
+          return _getRoomCountryCode(room).toUpperCase() == _selectedCountryCode.toUpperCase();
+        }).toList();
+      }
+
+      final countryData = _selectedCountryCode != 'ALL' ? CountryHelper.getCountryData(_selectedCountryCode) : null;
       return RoomList(
         rooms: filteredRooms,
         title: state.isSearching ? 'Search Results' : 'Party Rooms',
@@ -609,9 +956,11 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
         headerWidget: headerWidget,
         onRoomTap: _handleRoomTap,
         onJoinRoom: _handleJoinRoom,
-        emptyMessage: state.isSearching
-            ? 'No rooms found for "${state.searchQuery}"'
-            : 'No rooms available in this category',
+        emptyMessage: _selectedCountryCode != 'ALL'
+            ? 'No rooms available for ${countryData?.flag ?? ''} ${countryData?.code ?? _selectedCountryCode}'
+            : (state.isSearching
+                ? 'No rooms found for "${state.searchQuery}"'
+                : 'No rooms available in this category'),
       );
     }
 
@@ -629,8 +978,29 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
   }
 
   Widget _buildCategoryFilterRow() {
+    final themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : null;
+    final screenBgColor = themeService?.getScreenColor('room');
+    final bool isLightBg = screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
+
+    final primaryTextColor = themeService?.getScreenTextColor('room') ??
+        (isLightBg ? Colors.black87 : Colors.white);
+    final secondaryTextColor =
+        themeService?.getScreenSecondaryTextColor('room') ??
+            (isLightBg ? Colors.black54 : Colors.white70);
+
+    final countryData = _selectedCountryCode != 'ALL'
+        ? CountryHelper.getCountryData(_selectedCountryCode)
+        : null;
+
     final categories = [
-      {'name': 'All Rooms', 'emoji': '🌐'},
+      {'name': 'Trending', 'emoji': '🔥'},
+      {
+        'name': 'All Rooms',
+        'emoji': countryData != null ? countryData.flag : '🌐',
+        'displayName': countryData != null ? countryData.code : 'All Rooms',
+      },
       {'name': 'Game', 'emoji': '🎮'},
       {'name': 'PK', 'emoji': '⚔️'},
       {'name': 'Event', 'emoji': '🏆'},
@@ -647,14 +1017,24 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
           final cat = categories[index];
           final name = cat['name']!;
           final emoji = cat['emoji']!;
+          final displayName = cat['displayName'] ?? name;
           final isSelected = _selectedCategory == name;
+          final isAllRoomsChip = name == 'All Rooms';
+
           return Padding(
             padding: const EdgeInsets.only(right: 10),
             child: GestureDetector(
               onTap: () {
-                setState(() {
-                  _selectedCategory = name;
-                });
+                if (isAllRoomsChip) {
+                  setState(() {
+                    _selectedCategory = 'All Rooms';
+                  });
+                  _showCountryPickerBottomSheet(context);
+                } else {
+                  setState(() {
+                    _selectedCategory = name;
+                  });
+                }
               },
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(20),
@@ -663,13 +1043,13 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? Colors.white.withValues(alpha: 0.25)
-                        : Colors.transparent,
+                        ? primaryTextColor.withValues(alpha: isLightBg ? 0.12 : 0.22)
+                        : (isLightBg ? Colors.black.withValues(alpha: 0.04) : Colors.transparent),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: isSelected
-                          ? Colors.white.withValues(alpha: 0.5)
-                          : Colors.transparent,
+                          ? primaryTextColor.withValues(alpha: isLightBg ? 0.35 : 0.45)
+                          : (isLightBg ? Colors.black.withValues(alpha: 0.12) : Colors.white.withValues(alpha: 0.15)),
                       width: 1.0,
                     ),
                   ),
@@ -682,13 +1062,21 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        name,
+                        displayName,
                         style: TextStyle(
-                          color: isSelected ? Colors.white : Colors.white70,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          color: isSelected ? primaryTextColor : secondaryTextColor,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                           fontSize: 12,
                         ),
                       ),
+                      if (isAllRoomsChip) ...[
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 16,
+                          color: secondaryTextColor,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1149,7 +1537,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
             Icon(
               IconlyLight.voice,
               size: 80,
-              color: Colors.grey[400],
+              color: Colors.white.withValues(alpha: 0.4),
             ),
             const SizedBox(height: 16),
             const Text(
@@ -1157,6 +1545,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
+                color: Colors.white,
               ),
             ),
             const SizedBox(height: 8),
@@ -1164,7 +1553,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
               'Create your first room or join an existing one to get started.',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[600],
+                color: Colors.white.withValues(alpha: 0.7),
               ),
               textAlign: TextAlign.center,
             ),
@@ -1210,6 +1599,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
+                color: Colors.white,
               ),
             ),
             const SizedBox(height: 8),
@@ -1217,7 +1607,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
               message,
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[600],
+                color: Colors.white.withValues(alpha: 0.7),
               ),
               textAlign: TextAlign.center,
             ),
@@ -1282,3 +1672,276 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
 
 
 }
+
+class _CountryPickerSheetWidget extends StatefulWidget {
+  final String selectedCountryCode;
+  final ValueChanged<String> onSelectCountry;
+
+  const _CountryPickerSheetWidget({
+    required this.selectedCountryCode,
+    required this.onSelectCountry,
+  });
+
+  @override
+  State<_CountryPickerSheetWidget> createState() => _CountryPickerSheetWidgetState();
+}
+
+class _CountryPickerSheetWidgetState extends State<_CountryPickerSheetWidget> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allCountries = CountryHelper.getAllCountries();
+    final filteredCountries = allCountries.where((c) {
+      if (_searchQuery.isEmpty) return true;
+      final q = _searchQuery.toLowerCase();
+      return c.name.toLowerCase().contains(q) ||
+          c.code.toLowerCase().contains(q) ||
+          c.dialCode.contains(q);
+    }).toList();
+
+    final mediaQuery = MediaQuery.of(context);
+
+    return Container(
+      height: mediaQuery.size.height * 0.75,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1B2E),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 20,
+            spreadRadius: 5,
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Header Title
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Select Country / কান্ট্রি সিলেক্ট করুন',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Search Field
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.15),
+                ),
+              ),
+              child: TextField(
+                controller: _searchController,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                onChanged: (val) {
+                  setState(() {
+                    _searchQuery = val.trim();
+                  });
+                },
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.08),
+                  hintText: 'Search by country name or code...',
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                  prefixIcon: const Icon(IconlyLight.search, color: Colors.white54, size: 20),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.white54, size: 18),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchQuery = '';
+                            });
+                          },
+                        )
+                      : null,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Colors.purpleAccent, width: 1),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Country List
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              children: [
+                if (_searchQuery.isEmpty) ...[
+                  _buildCountryTile(
+                    code: 'ALL',
+                    flag: '🌐',
+                    name: 'All Rooms (সকল দেশ)',
+                    dialCode: '',
+                    isSelected: widget.selectedCountryCode == 'ALL',
+                    onTap: () => widget.onSelectCountry('ALL'),
+                  ),
+                  const Divider(color: Colors.white12, height: 16),
+                ],
+
+                ...filteredCountries.map((country) {
+                  final isSelected = widget.selectedCountryCode.toUpperCase() == country.code.toUpperCase();
+                  return _buildCountryTile(
+                    code: country.code,
+                    flag: country.flag,
+                    name: country.name,
+                    dialCode: country.dialCode,
+                    isSelected: isSelected,
+                    onTap: () => widget.onSelectCountry(country.code),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCountryTile({
+    required String code,
+    required String flag,
+    required String name,
+    required String dialCode,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? Colors.purpleAccent.withValues(alpha: 0.2)
+            : Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isSelected
+              ? Colors.purpleAccent.withValues(alpha: 0.6)
+              : Colors.transparent,
+          width: 1,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          onTap: onTap,
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          leading: Text(
+            flag,
+            style: const TextStyle(fontSize: 24),
+          ),
+          title: Row(
+            children: [
+              if (code != 'ALL') ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    code,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  name,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.9),
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 14,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (dialCode.isNotEmpty)
+                Text(
+                  dialCode,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5),
+                    fontSize: 12,
+                  ),
+                ),
+              const SizedBox(width: 8),
+              Icon(
+                isSelected ? Icons.check_circle : Icons.circle_outlined,
+                color: isSelected ? Colors.purpleAccent : Colors.white30,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+

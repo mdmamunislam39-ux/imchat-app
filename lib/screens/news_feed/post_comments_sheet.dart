@@ -551,17 +551,14 @@ class _PostCommentsSheetState extends State<PostCommentsSheet> {
 
           // Mentions Autocomplete List
           if (_showMentions && _mentionResults.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: isDarkMode ? const Color(0xFF1E1E2F) : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8, offset: const Offset(0, -2))
-                ]
-              ),
-              constraints: const BoxConstraints(maxHeight: 200),
-              child: ListView.builder(
+            Material(
+              color: isDarkMode ? const Color(0xFF1E1E2F) : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              elevation: 4,
+              clipBehavior: Clip.antiAlias,
+              child: Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: ListView.builder(
                 shrinkWrap: true,
                 itemCount: _mentionResults.length,
                 itemBuilder: (context, index) {
@@ -583,6 +580,7 @@ class _PostCommentsSheetState extends State<PostCommentsSheet> {
                 },
               ),
             ),
+          ),
 
           // Input text editor
           Container(
@@ -590,7 +588,9 @@ class _PostCommentsSheetState extends State<PostCommentsSheet> {
               left: 16,
               right: 16,
               top: 12,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+              bottom: MediaQuery.of(context).viewInsets.bottom > 0
+                  ? MediaQuery.of(context).viewInsets.bottom + 16
+                  : MediaQuery.of(context).padding.bottom + 16,
             ),
             color: isDarkMode ? Colors.black : Colors.white,
             child: Row(

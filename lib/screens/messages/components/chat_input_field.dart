@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter_iconly/flutter_iconly.dart';
+import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/components/svg_icon.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
@@ -40,6 +40,91 @@ class ChatInputFieldState extends State<ChatInputField> {
   // Get Controllers
   MessageController get controller => widget.controller;
   late final BlockController blockCrl = Get.find(tag: widget.group?.groupId ?? widget.user?.userId ?? '');
+
+  // Mentions State
+  bool _showMentions = false;
+  String _mentionQuery = '';
+  int _mentionStartIndex = -1;
+  List<User> _filteredMentionMembers = [];
+
+  void _checkMentionQuery(String text) {
+    if (widget.group == null) return;
+
+    final selection = controller.textController.selection;
+    final cursorPosition = selection.baseOffset;
+
+    if (cursorPosition > 0 && cursorPosition <= text.length) {
+      final textUntilCursor = text.substring(0, cursorPosition);
+      final lastAtIndex = textUntilCursor.lastIndexOf('@');
+
+      if (lastAtIndex != -1) {
+        final charBefore = lastAtIndex > 0 ? textUntilCursor[lastAtIndex - 1] : ' ';
+        if (charBefore == ' ' || charBefore == '\n') {
+          final query = textUntilCursor.substring(lastAtIndex + 1);
+          if (!query.contains('\n')) {
+            _mentionStartIndex = lastAtIndex;
+            _mentionQuery = query.toLowerCase();
+            _filterMentionMembers();
+            if (!_showMentions) {
+              setState(() {
+                _showMentions = true;
+              });
+            }
+            return;
+          }
+        }
+      }
+    }
+
+    if (_showMentions) {
+      setState(() {
+        _showMentions = false;
+      });
+    }
+  }
+
+  void _filterMentionMembers() {
+    if (widget.group == null) return;
+    final currentUserId = AuthController.instance.currentUser.userId;
+    final allMembers = widget.group!.participants.where((m) => m.userId != currentUserId).toList();
+
+    if (_mentionQuery.isEmpty) {
+      _filteredMentionMembers = allMembers;
+    } else {
+      _filteredMentionMembers = allMembers.where((m) {
+        final nameMatch = m.fullname.toLowerCase().contains(_mentionQuery);
+        final idMatch = m.searchId.toLowerCase().contains(_mentionQuery);
+        return nameMatch || idMatch;
+      }).toList();
+    }
+    setState(() {});
+  }
+
+  void _onSelectMentionMember(User member) {
+    final text = controller.textController.text;
+    if (_mentionStartIndex == -1 || _mentionStartIndex > text.length) return;
+
+    final textBefore = text.substring(0, _mentionStartIndex);
+    final selection = controller.textController.selection;
+    final cursorPosition = selection.baseOffset;
+    final textAfter = (cursorPosition <= text.length && cursorPosition >= _mentionStartIndex)
+        ? text.substring(cursorPosition)
+        : text.substring(_mentionStartIndex);
+
+    final String mentionText = "@${member.fullname} ";
+    final newText = "$textBefore$mentionText$textAfter";
+
+    controller.textController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(
+        offset: (textBefore + mentionText).length,
+      ),
+    );
+
+    setState(() {
+      _showMentions = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -144,6 +229,52 @@ class ChatInputFieldState extends State<ChatInputField> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // <-- Mentions Autocomplete list -->
+                if (isGroup && _showMentions && _filteredMentionMembers.isNotEmpty)
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 180),
+                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isDarkMode ? Colors.grey[900] : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.12),
+                          blurRadius: 8,
+                          offset: const Offset(0, -2),
+                        ),
+                      ],
+                      border: Border.all(
+                        color: isDarkMode ? Colors.grey[800]! : Colors.grey[300]!,
+                      ),
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      itemCount: _filteredMentionMembers.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final member = _filteredMentionMembers[index];
+                        return ListTile(
+                          dense: true,
+                          leading: CachedCircleAvatar(
+                            radius: 16,
+                            imageUrl: member.photoUrl,
+                          ),
+                          title: Text(
+                            member.fullname,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          subtitle: Text(
+                            member.searchId.isNotEmpty ? '@${member.searchId}' : 'ID: ${member.userId}',
+                            style: const TextStyle(fontSize: 11, color: greyColor),
+                          ),
+                          onTap: () => _onSelectMentionMember(member),
+                        );
+                      },
+                    ),
+                  ),
+
                 // <--- Chat Input --->
                 Padding(
                   padding: EdgeInsets.only(
@@ -188,6 +319,7 @@ class ChatInputFieldState extends State<ChatInputField> {
                                 // Update Text Msg
                                 controller.isTextMsg.value =
                                     text.trim().isNotEmpty;
+                                _checkMentionQuery(text);
                               },
                               decoration: InputDecoration(
                                 hintText: 'message'.tr,
@@ -204,125 +336,77 @@ class ChatInputFieldState extends State<ChatInputField> {
                                     width: 0,
                                   ),
                                 ),
-                                // <--- Attachment button --->
+                                // <--- Emoji Picker button --->
                                 prefixIcon: Padding(
-                                  padding: const EdgeInsets.all(16),
+                                  padding: const EdgeInsets.all(12),
                                   child: GestureDetector(
-                                    onTap: () {
-                                      _showAttachmentMenu();
-                                      controller.scrollToBottom();
-                                      controller.chatFocusNode.unfocus();
-                                      controller.showEmoji.value = false;
-                                    },
-                                    child: Container(
-                                      width: 22,
-                                      height: 22,
-                                      decoration: BoxDecoration(
-                                        color: primaryColor,
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: const Icon(
-                                        Icons.add,
-                                        color: Colors.white,
-                                      ),
+                                    onTap: () => controller.handleEmojiPicker(),
+                                    child: SvgIcon(
+                                      controller.showEmoji.value
+                                          ? 'assets/icons/keyboard.svg'
+                                          : 'assets/icons/emoji_very_happy.svg',
+                                      color: isDarkMode
+                                          ? Colors.white
+                                          : Colors.black87,
+                                      width: 26,
+                                      height: 26,
                                     ),
                                   ),
                                 ),
 
                                 suffixIcon: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16),
+                                  padding: const EdgeInsets.only(right: 8),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
                                     children: [
-                                      // <--- Emoji Picker --->
+                                      // <--- Gallery Icon --->
                                       GestureDetector(
-                                        onTap: () =>
-                                            controller.handleEmojiPicker(),
-                                        child: SvgIcon(
-                                          controller.showEmoji.value
-                                              ? 'assets/icons/keyboard.svg'
-                                              : 'assets/icons/emoji_very_happy.svg',
-                                          color: isDarkMode
-                                              ? Colors.white54
-                                              : Colors.black54,
-                                          width: 30,
-                                          height: 30,
+                                        onTap: () async {
+                                          controller.scrollToBottom();
+                                          controller.chatFocusNode.unfocus();
+                                          controller.showEmoji.value = false;
+                                          final List<File>? files = await MediaHelper.pickMultipleMediaFromGallery();
+                                          if (files != null && files.isNotEmpty) {
+                                            List<Future> futures = [];
+                                            for (File file in files) {
+                                              final String path = file.path;
+                                              if (MediaHelper.isImage(path)) {
+                                                futures.add(controller.sendMessage(MessageType.image, file: file));
+                                              } else if (MediaHelper.isVideo(path)) {
+                                                futures.add(controller.sendMessage(MessageType.video, file: file));
+                                              } else {
+                                                futures.add(controller.sendMessage(MessageType.doc, file: file));
+                                              }
+                                            }
+                                            await Future.wait(futures);
+                                          }
+                                        },
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                                          child: Icon(
+                                            Icons.image_outlined,
+                                            size: 26,
+                                            color: isDarkMode ? Colors.white : Colors.black87,
+                                          ),
                                         ),
                                       ),
-                                      // <-- Send GIF -->
-                                      if (!controller.isTextMsg.value)
-                                        GestureDetector(
-                                          onTap: () async {
-                                            // Pick GIF
-                                            final String? gifUrl =
-                                                await MediaHelper.getGif(
-                                                    context);
-                                            // Check gifUrl
-                                            if (gifUrl == null) return;
-
-                                            // Send GiF
-                                            await controller.sendMessage(
-                                              MessageType.gif,
-                                              gifUrl: gifUrl,
-                                            );
-                                          },
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 15,
-                                            ),
-                                            child: Icon(
-                                              Icons.gif_box,
-                                              size: 30,
-                                              color: isDarkMode
-                                                  ? Colors.white54
-                                                  : Colors.grey,
-                                            ),
+                                      // <--- Plus Icon (Attachment Menu) --->
+                                      GestureDetector(
+                                        onTap: () {
+                                          _showAttachmentMenu();
+                                          controller.scrollToBottom();
+                                          controller.chatFocusNode.unfocus();
+                                          controller.showEmoji.value = false;
+                                        },
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                                          child: Icon(
+                                            Icons.add_circle_outline,
+                                            size: 26,
+                                            color: isDarkMode ? Colors.white : Colors.black87,
                                           ),
                                         ),
-                                      // <--- Open Camera --->
-                                      if (!controller.isTextMsg.value)
-                                        GestureDetector(
-                                          onTap: () async {
-                                            // Update UI
-                                            controller.scrollToBottom();
-                                            controller.chatFocusNode.unfocus();
-                                            controller.showEmoji.value = false;
-
-                                            // Open Camera Picker
-                                            final File? file = await MediaHelper
-                                                .openCameraScreen(
-                                              context,
-                                            );
-
-                                            // Check file
-                                            if (file == null) return;
-
-                                            // Send image file
-                                            if (MediaHelper.isImage(
-                                                file.path)) {
-                                              await controller.sendMessage(
-                                                  MessageType.image,
-                                                  file: file);
-                                              return;
-                                            }
-
-                                            // Send video file
-                                            if (MediaHelper.isVideo(
-                                                file.path)) {
-                                              await controller.sendMessage(
-                                                  MessageType.video,
-                                                  file: file);
-                                              return;
-                                            }
-                                          },
-                                          child: const Icon(
-                                            IconlyBold.camera,
-                                            size: 30,
-                                          ),
-                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
@@ -339,6 +423,7 @@ class ChatInputFieldState extends State<ChatInputField> {
                     ///
                     IconButton(
                       padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                       onPressed: () async {
                         // Check action
                         if (controller.isTextMsg.value) {
@@ -371,8 +456,9 @@ class ChatInputFieldState extends State<ChatInputField> {
                         }
                       },
                       icon: Container(
+                        width: 54,
+                        height: 54,
                         alignment: Alignment.center,
-                        padding: const EdgeInsets.all(8),
                         decoration: const BoxDecoration(
                           color: primaryColor,
                           shape: BoxShape.circle,
@@ -382,6 +468,8 @@ class ChatInputFieldState extends State<ChatInputField> {
                               ? 'assets/icons/send.svg'
                               : 'assets/icons/mic.svg',
                           color: Colors.white,
+                          width: 26,
+                          height: 26,
                         ),
                       ),
                     ),
@@ -470,6 +558,7 @@ class ChatInputFieldState extends State<ChatInputField> {
       ),
     );
   }
+
 
   Widget _blockedMessage({
     required bool isUserBlocked,

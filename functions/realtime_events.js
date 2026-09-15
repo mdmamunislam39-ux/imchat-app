@@ -157,6 +157,8 @@ exports.onGiftTransaction = functions.region('asia-south1').firestore
   });
 
 // 2. Recharge Event & Leaderboard Real-Time Trigger
+const svipManager = require('./svip_manager');
+
 exports.onRechargeTransaction = functions.region('asia-south1').firestore
   .document('seller_transactions/{transactionId}')
   .onCreate(async (snap, context) => {
@@ -164,7 +166,7 @@ exports.onRechargeTransaction = functions.region('asia-south1').firestore
     if (data.type !== 'recharge' || !data.userId || !data.amount) return null;
 
     const userId = data.userId;
-    const amount = data.amount;
+    const amount = Number(data.amount);
 
     const today = new Date();
     const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
@@ -173,6 +175,7 @@ exports.onRechargeTransaction = functions.region('asia-south1').firestore
 
     const batch = firestore.batch();
 
+    // 1. Leaderboard stats
     const userStatsRef = firestore.collection('leaderboard_stats').doc(userId);
     batch.set(userStatsRef, {
       totalRecharge: admin.firestore.FieldValue.increment(amount),
@@ -181,16 +184,45 @@ exports.onRechargeTransaction = functions.region('asia-south1').firestore
       [`recharge_${currentMonth}`]: admin.firestore.FieldValue.increment(amount),
     }, { merge: true });
 
-    // Also update Users collection for any recharge rankings
+    // 2. User recharge tracking
     const userRef = firestore.collection('Users').doc(userId);
-    batch.update(userRef, {
-      dailyRechargeAmount: admin.firestore.FieldValue.increment(amount),
-      weeklyRechargeAmount: admin.firestore.FieldValue.increment(amount),
-      monthlyRechargeAmount: admin.firestore.FieldValue.increment(amount),
-      totalRechargeAmount: admin.firestore.FieldValue.increment(amount),
-    });
+    const userSnap = await userRef.get();
+    let currentMonthlyRecharge = amount;
+
+    if (userSnap.exists) {
+      const userData = userSnap.data() || {};
+      const lastMonth = userData.lastRechargeMonth || '';
+      
+      if (data.alreadyTrackedOnUser === true) {
+        // Already updated by sellerRecharge callable function
+        currentMonthlyRecharge = Number(userData.monthlyRechargeAmount || amount);
+        batch.update(userRef, {
+          dailyRechargeAmount: admin.firestore.FieldValue.increment(amount),
+          weeklyRechargeAmount: admin.firestore.FieldValue.increment(amount),
+          totalRechargeAmount: admin.firestore.FieldValue.increment(amount),
+        });
+      } else {
+        // Fallback / legacy path: calculate monthly recharge safely
+        const prevMonthly = lastMonth === currentMonth ? Number(userData.monthlyRechargeAmount || 0) : 0;
+        currentMonthlyRecharge = prevMonthly + amount;
+        
+        batch.update(userRef, {
+          dailyRechargeAmount: admin.firestore.FieldValue.increment(amount),
+          weeklyRechargeAmount: admin.firestore.FieldValue.increment(amount),
+          totalRechargeAmount: admin.firestore.FieldValue.increment(amount),
+          monthlyRechargeAmount: currentMonthlyRecharge,
+          eligibleSellerRechargeAmount: admin.firestore.FieldValue.increment(amount),
+          totalEligibleSellerRechargeAmount: admin.firestore.FieldValue.increment(amount),
+          lastRechargeMonth: currentMonth,
+        });
+      }
+    }
 
     await batch.commit();
+
+    // 3. Backend SVIP Verification & Auto-Upgrade (Seller Recharge ONLY)
+    await svipManager.checkAndApplySvipUpgrade(userId, currentMonthlyRecharge, currentMonth);
+
     return null;
   });
 

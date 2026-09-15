@@ -244,7 +244,7 @@ import 'package:chat_messenger/screens/calling/incoming_call_screen.dart';
 import 'package:chat_messenger/screens/calling/controller/call_controller.dart';
 import 'package:chat_messenger/screens/calling/video_call_screen.dart';
 import 'package:chat_messenger/screens/calling/voice_call_screen.dart';
-import 'package:chat_messenger/screens/contacts/add_contact.dart';
+import 'package:chat_messenger/screens/contacts/contacts_screen.dart';
 import 'package:chat_messenger/screens/contacts/number_search.dart';
 
 import 'package:chat_messenger/tabs/chats/chats_screen.dart';
@@ -253,6 +253,7 @@ import 'package:chat_messenger/tabs/groups/screens/group_video_call.dart';
 import 'package:chat_messenger/tabs/groups/screens/groups_screen.dart';
 import 'package:chat_messenger/tabs/profile/profile_screen.dart';
 import 'package:chat_messenger/tabs/stories/stories_screen.dart';
+import 'package:chat_messenger/tabs/stories/add_story_screen.dart';
 import 'package:chat_messenger/tabs/stories/controller/story_controller.dart';
 import 'package:chat_messenger/theme/app_theme.dart';
 import 'package:chat_messenger/routes/app_routes.dart';
@@ -264,13 +265,11 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:app_links/app_links.dart';
 import 'controller/home_controller.dart';
 import 'package:chat_messenger/services/global_settings_service.dart';
 import 'package:chat_messenger/screens/news_feed/news_feed_screen.dart';
-import 'package:chat_messenger/services/event_service.dart';
-import 'package:chat_messenger/screens/events/event_details_screen.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
+import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chat_messenger/screens/room/wallet_screen.dart';
 import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
@@ -308,7 +307,7 @@ class _HomeScreenState extends State<HomeScreen>
             barrierDismissible: iosUpdate == true ? false : true,
             context: context,
             builder: (context) {
-            if (!mounted) return const SizedBox.shrink();
+              if (!mounted) return const SizedBox.shrink();
               return Dialog(
                 child: SizedBox(
                   height: 160,
@@ -354,7 +353,7 @@ class _HomeScreenState extends State<HomeScreen>
               barrierDismissible: androidUpdate == true ? false : true,
               context: context,
               builder: (context) {
-            if (!mounted) return const SizedBox.shrink();
+                if (!mounted) return const SizedBox.shrink();
                 return Dialog(
                   child: SizedBox(
                     height: 180,
@@ -434,57 +433,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  final _appLinks = AppLinks();
-  StreamSubscription<Uri>? _linkSubscription;
-
-  void _initDeepLinking() async {
-    try {
-      // 1. Handle incoming link when app is closed / cold start
-      final Uri? initialUri = await _appLinks.getInitialLink();
-      if (initialUri != null) {
-        _handleDeepLink(initialUri);
-      }
-    } catch (e) {
-      debugPrint('Error getting initial deep link: $e');
-    }
-
-    // 2. Handle incoming links while the app is in the background/foreground
-    _linkSubscription = _appLinks.uriLinkStream.listen((Uri uri) {
-      _handleDeepLink(uri);
-    }, onError: (err) {
-      debugPrint('Error listening to deep link stream: $err');
-    });
-  }
-
-  void _handleDeepLink(Uri uri) {
-    debugPrint('🔗 [DeepLink] Received deep link: $uri');
-    
-    // Check for Event links (e.g. imchat://event/EVT1001)
-    if (uri.pathSegments.isNotEmpty && uri.pathSegments.first == 'event') {
-      final eventId = uri.pathSegments.length > 1 ? uri.pathSegments[1] : null;
-      if (eventId != null) {
-        debugPrint('🔗 [DeepLink] Extracted eventId: $eventId. Opening event...');
-        EventService.getEventByEventId(eventId).then((event) {
-          if (event != null && mounted) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => EventDetailsScreen(event: event),
-              ),
-            );
-          }
-        });
-        return;
-      }
-    }
-
-    final roomId = uri.queryParameters['id'];
-    if (roomId != null && roomId.isNotEmpty) {
-      debugPrint('🔗 [DeepLink] Extracted roomId: $roomId. Triggering join...');
-      AudioRoomsV2Integration.joinRoomById(roomId);
-    }
-  }
-
   @override
   void initState() {
     WidgetsBinding.instance.addObserver(this);
@@ -509,13 +457,15 @@ class _HomeScreenState extends State<HomeScreen>
     // getAppVersion();
 
     _listenToCallState();
-    
-    // Initialize Deep Linking
-    _initDeepLinking();
-    
+
+    // Check and process any pending deep links (e.g. room, post, or event)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      DeepLinkService.checkPendingDeepLinks();
+    });
+
     // Request Permissions
     _requestAppPermissions();
-    
+
     super.initState();
   }
 
@@ -535,7 +485,6 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     _tabController.dispose();
     callSubscription?.cancel();
-    _linkSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -590,8 +539,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // Firestore listener stream
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-      callSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? callSubscription;
 
   RxString callState = ''.obs;
   RxString groupcallState = ''.obs;
@@ -608,35 +556,30 @@ class _HomeScreenState extends State<HomeScreen>
         // Proceed with the Firebase listener
         callSubscription = FirebaseFirestore.instance
             .collection('Calls')
-            .doc(call.callerId) // or use receiverId based on your logic
+            .doc(call.effectiveChannelName)
             .snapshots()
             .listen((snapshot) {
-          if (snapshot.exists) {
-            // Get the 'state' field from Firestore document safely
-            String? state = snapshot.data()?['state']; // Nullable
-            if (state != null) {
-              callState.value = state; // Update the observable state
+          if (!snapshot.exists) {
+            callState.value = '';
+            box.remove('callIsActive');
+            return;
+          }
+          // Get the 'state' field from Firestore document safely
+          String? state = snapshot.data()?['state']; // Nullable
+          if (state != null) {
+            callState.value = state; // Update the observable state
 
-              // Perform actions based on state value
-              if (state == 'decline') {
-                // Handle call decline
-                Get.back();
-              }
+            // Perform actions based on state value
+            if (state == 'decline' || state == 'ended' || state == 'missed' || state == 'cancel') {
+              callState.value = '';
+              box.remove('callIsActive');
             }
           }
         });
       } else {
-        // debugPrint('2222222222222');
-        // debugPrint('No active call data found.');
-        // debugPrint('2222222222222');
-        // Handle case when callData is null or empty (e.g., log or show an error)
-        // AppStyle().failedSnackBar(message: 'No active call data found.');
       }
     } catch (e) {
-      debugPrint('33333333333');
       debugPrint(e.toString());
-      debugPrint('3333333333333');
-      // AppStyle().failedSnackBar(message: e.toString());
     }
   }
 
@@ -653,20 +596,23 @@ class _HomeScreenState extends State<HomeScreen>
         // Proceed with the Firebase listener
         callSubscription = FirebaseFirestore.instance
             .collection('GroupCalls')
-            .doc(call.callerId) // or use receiverId based on your logic
+            .doc(call.effectiveChannelName)
             .snapshots()
             .listen((snapshot) {
-          if (snapshot.exists) {
-            // Get the 'state' field from Firestore document safely
-            String? state = snapshot.data()?['state']; // Nullable
-            if (state != null) {
-              groupcallState.value = state; // Update the observable state
+          if (!snapshot.exists) {
+            groupcallState.value = '';
+            box.remove('groupIsActive');
+            return;
+          }
+          // Get the 'state' field from Firestore document safely
+          String? state = snapshot.data()?['state']; // Nullable
+          if (state != null) {
+            groupcallState.value = state; // Update the observable state
 
-              // Perform actions based on state value
-              if (state == 'decline') {
-                // Handle call decline
-                Get.back();
-              }
+            // Perform actions based on state value
+            if (state == 'decline' || state == 'ended' || state == 'missed' || state == 'cancel') {
+              groupcallState.value = '';
+              box.remove('groupIsActive');
             }
           }
         });
@@ -688,8 +634,23 @@ class _HomeScreenState extends State<HomeScreen>
     final bool isDarkMode = AppTheme.of(context).isDarkMode;
 
     return Obx(() {
-      final GlobalSettingsService settingsService = Get.find<GlobalSettingsService>();
+      final GlobalSettingsService settingsService =
+          Get.find<GlobalSettingsService>();
       final AppThemeService themeService = Get.find<AppThemeService>();
+
+      // Track tab bar icon URLs and screen themes in the outer Obx to force TabBar rebuilds in real-time
+      final _ = [
+        themeService.tabChatIconUrl.value,
+        themeService.tabHomeIconUrl.value,
+        themeService.tabGlobeIconUrl.value,
+        themeService.tabContactsIconUrl.value,
+        themeService.searchIconUrl.value,
+        themeService.trophyIconUrl.value,
+        themeService.screenBgColors.values.toList(),
+        themeService.screenTextColors.values.toList(),
+        themeService.screenSecondaryTextColors.values.toList(),
+        themeService.screenBgUrls.values.toList(),
+      ];
 
       if (settingsService.maintenanceMode.value) {
         return Scaffold(
@@ -753,11 +714,23 @@ class _HomeScreenState extends State<HomeScreen>
       // Get current user
       final User currentUer = AuthController.instance.currentUser;
 
-      final String currentScreenKey = _currentTabIndex.value == 1 
-          ? 'room' 
+      final String currentScreenKey = _currentTabIndex.value == 1
+          ? 'room'
           : (pageIndex == 4 ? 'profile' : 'home');
-      final String? currentBgUrl = themeService.getScreenBgUrl(currentScreenKey);
-      final Color? currentBgColor = themeService.getScreenColor(currentScreenKey);
+      final String? currentBgUrl =
+          themeService.getScreenBgUrl(currentScreenKey);
+      final Color? currentBgColor =
+          themeService.getScreenColor(currentScreenKey);
+      final bool isLightScreenBg = currentBgColor != null
+          ? (currentBgColor.computeLuminance() > 0.5)
+          : (!isDarkMode && _currentTabIndex.value != 1);
+
+      final Color? currentTextColor =
+          themeService.getScreenTextColor(currentScreenKey) ??
+              (isLightScreenBg ? Colors.black87 : Colors.white);
+      final Color? currentSecondaryTextColor =
+          themeService.getScreenSecondaryTextColor(currentScreenKey) ??
+              (isLightScreenBg ? Colors.black54 : Colors.grey);
 
       return WillPopScope(
         onWillPop: _onWillPop,
@@ -773,13 +746,14 @@ class _HomeScreenState extends State<HomeScreen>
           child: Scaffold(
             backgroundColor: (currentBgUrl != null && currentBgUrl.isNotEmpty)
                 ? Colors.transparent
-                : (_currentTabIndex.value == 1 
-                    ? (currentBgColor ?? const Color(0xFF120C1C)) 
-                    : (currentBgColor ?? (isDarkMode ? Colors.black : Colors.white))),
+                : (_currentTabIndex.value == 1
+                    ? (currentBgColor ?? const Color(0xFF120C1C))
+                    : (currentBgColor ??
+                        (isDarkMode ? Colors.black : Colors.white))),
             appBar: AppBar(
-              systemOverlayStyle: _currentTabIndex.value == 1
-                  ? SystemUiOverlayStyle.light
-                  : getSystemOverlayStyle(isDarkMode),
+              systemOverlayStyle: isLightScreenBg
+                  ? SystemUiOverlayStyle.dark
+                  : SystemUiOverlayStyle.light,
               backgroundColor: _currentTabIndex.value == 1
                   ? Colors.transparent
                   : (isDarkMode ? Colors.black : Colors.white),
@@ -795,10 +769,10 @@ class _HomeScreenState extends State<HomeScreen>
                         Get.to(() => ProfileScreen());
                       } else {
                         Get.to(() => ProfilePageForRoom(
-                          userID: currentUer.userId,
-                          userName: currentUer.fullname,
-                          userImage: currentUer.photoUrl,
-                        ));
+                              userID: currentUer.userId,
+                              userName: currentUer.fullname,
+                              userImage: currentUer.photoUrl,
+                            ));
                       }
                     },
                     child: CachedCircleAvatar(
@@ -814,10 +788,17 @@ class _HomeScreenState extends State<HomeScreen>
                   Expanded(
                     child: TabBar(
                       controller: _tabController,
-                      indicatorColor: (_currentTabIndex.value == 1 || isDarkMode) ? Colors.white : primaryColor,
+                      indicatorColor: currentTextColor ??
+                          ((_currentTabIndex.value == 1 || isDarkMode)
+                              ? Colors.white
+                              : primaryColor),
                       dividerColor: Colors.transparent,
-                      labelColor: (_currentTabIndex.value == 1 || isDarkMode) ? Colors.white : Colors.black,
-                      unselectedLabelColor: Colors.grey,
+                      labelColor: currentTextColor ??
+                          ((_currentTabIndex.value == 1 || isDarkMode)
+                              ? Colors.white
+                              : Colors.black),
+                      unselectedLabelColor:
+                          currentSecondaryTextColor ?? Colors.grey,
                       indicatorWeight: 5,
                       indicatorSize: TabBarIndicatorSize.tab,
                       tabs: [
@@ -827,21 +808,67 @@ class _HomeScreenState extends State<HomeScreen>
                                 ? Get.find<ChatController>()
                                 : null;
                             final unread = chatCtrl?.totalUnreadCount ?? 0;
+                            
+                            final bool isSelected = _currentTabIndex.value == 0;
+                            final double iconSize = isSelected ? 38.0 : 30.0;
+                            
+                            final customIconUrl = themeService.tabChatIconUrl.value;
+                            final iconWidget = customIconUrl.isNotEmpty
+                                ? Opacity(
+                                    opacity: isSelected ? 1.0 : 0.6,
+                                    child: CachedNetworkImage(
+                                      imageUrl: customIconUrl,
+                                      width: iconSize,
+                                      height: iconSize,
+                                      fit: BoxFit.contain,
+                                      placeholder: (context, url) => SizedBox(
+                                        width: iconSize,
+                                        height: iconSize,
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                                          ),
+                                        ),
+                                      ),
+                                      errorWidget: (context, url, error) {
+                                        final Color fallbackColor = isSelected
+                                            ? (currentTextColor ??
+                                                (isLightScreenBg ? Colors.black87 : Colors.white))
+                                            : (currentSecondaryTextColor ?? Colors.grey);
+                                        return Icon(Icons.chat, size: iconSize, color: fallbackColor);
+                                      },
+                                    ),
+                                  )
+                                : Icon(
+                                    Icons.chat, 
+                                    size: iconSize, 
+                                    color: isSelected
+                                        ? (currentTextColor ??
+                                            ((_currentTabIndex.value == 1 || isDarkMode)
+                                                ? Colors.white
+                                                : Colors.black))
+                                        : (currentSecondaryTextColor ?? Colors.grey),
+                                  );
+
                             return Stack(
                               clipBehavior: Clip.none,
                               children: [
-                                const Icon(Icons.chat, size: 27),
+                                iconWidget,
                                 if (unread > 0)
                                   Positioned(
                                     top: -6,
                                     right: -8,
                                     child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 5, vertical: 2),
                                       decoration: BoxDecoration(
                                         color: Colors.green,
                                         borderRadius: BorderRadius.circular(10),
                                       ),
-                                      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                                      constraints: const BoxConstraints(
+                                          minWidth: 18, minHeight: 18),
                                       child: Text(
                                         unread > 99 ? '99+' : '$unread',
                                         style: const TextStyle(
@@ -857,14 +884,143 @@ class _HomeScreenState extends State<HomeScreen>
                             );
                           }),
                         ),
-                        Tab(icon: Icon(CupertinoIcons.house_fill, size: 27)),
                         Tab(
-                            icon: Icon(
-                          CupertinoIcons.globe,
-                          size: 27,
-                        )),
+                          icon: Obx(() {
+                            final bool isSelected = _currentTabIndex.value == 1;
+                            final double iconSize = isSelected ? 38.0 : 30.0;
+
+                            final customIconUrl = themeService.tabHomeIconUrl.value;
+                            return customIconUrl.isNotEmpty
+                                ? Opacity(
+                                    opacity: isSelected ? 1.0 : 0.6,
+                                    child: CachedNetworkImage(
+                                      imageUrl: customIconUrl,
+                                      width: iconSize,
+                                      height: iconSize,
+                                      fit: BoxFit.contain,
+                                      placeholder: (context, url) => SizedBox(
+                                        width: iconSize,
+                                        height: iconSize,
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                                          ),
+                                        ),
+                                      ),
+                                      errorWidget: (context, url, error) {
+                                        final Color fallbackColor = isSelected
+                                            ? (currentTextColor ??
+                                                (isLightScreenBg ? Colors.black87 : Colors.white))
+                                            : (currentSecondaryTextColor ?? Colors.grey);
+                                        return Icon(CupertinoIcons.house_fill, size: iconSize, color: fallbackColor);
+                                      },
+                                    ),
+                                  )
+                                : Icon(
+                                    CupertinoIcons.house_fill,
+                                    size: iconSize,
+                                    color: isSelected
+                                        ? (currentTextColor ??
+                                            ((_currentTabIndex.value == 1 || isDarkMode)
+                                                ? Colors.white
+                                                : Colors.black))
+                                        : (currentSecondaryTextColor ?? Colors.grey),
+                                  );
+                          }),
+                        ),
                         Tab(
-                          icon: Icon(Icons.contacts, size: 27),
+                          icon: Obx(() {
+                            final bool isSelected = _currentTabIndex.value == 2;
+                            final double iconSize = isSelected ? 38.0 : 30.0;
+
+                            final customIconUrl = themeService.tabGlobeIconUrl.value;
+                            return customIconUrl.isNotEmpty
+                                ? Opacity(
+                                    opacity: isSelected ? 1.0 : 0.6,
+                                    child: CachedNetworkImage(
+                                      imageUrl: customIconUrl,
+                                      width: iconSize,
+                                      height: iconSize,
+                                      fit: BoxFit.contain,
+                                      placeholder: (context, url) => SizedBox(
+                                        width: iconSize,
+                                        height: iconSize,
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                                          ),
+                                        ),
+                                      ),
+                                      errorWidget: (context, url, error) {
+                                        final Color fallbackColor = isSelected
+                                            ? (currentTextColor ??
+                                                (isLightScreenBg ? Colors.black87 : Colors.white))
+                                            : (currentSecondaryTextColor ?? Colors.grey);
+                                        return Icon(CupertinoIcons.globe, size: iconSize, color: fallbackColor);
+                                      },
+                                    ),
+                                  )
+                                : Icon(
+                                    CupertinoIcons.globe,
+                                    size: iconSize,
+                                    color: isSelected
+                                        ? (currentTextColor ??
+                                            ((_currentTabIndex.value == 1 || isDarkMode)
+                                                ? Colors.white
+                                                : Colors.black))
+                                        : (currentSecondaryTextColor ?? Colors.grey),
+                                  );
+                          }),
+                        ),
+                        Tab(
+                          icon: Obx(() {
+                            final bool isSelected = _currentTabIndex.value == 3;
+                            final double iconSize = isSelected ? 38.0 : 30.0;
+
+                            final customIconUrl = themeService.tabContactsIconUrl.value;
+                            return customIconUrl.isNotEmpty
+                                ? Opacity(
+                                    opacity: isSelected ? 1.0 : 0.6,
+                                    child: CachedNetworkImage(
+                                      imageUrl: customIconUrl,
+                                      width: iconSize,
+                                      height: iconSize,
+                                      fit: BoxFit.contain,
+                                      placeholder: (context, url) => SizedBox(
+                                        width: iconSize,
+                                        height: iconSize,
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                                          ),
+                                        ),
+                                      ),
+                                      errorWidget: (context, url, error) {
+                                        final Color fallbackColor = isSelected
+                                            ? (currentTextColor ??
+                                                (isLightScreenBg ? Colors.black87 : Colors.white))
+                                            : (currentSecondaryTextColor ?? Colors.grey);
+                                        return Icon(Icons.contacts, size: iconSize, color: fallbackColor);
+                                      },
+                                    ),
+                                  )
+                                : Icon(
+                                    Icons.contacts,
+                                    size: iconSize,
+                                    color: isSelected
+                                        ? (currentTextColor ??
+                                            ((_currentTabIndex.value == 1 || isDarkMode)
+                                                ? Colors.white
+                                                : Colors.black))
+                                        : (currentSecondaryTextColor ?? Colors.grey),
+                                  );
+                          }),
                         ),
                       ],
                     ),
@@ -873,22 +1029,30 @@ class _HomeScreenState extends State<HomeScreen>
                 ],
               ),
             ),
-            body: SafeArea(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  // Chats Screen
-
-                  Column(
-                    children: [
-                      Row(
+            body: Theme(
+              data: Theme.of(context).copyWith(
+                textTheme: currentTextColor != null
+                    ? Theme.of(context).textTheme.apply(
+                        bodyColor: currentTextColor,
+                        displayColor: currentTextColor,
+                      )
+                    : null,
+              ),
+              child: SafeArea(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    // Chats Screen
+                    Column(
+                      children: [
+                        Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           SizedBox(
                             height: 100,
                             child: InkWell(
                                 onTap: () {
-                                  storyController.uploadFileStory();
+                                  Get.to(() => const AddStoryScreen());
                                 },
                                 child: _buildStoryItem(
                                     "Add a story", Icons.camera_alt)),
@@ -965,7 +1129,9 @@ class _HomeScreenState extends State<HomeScreen>
                     ],
                   ),
                   // Voice Room Explore Screen (Replacing GroupsScreen)
-                  Obx(() => Get.find<GlobalSettingsService>().isVoiceRoomEnabled.value
+                  Obx(() => Get.find<GlobalSettingsService>()
+                          .isVoiceRoomEnabled
+                          .value
                       ? const AudioRoomsV2Screen(showAppBar: false)
                       : const Center(
                           child: Text(
@@ -980,14 +1146,16 @@ class _HomeScreenState extends State<HomeScreen>
                   // Calls Screen Placeholder
                   Column(
                     children: [
-                      Expanded(child: AddNewContactScreen()),
+                      Expanded(child: const ContactsScreen()),
                       bottomBar()
                     ],
                   )
                 ],
               ),
             ),
-            floatingActionButton: widget.routeVideo == 'video'
+          ),
+          floatingActionButton: (widget.routeVideo == 'video' &&
+                  widget.passController != null)
                 ? SizedBox(
                     height: 200,
                     width: 200,
@@ -1007,7 +1175,7 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                               connection: RtcConnection(
                                   // channelId: call.callerId
-                                  channelId: 'abcd1'),
+                                  channelId: widget.passController?.call.effectiveChannelName ?? 'abcd1'),
                             ),
                           ),
                           Positioned(
@@ -1092,9 +1260,9 @@ class _HomeScreenState extends State<HomeScreen>
                       return SizedBox.shrink();
                     }
                   }),
-            ),
           ),
-        );
+        ),
+      );
     });
   }
 
@@ -1186,6 +1354,23 @@ class _HomeScreenState extends State<HomeScreen>
                                         width: 10,
                                       ),
                                       Text('Add Friends')
+                                    ],
+                                  )),
+                              IconButton(
+                                  onPressed: () {
+                                    Get.back();
+                                    Get.toNamed(AppRoutes.contacts);
+                                  },
+                                  icon: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.contacts,
+                                        size: 20,
+                                      ),
+                                      SizedBox(
+                                        width: 10,
+                                      ),
+                                      Text('My Friends')
                                     ],
                                   )),
                               IconButton(
@@ -1284,4 +1469,3 @@ class _HomeScreenState extends State<HomeScreen>
   //   );
   // }
 }
-

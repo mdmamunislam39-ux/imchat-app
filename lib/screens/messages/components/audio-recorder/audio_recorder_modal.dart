@@ -51,9 +51,10 @@ class _AudioRecorderModalState extends State<AudioRecorderModal> {
           horizontal: defaultPadding,
           vertical: defaultPadding,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             // 1. Show Recording Controls
             if (isRecording) _buildRecordingControls(context, controller),
             // 2. Playback Controls
@@ -104,7 +105,8 @@ class _AudioRecorderModalState extends State<AudioRecorderModal> {
             )
           ],
         ),
-      );
+      ),
+    );
     });
   }
 

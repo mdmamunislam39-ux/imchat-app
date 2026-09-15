@@ -71,6 +71,7 @@ class AdminAssetsService {
             'createdAt': data['createdAt'],
             'updatedAt': data['updatedAt'],
             'starRating': data['starRating'] ?? 1,
+            'verifyLevel': data['verifyLevel'] ?? data['verificationLevel'] ?? 0,
           };
         }).toList();
 
@@ -119,6 +120,8 @@ class AdminAssetsService {
     File? animationFile,
     bool skipFileUpload = false,
     int starRating = 1,
+    int verifyLevel = 0,
+    Map<String, dynamic>? validityPrices,
   }) async {
     try {
       final String id = _uuid.v4();
@@ -161,6 +164,7 @@ class AdminAssetsService {
           'updatedAt': Timestamp.fromDate(now),
           'isActive': true,
           'starRating': starRating,
+          if (validityPrices != null) 'validityPrices': validityPrices,
         };
         await _firestore.collection(_giftsCollection).doc(id).set(giftData);
       } else {
@@ -177,6 +181,8 @@ class AdminAssetsService {
           'updatedAt': Timestamp.fromDate(now),
           'isActive': true,
           'starRating': starRating,
+          'verifyLevel': verifyLevel,
+          if (validityPrices != null) 'validityPrices': validityPrices,
         };
         await _firestore.collection(_marketItemsCollection).doc(id).set(itemData);
       }
@@ -202,6 +208,8 @@ class AdminAssetsService {
     File? animationFile,
     bool? isActive,
     int? starRating,
+    int? verifyLevel,
+    Map<String, dynamic>? validityPrices,
   }) async {
     try {
       final DateTime now = DateTime.now();
@@ -213,6 +221,8 @@ class AdminAssetsService {
       if (category != null) updates['category'] = category.trim();
       if (isActive != null) updates['isActive'] = isActive;
       if (starRating != null) updates['starRating'] = starRating;
+      if (verifyLevel != null) updates['verifyLevel'] = verifyLevel;
+      if (validityPrices != null) updates['validityPrices'] = validityPrices;
 
       if (pngFile != null) {
         final path = type == 'gift'
@@ -301,3 +311,4 @@ class AdminAssetsService {
     }
   }
 }
+

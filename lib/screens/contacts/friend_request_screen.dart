@@ -37,7 +37,8 @@ class FriendRequestScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               final doc = snapshot.data!.docs[index];
               final data = doc.data() as Map<String, dynamic>;
-              final senderId = data['senderId'];
+              final senderId = data['senderId'] ?? doc.id;
+              final roomTitle = data['roomTitle'] as String?;
               
               return FutureBuilder<User?>(
                 future: UserApi.getUser(senderId),
@@ -50,20 +51,37 @@ class FriendRequestScreen extends StatelessWidget {
                       imageUrl: user.photoUrl,
                       radius: 20,
                     ),
-                    title: Text(user.fullname),
+                    title: Text(
+                      user.fullname,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: (roomTitle != null && roomTitle.isNotEmpty)
+                        ? Text(
+                            'From Room "$roomTitle"',
+                            style: const TextStyle(color: Colors.blueAccent, fontSize: 12),
+                          )
+                        : const Text('Sent you a friend request'),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        TextButton(
+                        ElevatedButton(
                           onPressed: () async {
-                            // Accept Request
-                            await ContactApi.addContact(userId: user.userId);
-                            await doc.reference.delete();
+                            await ContactApi.acceptFriendRequest(senderId: user.userId);
                           },
-                          child: const Text('Accept', style: TextStyle(color: Colors.green)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          ),
+                          child: const Text('Accept', style: TextStyle(color: Colors.white)),
                         ),
-                        TextButton(
-                          onPressed: () => doc.reference.delete(),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () async {
+                            await ContactApi.rejectFriendRequest(senderId: user.userId);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          ),
                           child: const Text('Reject', style: TextStyle(color: Colors.red)),
                         ),
                       ],

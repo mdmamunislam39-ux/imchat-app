@@ -2,7 +2,10 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:chat_messenger/api/user_api.dart';
 import 'package:chat_messenger/models/news_feed_post.dart';
+import 'package:chat_messenger/models/user.dart';
+import 'package:chat_messenger/services/push_notification_service.dart';
 
 class NewsFeedService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -39,9 +42,61 @@ class NewsFeedService {
       return posts;
     });
   }
+
+  /// Real-time stream of trending posts ordered by calculatedTrendingScore
+  static Stream<List<NewsFeedPost>> getTrendingPostsStream({
+    DocumentSnapshot? lastDoc,
+    int limit = 15,
+  }) {
+    Query<Map<String, dynamic>> query = _firestore
+        .collection(_postsCollection)
+        .orderBy('createdAt', descending: true)
+        .limit(limit);
+
+    if (lastDoc != null) {
+      query = query.startAfterDocument(lastDoc);
+    }
+
+    return query.snapshots().map((snap) {
+      final posts = snap.docs
+          .map((doc) => NewsFeedPost.fromFirestore(doc))
+          .where((post) => !post.isDeleted)
+          .toList();
+      posts.sort((a, b) {
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        return b.calculatedTrendingScore.compareTo(a.calculatedTrendingScore);
+      });
+      return posts;
+    });
+  }
+
+  static Future<List<NewsFeedPost>> fetchMoreTrendingPosts({
+    required DocumentSnapshot lastDoc,
+    int limit = 15,
+  }) async {
+    final snap = await _firestore
+        .collection(_postsCollection)
+        .orderBy('createdAt', descending: true)
+        .startAfterDocument(lastDoc)
+        .limit(limit)
+        .get();
+
+    final posts = snap.docs
+        .map((doc) => NewsFeedPost.fromFirestore(doc))
+        .where((post) => !post.isDeleted)
+        .toList();
+    posts.sort((a, b) {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return b.calculatedTrendingScore.compareTo(a.calculatedTrendingScore);
+    });
+    return posts;
+  }
   
   /// Real-time stream of a single post by ID
   static Stream<NewsFeedPost?> getPostByIdStream(String postId) {
+
     return _firestore
         .collection(_postsCollection)
         .doc(postId)
@@ -140,6 +195,17 @@ class NewsFeedService {
       );
 
       await docRef.set(post.toFirestore());
+
+      // Send mention notifications in background
+      _sendMentionNotifications(
+        text: content,
+        postId: docRef.id,
+        senderUserId: userId,
+        senderUserName: userName,
+        senderAvatar: userAvatar,
+        isComment: false,
+      );
+
       return docRef.id;
     } catch (e) {
       debugPrint('❌ [NewsFeed] Error creating post: $e');
@@ -180,10 +246,17 @@ class NewsFeedService {
         reactions[userId] = ReactionType.like.toJson();
       }
 
+      final newLikeCount = likedBy.length;
+      final commentCount = (data['commentCount'] as num?)?.toInt() ?? 0;
+      final shareCount = (data['shareCount'] as num?)?.toInt() ?? 0;
+      final viewCount = (data['viewCount'] as num?)?.toInt() ?? 0;
+      final newTrendingScore = (newLikeCount * 3.0) + (commentCount * 5.0) + (shareCount * 10.0) + (viewCount * 0.5);
+
       txn.update(ref, {
         'likedBy': likedBy,
-        'likeCount': likedBy.length,
+        'likeCount': newLikeCount,
         'reactions': reactions,
+        'trendingScore': newTrendingScore,
         'updatedAt': Timestamp.now(),
       });
     });
@@ -219,10 +292,17 @@ class NewsFeedService {
         }
       }
 
+      final newLikeCount = likedBy.length;
+      final commentCount = (data['commentCount'] as num?)?.toInt() ?? 0;
+      final shareCount = (data['shareCount'] as num?)?.toInt() ?? 0;
+      final viewCount = (data['viewCount'] as num?)?.toInt() ?? 0;
+      final newTrendingScore = (newLikeCount * 3.0) + (commentCount * 5.0) + (shareCount * 10.0) + (viewCount * 0.5);
+
       txn.update(ref, {
         'likedBy': likedBy,
-        'likeCount': likedBy.length,
+        'likeCount': newLikeCount,
         'reactions': reactions,
+        'trendingScore': newTrendingScore,
         'updatedAt': Timestamp.now(),
       });
     });
@@ -279,6 +359,16 @@ class NewsFeedService {
       'updatedAt': Timestamp.now(),
     });
     await batch.commit();
+
+    // Send mention notifications in background
+    _sendMentionNotifications(
+      text: text,
+      postId: postId,
+      senderUserId: userId,
+      senderUserName: userName,
+      senderAvatar: userAvatar,
+      isComment: true,
+    );
   }
 
   /// Delete a comment
@@ -333,8 +423,6 @@ class NewsFeedService {
     });
   }
 
-  // ─── Share ─────────────────────────────────────────────────────────────────
-
   /// Increment share count
   static Future<void> incrementShareCount(String postId) async {
     await _firestore.collection(_postsCollection).doc(postId).update({
@@ -342,4 +430,246 @@ class NewsFeedService {
       'updatedAt': Timestamp.now(),
     });
   }
+
+  // ─── Reporting & Moderation ───────────────────────────────────────────────
+
+  /// Report a post
+  static Future<void> reportPost({
+    required String postId,
+    required String reporterId,
+    required String reason,
+    String? details,
+  }) async {
+    final reportDoc = _firestore.collection('moment_reports').doc();
+    final batch = _firestore.batch();
+
+    batch.set(reportDoc, {
+      'id': reportDoc.id,
+      'postId': postId,
+      'reporterId': reporterId,
+      'reason': reason,
+      'details': details ?? '',
+      'createdAt': Timestamp.now(),
+      'status': 'pending', // 'pending', 'resolved', 'dismissed'
+    });
+
+    batch.update(_firestore.collection(_postsCollection).doc(postId), {
+      'reportCount': FieldValue.increment(1),
+    });
+
+    await batch.commit();
+  }
+
+  /// Create an official notice post
+  static Future<String?> createNoticePost({
+    required String title,
+    required String content,
+    File? mediaFile,
+    bool isPinned = true,
+  }) async {
+    try {
+      final docRef = _firestore.collection(_postsCollection).doc();
+      final now = DateTime.now();
+
+      List<PostMedia> mediaList = [];
+      if (mediaFile != null) {
+        final ext = mediaFile.path.split('.').last.toLowerCase();
+        final isVideo = ['mp4', 'mov', 'avi', 'mkv'].contains(ext);
+        final ref = _storage
+            .ref()
+            .child('news_feed_media/${docRef.id}/${now.millisecondsSinceEpoch}.$ext');
+        await ref.putFile(mediaFile);
+        final url = await ref.getDownloadURL();
+        mediaList.add(PostMedia(url: url, type: isVideo ? 'video' : 'image'));
+      }
+
+      final post = NewsFeedPost(
+        id: docRef.id,
+        userId: 'admin_official',
+        userName: 'imChat Official Notice',
+        content: content,
+        noticeTitle: title,
+        isNotice: true,
+        isPinned: isPinned,
+        media: mediaList,
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      await docRef.set(post.toFirestore());
+      return docRef.id;
+    } catch (e) {
+      debugPrint('❌ [NewsFeedService] Error creating notice: $e');
+      return null;
+    }
+  }
+
+  /// Stream reported posts
+  static Stream<QuerySnapshot<Map<String, dynamic>>> getReportedPostsStream() {
+    return _firestore
+        .collection('moment_reports')
+        .where('status', isEqualTo: 'pending')
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
+
+  /// Dismiss a report
+  static Future<void> dismissReport(String reportId) async {
+    await _firestore.collection('moment_reports').doc(reportId).update({
+      'status': 'dismissed',
+      'resolvedAt': Timestamp.now(),
+    });
+  }
+
+  /// Delete a post by admin and update report status
+  static Future<void> deleteReportedPost(String postId, String reportId) async {
+    final batch = _firestore.batch();
+    batch.update(_firestore.collection(_postsCollection).doc(postId), {
+      'isDeleted': true,
+      'updatedAt': Timestamp.now(),
+    });
+    batch.update(_firestore.collection('moment_reports').doc(reportId), {
+      'status': 'resolved',
+      'actionTaken': 'deleted',
+      'resolvedAt': Timestamp.now(),
+    });
+    await batch.commit();
+  }
+
+  // ─── Ad Settings Configuration ──────────────────────────────────────────
+
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> getAdSettingsStream() {
+    return _firestore.collection('app_settings').doc('moment_ads').snapshots();
+  }
+
+  static Future<void> updateAdSettings(Map<String, dynamic> settings) async {
+    await _firestore.collection('app_settings').doc('moment_ads').set(
+      settings,
+      SetOptions(merge: true),
+    );
+  }
+
+  // ─── View Count Tracking ───────────────────────────────────────────────────
+
+  static Future<void> incrementPostViewCount(String postId) async {
+    try {
+      await _firestore.collection(_postsCollection).doc(postId).update({
+        'viewCount': FieldValue.increment(1),
+      });
+    } catch (e) {
+      debugPrint('Error incrementing view count: $e');
+    }
+  }
+
+  /// Extract mentions from text and send push/in-app notifications to mentioned users
+  static Future<void> _sendMentionNotifications({
+    required String text,
+    required String postId,
+    required String senderUserId,
+    required String senderUserName,
+    String? senderAvatar,
+    bool isComment = false,
+  }) async {
+    if (text.isEmpty) return;
+
+    final matches = RegExp(
+      r'(@[a-zA-Z0-9_\.\-\u0980-\u09FF]+)',
+      caseSensitive: false,
+    ).allMatches(text);
+
+    if (matches.isEmpty) return;
+
+    final Set<String> processedQueries = {};
+
+    for (final match in matches) {
+      final rawMention = match.group(0)!;
+      final query = rawMention.replaceAll('@', '').trim();
+      if (query.isEmpty || processedQueries.contains(query.toLowerCase())) {
+        continue;
+      }
+      processedQueries.add(query.toLowerCase());
+
+      try {
+        User? targetUser;
+
+        // 1. Direct match by userId using UserApi
+        targetUser = await UserApi.getUser(query);
+
+        // 2. Query searchId
+        if (targetUser == null) {
+          final searchIdQuery = await _firestore
+              .collection('Users')
+              .where('searchId', isEqualTo: query)
+              .limit(1)
+              .get();
+          if (searchIdQuery.docs.isNotEmpty) {
+            targetUser = User.fromMap(searchIdQuery.docs.first.data());
+          }
+        }
+
+        // 3. Match by fullname
+        if (targetUser == null) {
+          final snapshot =
+              await _firestore.collection('Users').limit(200).get();
+          final lowerQuery = query.toLowerCase();
+          for (final doc in snapshot.docs) {
+            final data = doc.data();
+            final fullname = (data['fullname'] ?? '').toString();
+            final cleanFullname = fullname.replaceAll(' ', '').toLowerCase();
+            final searchId = (data['searchId'] ?? '').toString().toLowerCase();
+
+            if (cleanFullname == lowerQuery ||
+                fullname.toLowerCase() == lowerQuery ||
+                searchId == lowerQuery ||
+                doc.id.toLowerCase() == lowerQuery ||
+                (cleanFullname.isNotEmpty &&
+                    cleanFullname.contains(lowerQuery))) {
+              targetUser = User.fromMap(data);
+              break;
+            }
+          }
+        }
+
+        // Don't notify the sender themselves
+        if (targetUser == null || targetUser.userId == senderUserId) {
+          continue;
+        }
+
+        final title = isComment
+            ? '$senderUserName mentioned you in a comment'
+            : '$senderUserName mentioned you in a post';
+
+        // 1. Save in-app notification in Firestore
+        await _firestore.collection('user_notifications').add({
+          'recipientId': targetUser.userId,
+          'senderId': senderUserId,
+          'senderName': senderUserName,
+          'senderAvatar': senderAvatar ?? '',
+          'type': isComment ? 'comment_mention' : 'post_mention',
+          'title': title,
+          'body': text,
+          'postId': postId,
+          'isRead': false,
+          'createdAt': Timestamp.now(),
+        });
+
+        // 2. Send FCM Push Notification if deviceToken is present
+        if (targetUser.deviceToken.isNotEmpty) {
+          await PushNotificationService.sendNotification(
+            type: NotificationType.alert,
+            title: title,
+            body: text,
+            deviceToken: targetUser.deviceToken,
+            call: {
+              'type': isComment ? 'comment_mention' : 'post_mention',
+              'postId': postId,
+            },
+          );
+        }
+      } catch (e) {
+        debugPrint('❌ Error sending mention notification for @$query: $e');
+      }
+    }
+  }
 }
+

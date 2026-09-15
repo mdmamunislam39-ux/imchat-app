@@ -267,6 +267,7 @@ class _ExploreTabContentState extends State<ExploreTabContent> {
                       // Add actual live rooms
                       for (var doc in docs) {
                          final roomV2 = AudioRoomV2.fromFirestore(doc);
+                         if (roomV2.isGroupRoom || roomV2.isPrivate) continue;
                          
                          roomWidgets.add(
                            _buildLiveRoomGridCard(

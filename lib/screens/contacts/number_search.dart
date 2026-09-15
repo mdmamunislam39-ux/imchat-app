@@ -10,13 +10,12 @@ import 'package:chat_messenger/helpers/app_helper.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:get/get.dart';
 
-import 'components/contact_card.dart';
+import 'package:chat_messenger/components/cached_circle_avatar.dart';
+import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
 import 'controllers/contact_search_controller.dart';
 
 class NumberSearchScreen extends StatelessWidget {
   const NumberSearchScreen({super.key});
-  // String countryCode = '+1';
-  // String isoCountryCode = 'US';
 
   @override
   Widget build(BuildContext context) {
@@ -24,89 +23,153 @@ class NumberSearchScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: CustomAppBar(
-        title: Text("Add Friends"),
+        title: const Text("Add Friends"),
       ),
-
       body: SafeArea(
         child: Column(
           children: [
-            Form(
-              key: controller.formKey,
-              child: Row(
-               // mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  CountryCodePicker(
-                    onChanged: (val) {
-                      controller.countryCode.value = val.toString();
-                      controller.isoCountryCode.value = val.code!;
-                    },
-                    textStyle:
-                        TextStyle(fontSize: 16, color: primaryColor),
-                    dialogTextStyle:
-                        TextStyle(fontSize: 12, color: primaryColor),
-                    initialSelection: 'BD',
-                    favorite: ['+39', 'US'],
-                    showCountryOnly: false,
-                    showOnlyCountryWhenClosed: false,
-                    alignLeft: false,
+            const SizedBox(height: 8),
+            // Mode Selector Toggle: Phone Number vs User ID
+            Obx(() => Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(25),
                   ),
-                  Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => controller.changeSearchMode(0),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: controller.searchMode.value == 0
+                                  ? primaryColor
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(22),
+                            ),
+                            child: Text(
+                              'Phone Number',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: controller.searchMode.value == 0
+                                    ? Colors.white
+                                    : Colors.black87,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => controller.changeSearchMode(1),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: controller.searchMode.value == 1
+                                  ? primaryColor
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(22),
+                            ),
+                            child: Text(
+                              'User ID',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: controller.searchMode.value == 1
+                                    ? Colors.white
+                                    : Colors.black87,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+
+            // Search Fields (Phone Number or User ID)
+            Obx(() {
+              if (controller.searchMode.value == 0) {
+                // Phone Number Search
+                return Form(
+                  key: controller.formKey,
+                  child: Row(
+                    children: [
+                      CountryCodePicker(
+                        onChanged: (val) {
+                          controller.countryCode.value = val.toString();
+                          controller.isoCountryCode.value = val.code!;
+                        },
+                        textStyle: TextStyle(fontSize: 16, color: primaryColor),
+                        dialogTextStyle: TextStyle(fontSize: 12, color: primaryColor),
+                        initialSelection: 'BD',
+                        favorite: ['+39', 'US'],
+                        showCountryOnly: false,
+                        showOnlyCountryWhenClosed: false,
+                        alignLeft: false,
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: TextFormField(
+                            autofocus: true,
+                            onFieldSubmitted: (_) => controller.searchContactForNumber(),
+                            textInputAction: TextInputAction.search,
+                            validator: (val) {
+                              if (val == null || val.isEmpty) {
+                                return "number can't be null";
+                              }
+                              return null;
+                            },
+                            inputFormatters: AppHelper.usernameFormatter,
+                            controller: controller.numberController,
+                            decoration: InputDecoration(
+                              hintText: 'search phone number',
+                              suffixIcon: IconButton(
+                                icon: const Icon(Icons.search),
+                                onPressed: () => controller.searchContactForNumber(),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              } else {
+                // User ID Search
+                return Form(
+                  key: controller.formKey3,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: TextFormField(
                       autofocus: true,
-                      // onChanged: (value) {
-                      //   controller.searchContactForNumber();
-                      // },
-                      onChanged: (value) {
-                        debugPrint(controller.numberController.text[0]);
-                        if (controller.numberController.text[0]=='0') {
-                          debugPrint('matchhhhhhhhh');
-                         var a = controller.numberController.text.substring(1);
-                         debugPrint(a);
-                        }
-                       // controller.numberController.text[0].replaceRange(0, 1, '');
-                       // debugPrint(controller.numberController.text.trim());
-
-                      },
-                      onFieldSubmitted: (String value) =>
-                          controller.searchContactForNumber(),
+                      onFieldSubmitted: (_) => controller.searchContactForUserId(),
                       textInputAction: TextInputAction.search,
-                      validator: (val) {
-                        if (val!.isEmpty) {
-                          return "number can't be null";
-                        }
-                        if (val.length > 10) {
-                          return 'check your number';
-                        }
-                        return null;
-                      },
-                      inputFormatters: AppHelper.usernameFormatter,
-                      controller: controller.numberController,
+                      controller: controller.userIdController,
                       decoration: InputDecoration(
-                        hintText: 'search number',
-                        // prefixIcon: const Icon(Icons.alternate_email),
+                        hintText: 'enter User ID or Search ID',
+                        prefixIcon: const Icon(Icons.badge_outlined),
                         suffixIcon: IconButton(
-                          icon: Icon(Icons.search),
-                          onPressed: () =>
-                              controller.searchContactForNumber(),
+                          icon: const Icon(Icons.search),
+                          onPressed: () => controller.searchContactForUserId(),
                         ),
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
+                );
+              }
+            }),
 
-            //Searh Contact
-
-            // Contact result
+            // Search Result
             Obx(() {
-              // Check loading
-              if (
-                  //controller.selectedView.value == 0
-                  // ?
-                  controller.isLoading.value
-                  //: controller.isLoading2.value
-                  ) {
+              if (controller.isLoading.value) {
                 return const Padding(
                   padding: EdgeInsets.only(top: 50),
                   child: LoadingIndicator(size: 50),
@@ -120,18 +183,129 @@ class NumberSearchScreen extends StatelessWidget {
                   ),
                 );
               }
-              // Get contact
+
               final User user = controller.contact.value!;
 
-              return ContactCard(
-                user: user,
-                onPress: () {
-                  // Closes keyboard
-                  FocusScope.of(context).unfocus();
-
-                  // Send friend request
-                  ContactApi.sendFriendRequest(targetUserId: user.userId);
-                },
+              return Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      onTap: () {
+                        FocusScope.of(context).unfocus();
+                        Get.to(() => ProfilePageForRoom(
+                              userID: user.userId,
+                              userName: user.fullname,
+                              userImage: user.photoUrl,
+                            ));
+                      },
+                      leading: CachedCircleAvatar(
+                        imageUrl: user.photoUrl,
+                        radius: 28,
+                        frameId: user.customization?.selectedFrameId,
+                        frameScale: 1.3,
+                      ),
+                      title: Text(
+                        user.fullname,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      subtitle: Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          user.searchId.isNotEmpty
+                              ? 'ID: ${user.searchId}'
+                              : 'ID: ${user.userId}',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      trailing: controller.searchMode.value == 0
+                          ? ElevatedButton.icon(
+                              onPressed: () async {
+                                FocusScope.of(context).unfocus();
+                                await ContactApi.addContact(
+                                  userId: user.userId,
+                                  showMsg: true,
+                                );
+                              },
+                              icon: const Icon(Icons.person_add, size: 16, color: Colors.white),
+                              label: const Text(
+                                'Add',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryColor,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                              ),
+                            )
+                          : ElevatedButton.icon(
+                              onPressed: () {
+                                FocusScope.of(context).unfocus();
+                                Get.to(() => ProfilePageForRoom(
+                                      userID: user.userId,
+                                      userName: user.fullname,
+                                      userImage: user.photoUrl,
+                                    ));
+                              },
+                              icon: const Icon(Icons.account_circle, size: 16, color: Colors.white),
+                              label: const Text(
+                                'Profile',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0099FF),
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: Text(
+                      controller.searchMode.value == 0
+                          ? 'Added via phone number: will be added directly to contact list.'
+                          : 'Added via User ID: tap to view profile & send friend request.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                        fontStyle: FontStyle.italic,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
               );
             }),
           ],

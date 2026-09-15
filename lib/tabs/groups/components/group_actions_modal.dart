@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
 import 'package:chat_messenger/api/group_api.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/helpers/routes_helper.dart';
 import 'package:chat_messenger/models/group.dart';
 import 'package:chat_messenger/models/user.dart';
@@ -23,7 +24,28 @@ class GroupActionsModal extends GetView<GroupController> {
   @override
   Widget build(BuildContext context) {
     final String fullname = member.fullname;
-    final bool isMemberAdmin = group.isAdmin(member.userId);
+    final String currentUserId = AuthController.instance.currentUser.userId;
+
+    final bool isCurrentOwner = group.isOwner(currentUserId);
+    final bool isCurrentAdmin = group.isAdmin(currentUserId);
+
+    final bool isTargetOwner = group.isOwner(member.userId);
+    final bool isTargetAdmin = group.isAdmin(member.userId);
+
+    // Permission checks:
+    // - Owner cannot be removed by anyone.
+    // - Owner can remove admins and regular members (except self).
+    // - Admin cannot remove owner or another admin. Admin can only remove regular members.
+    final bool canRemove = (member.userId != currentUserId) &&
+        !isTargetOwner &&
+        (isCurrentOwner || (isCurrentAdmin && !isTargetAdmin));
+
+    // Admin role management:
+    // - Owner role cannot be changed.
+    // - Only Owner can dismiss an Admin.
+    // - Both Owner and Admin can make a regular member an Admin.
+    final bool canManageAdmin = !isTargetOwner &&
+        (isTargetAdmin ? isCurrentOwner : (isCurrentOwner || isCurrentAdmin));
 
     return Container(
       decoration: const BoxDecoration(
@@ -32,9 +54,10 @@ class GroupActionsModal extends GetView<GroupController> {
           topRight: Radius.circular(defaultRadius),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
@@ -46,7 +69,7 @@ class GroupActionsModal extends GetView<GroupController> {
           ),
           const Divider(height: 0),
           // Remove member
-          if (isAdmin)
+          if (canRemove)
             ListTile(
               onTap: () => controller.removeMember(member),
               leading: const Icon(IconlyLight.delete, color: errorColor),
@@ -59,22 +82,21 @@ class GroupActionsModal extends GetView<GroupController> {
             ),
 
           // Make group Admin / Dismiss as Admin
-          if (!group.isBroadcast)
-            if (isAdmin)
-              ListTile(
-                leading: Icon(
-                    isMemberAdmin ? IconlyLight.delete : IconlyLight.user3,
-                    color: errorColor),
-                title: Text(
-                  isMemberAdmin ? 'dismiss_as_admin'.tr : 'make_group_admin'.tr,
-                  style: const TextStyle(color: errorColor),
-                ),
-                onTap: () => GroupApi.updateAdminRole(
-                  isAdd: isMemberAdmin ? false : true,
-                  group: group,
-                  member: member,
-                ),
+          if (!group.isBroadcast && canManageAdmin)
+            ListTile(
+              leading: Icon(
+                  isTargetAdmin ? IconlyLight.delete : IconlyLight.user3,
+                  color: errorColor),
+              title: Text(
+                isTargetAdmin ? 'dismiss_as_admin'.tr : 'make_group_admin'.tr,
+                style: const TextStyle(color: errorColor),
               ),
+              onTap: () => GroupApi.updateAdminRole(
+                isAdd: isTargetAdmin ? false : true,
+                group: group,
+                member: member,
+              ),
+            ),
           ListTile(
             leading: const Icon(IconlyLight.dangerCircle),
             title: Text("${'view'.tr} $fullname"),
@@ -102,6 +124,7 @@ class GroupActionsModal extends GetView<GroupController> {
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 }

@@ -18,10 +18,12 @@ import 'package:chat_messenger/widgets/emoji_picker_bottom_sheet.dart';
 import 'package:get/get.dart';
 import 'game_wall_bottom_sheet.dart';
 import 'gift_selection_bottom_sheet.dart';
+import 'room_tools_bottom_sheet.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
+import 'package:chat_messenger/services/app_theme_service.dart';
 
 /// Bottom control buttons for audio room with live chat
 class RoomControls extends StatefulWidget {
@@ -54,6 +56,11 @@ class RoomControls extends StatefulWidget {
   final int joinRequestsCount;
   final VoidCallback? onLiveMicTapped;
   final VoidCallback? onJoinRequestTapped;
+  final String? creatorId;
+  final List<dynamic>? adminIds;
+  final VoidCallback? onGrabTopSeat;
+  final bool isGameActive;
+  final bool isPKActive;
 
   const RoomControls({
     super.key,
@@ -79,6 +86,8 @@ class RoomControls extends StatefulWidget {
     this.selectedUserId,
     this.selectedUserName,
     this.selectedUserImageUrl,
+    this.creatorId,
+    this.adminIds,
     this.onMessageTap,
     this.isMutedByAdmin = false,
     this.isLive = false,
@@ -86,6 +95,9 @@ class RoomControls extends StatefulWidget {
     this.joinRequestsCount = 0,
     this.onLiveMicTapped,
     this.onJoinRequestTapped,
+    this.onGrabTopSeat,
+    this.isGameActive = false,
+    this.isPKActive = false,
   });
 
   @override
@@ -209,6 +221,20 @@ class _RoomControlsState extends State<RoomControls> {
   void didUpdateWidget(RoomControls oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    if (oldWidget.isMuted != widget.isMuted ||
+        oldWidget.isSpeakerOn != widget.isSpeakerOn ||
+        oldWidget.isMutedByAdmin != widget.isMutedByAdmin ||
+        oldWidget.isSeated != widget.isSeated ||
+        oldWidget.isHost != widget.isHost ||
+        oldWidget.isSpeaker != widget.isSpeaker ||
+        oldWidget.isLive != widget.isLive ||
+        oldWidget.hasRequestedToJoin != widget.hasRequestedToJoin) {
+      if (mounted) {
+        setState(() {});
+        WidgetsBinding.instance.scheduleFrame();
+      }
+    }
+
     // Auto-scroll to bottom when new messages arrive
     if (widget.chatMessages.length != oldWidget.chatMessages.length) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -253,7 +279,8 @@ class _RoomControlsState extends State<RoomControls> {
       if (widget.roomId != null &&
           widget.currentUserId != null &&
           widget.currentUserName != null) {
-        if (emoji.id == 'local_dice_action') {
+        if (emoji.id == 'local_dice_action' || emoji.id == 'local_blue_dice_action') {
+          final bool isBlue = emoji.id == 'local_blue_dice_action';
           final rolledNumber = Random().nextInt(6) + 1;
           await EmojiChatService.sendDiceMessage(
             roomId: widget.roomId!,
@@ -262,6 +289,7 @@ class _RoomControlsState extends State<RoomControls> {
             userAvatar: widget.currentUserImageUrl,
             rolledNumber: rolledNumber,
             senderLevelBadgeUrl: widget.currentUserLevelBadgeUrl,
+            diceStyle: isBlue ? 'blue' : 'classic',
           );
         } else {
           await EmojiChatService.sendEmojiMessage(
@@ -409,12 +437,18 @@ class _RoomControlsState extends State<RoomControls> {
     int seatCount = widget.totalSeats;
     double listMaxHeight = Get.height * 0.42; // default
 
-    if (seatCount == 15 || seatCount == 12 || seatCount == 9) {
-      listMaxHeight = Get.height * 0.35;
+    if (widget.isGameActive) {
+      // When Carrom, Ludo, YouTube or any game is active, restrict chat box height strictly below the bottom seat row
+      listMaxHeight = 135.0;
+    } else if (widget.isPKActive) {
+      // When PK Battle is active, allow chat box messages to reach up to below PK progress bar (marked by user)
+      listMaxHeight = Get.height * 0.40;
+    } else if (seatCount == 15 || seatCount == 12 || seatCount == 9) {
+      listMaxHeight = Get.height * 0.42;
     } else if (seatCount == 10 || seatCount == 5) {
       listMaxHeight = Get.height * 0.47;
     } else if (seatCount == 20) {
-      listMaxHeight = Get.height * 0.25;
+      listMaxHeight = Get.height * 0.30;
     }
 
     return GestureDetector(
@@ -439,32 +473,35 @@ class _RoomControlsState extends State<RoomControls> {
                         minHeight:
                             50, // Minimum height for at least one message
                       ),
-                      child: ShaderMask(
-                        shaderCallback: (Rect bounds) {
-                          return const LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.transparent,
-                              Colors.black,
-                            ],
-                            stops: [
-                              0.0,
-                              0.20,
-                            ],
-                          ).createShader(bounds);
-                        },
-                        blendMode: BlendMode.dstIn,
-                        child: ListView.builder(
-                          controller:
-                              _scrollController, // Add scroll controller
-                          shrinkWrap: true, // Allow flexible height
-                          reverse: false,
-                          itemCount: widget.chatMessages.length,
-                          itemBuilder: (context, index) {
-                            final message = widget.chatMessages[index];
-                            return _buildChatMessage(message);
+                      child: ClipRect(
+                        clipBehavior: Clip.hardEdge,
+                        child: ShaderMask(
+                          shaderCallback: (Rect bounds) {
+                            return const LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.transparent,
+                                Colors.black,
+                              ],
+                              stops: [
+                                0.0,
+                                0.20,
+                              ],
+                            ).createShader(bounds);
                           },
+                          blendMode: BlendMode.dstIn,
+                          child: ListView.builder(
+                            controller:
+                                _scrollController, // Add scroll controller
+                            shrinkWrap: true, // Allow flexible height
+                            reverse: false,
+                            itemCount: widget.chatMessages.length,
+                            itemBuilder: (context, index) {
+                              final message = widget.chatMessages[index];
+                              return _buildChatMessage(message);
+                            },
+                          ),
                         ),
                       ),
                     ),
@@ -751,65 +788,133 @@ class _RoomControlsState extends State<RoomControls> {
                         ),
                       ),
 
-                      // Gift and Game buttons
+                      // Gift, Room Tools (4-Grid), and Game buttons
                       if (!_chatHasText) ...[
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 4),
 
                         // Gift button
                         GestureDetector(
                           onTap: _showGiftSelection,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(20),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                              child: Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.black.withValues(alpha: 0.3),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.15),
-                                    width: 1.0,
-                                  ),
-                                ),
-                                padding: const EdgeInsets.all(8),
-                                child: Image.asset(
-                                  'assets/images/gift_icon.png',
-                                  fit: BoxFit.contain,
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.transparent,
+                            ),
+                            padding: EdgeInsets.zero,
+                            child: Obx(() {
+                              if (Get.isRegistered<AppThemeService>()) {
+                                final themeService =
+                                    Get.find<AppThemeService>();
+                                final url =
+                                    themeService.giftBoxIconUrl.value;
+                                if (url.isNotEmpty) {
+                                  return CachedNetworkImage(
+                                    imageUrl: url,
+                                    fit: BoxFit.contain,
+                                    errorWidget: (_, __, ___) => Image.asset(
+                                      'assets/images/gift_icon.webp',
+                                      fit: BoxFit.contain,
+                                    ),
+                                  );
+                                }
+                              }
+                              return Image.asset(
+                                'assets/images/gift_icon.webp',
+                                fit: BoxFit.contain,
+                              );
+                            }),
+                          ),
+                        ),
+
+                        const SizedBox(width: 4),
+
+                        // 🔲 Custom 4-Grid Room Tools Button (Matching User Image: 3 squares + 1 diamond)
+                        GestureDetector(
+                          onTap: () {
+                            if (widget.roomId != null &&
+                                widget.currentUserId != null &&
+                                widget.currentUserName != null) {
+                              RoomToolsBottomSheet.show(
+                                context,
+                                room: widget.participants.isNotEmpty
+                                    ? AudioRoomV2(
+                                        id: widget.roomId!,
+                                        name: 'Audio Room',
+                                        description: '',
+                                        creatorId: widget.creatorId ?? '',
+                                        creatorName: widget.selectedUserName ?? 'Host',
+                                        createdAt: DateTime.now(),
+                                        updatedAt: DateTime.now(),
+                                        participants: widget.participants,
+                                        settings: const AudioRoomSettings(),
+                                      )
+                                    : null,
+                                currentUserId: widget.currentUserId!,
+                                currentUserName: widget.currentUserName!,
+                                currentUserAvatar: widget.currentUserImageUrl,
+                              );
+                            }
+                          },
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.black.withValues(alpha: 0.4),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                width: 1.0,
+                              ),
+                            ),
+                            child: Center(
+                              child: SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CustomPaint(
+                                  painter: _FourGridIconPainter(),
                                 ),
                               ),
                             ),
                           ),
                         ),
 
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 4),
 
                         // Premium Game Wall button
                         GestureDetector(
-                          onTap: () => GameWallBottomSheet.show(context),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(20),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                              child: Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.black.withValues(alpha: 0.3),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.15),
-                                    width: 1.0,
-                                  ),
-                                ),
-                                padding: const EdgeInsets.all(8),
-                                child: Image.asset(
-                                  'assets/images/game_icon.png',
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
+                          onTap: () => GameWallBottomSheet.show(context, isInAudioRoom: true, roomId: widget.roomId),
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.transparent,
                             ),
+                            padding: const EdgeInsets.all(2),
+                            child: Obx(() {
+                              if (Get.isRegistered<AppThemeService>()) {
+                                final themeService =
+                                    Get.find<AppThemeService>();
+                                final url =
+                                    themeService.gameWallIconUrl.value;
+                                if (url.isNotEmpty) {
+                                  return CachedNetworkImage(
+                                    imageUrl: url,
+                                    fit: BoxFit.contain,
+                                    errorWidget: (_, __, ___) => Image.asset(
+                                      'assets/images/game_icon.webp',
+                                      fit: BoxFit.contain,
+                                    ),
+                                  );
+                                }
+                              }
+                              return Image.asset(
+                                'assets/images/game_icon.webp',
+                                fit: BoxFit.contain,
+                              );
+                            }),
                           ),
                         ),
                       ],
@@ -1312,9 +1417,15 @@ class _RoomControlsState extends State<RoomControls> {
       return _buildTextMessage(message, userColor);
     }
 
-    if (message.emojiItem!.emojiUrl.startsWith('local_dice:')) {
-      final number = int.parse(message.emojiItem!.emojiUrl.split(':')[1]);
-      return StaticDiceWidget(number: number, size: 44.0);
+    final emojiUrl = message.emojiItem!.emojiUrl;
+    if (emojiUrl.startsWith('local_dice:') || emojiUrl == 'local_dice_action') {
+      final parts = emojiUrl.split(':');
+      final number = parts.length > 1 ? (int.tryParse(parts[1]) ?? 6) : 6;
+      return StaticDiceWidget(number: number, size: 44.0, diceStyle: 'classic');
+    } else if (emojiUrl.startsWith('local_blue_dice:') || emojiUrl == 'local_blue_dice_action') {
+      final parts = emojiUrl.split(':');
+      final number = parts.length > 1 ? (int.tryParse(parts[1]) ?? 6) : 6;
+      return StaticDiceWidget(number: number, size: 44.0, diceStyle: 'blue');
     }
 
     return CachedNetworkImage(
@@ -1355,6 +1466,36 @@ class _RoomControlsState extends State<RoomControls> {
       return _buildTextMessage(message, userColor);
     }
 
+    final emojiUrl = message.emojiItem!.emojiUrl;
+    Widget emojiWidget;
+    if (emojiUrl.startsWith('local_dice:') || emojiUrl == 'local_dice_action') {
+      final parts = emojiUrl.split(':');
+      final number = parts.length > 1 ? (int.tryParse(parts[1]) ?? 6) : 6;
+      emojiWidget = StaticDiceWidget(number: number, size: 40.0, diceStyle: 'classic');
+    } else if (emojiUrl.startsWith('local_blue_dice:') || emojiUrl == 'local_blue_dice_action') {
+      final parts = emojiUrl.split(':');
+      final number = parts.length > 1 ? (int.tryParse(parts[1]) ?? 6) : 6;
+      emojiWidget = StaticDiceWidget(number: number, size: 40.0, diceStyle: 'blue');
+    } else {
+      emojiWidget = CachedNetworkImage(
+        imageUrl: emojiUrl,
+        width: 40,
+        height: 40,
+        placeholder: (context, url) => const SizedBox(
+          width: 40,
+          height: 40,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFD4AF37)),
+          ),
+        ),
+        errorWidget: (context, url, error) => const Icon(
+          Icons.broken_image,
+          color: Colors.white24,
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1367,11 +1508,7 @@ class _RoomControlsState extends State<RoomControls> {
           ),
         ),
         const SizedBox(height: 6),
-        CachedNetworkImage(
-          imageUrl: message.emojiItem!.emojiUrl,
-          width: 40,
-          height: 40,
-        ),
+        emojiWidget,
       ],
     );
   }
@@ -1604,4 +1741,69 @@ class _ChatUserData {
   final String? nameplateUrl;
   
   _ChatUserData(this.user, this.sendingUrl, this.receivingUrl, this.nameplateUrl);
+}
+
+/// Custom painter for the 4-Grid Room Tools Icon (3 Rounded Squares + 1 Diamond)
+class _FourGridIconPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    final double tileSize = size.width * 0.42;
+    final double gap = size.width * 0.16;
+    final double radius = 3.0;
+
+    // Top-Left (Rounded Rect)
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, tileSize, tileSize),
+        Radius.circular(radius),
+      ),
+      paint,
+    );
+
+    // Top-Right (Rounded Rect)
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(tileSize + gap, 0, tileSize, tileSize),
+        Radius.circular(radius),
+      ),
+      paint,
+    );
+
+    // Bottom-Left (Rounded Rect)
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, tileSize + gap, tileSize, tileSize),
+        Radius.circular(radius),
+      ),
+      paint,
+    );
+
+    // Bottom-Right (Diamond Shape - Rotated Square)
+    canvas.save();
+    final double centerX = tileSize + gap + tileSize / 2;
+    final double centerY = tileSize + gap + tileSize / 2;
+    canvas.translate(centerX, centerY);
+    canvas.rotate(pi / 4); // 45 degrees rotation for diamond
+    final double diamondSize = tileSize * 0.8;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset.zero,
+          width: diamondSize,
+          height: diamondSize,
+        ),
+        Radius.circular(radius * 0.8),
+      ),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

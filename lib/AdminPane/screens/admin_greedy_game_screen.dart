@@ -15,6 +15,7 @@ class _AdminGreedyGameScreenState extends State<AdminGreedyGameScreen> {
   final _customItemController = TextEditingController();
 
   bool _isCustomScheduled = false;
+  bool _isActive = true;
   bool _isLoading = false;
 
   @override
@@ -44,6 +45,7 @@ class _AdminGreedyGameScreenState extends State<AdminGreedyGameScreen> {
         _thumbnailUrlController.text = data['thumbnailUrl'] ?? '';
         _customItemController.text = data['customItem'] ?? '';
         _isCustomScheduled = data['isCustomScheduled'] ?? false;
+        _isActive = data['isActive'] ?? true;
       } else {
         _winRatioController.text = '50';
       }
@@ -67,6 +69,7 @@ class _AdminGreedyGameScreenState extends State<AdminGreedyGameScreen> {
         'thumbnailUrl': _thumbnailUrlController.text.trim(),
         'customItem': _customItemController.text.trim(),
         'isCustomScheduled': _isCustomScheduled,
+        'isActive': _isActive,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -123,10 +126,13 @@ class _AdminGreedyGameScreenState extends State<AdminGreedyGameScreen> {
                             borderRadius: BorderRadius.circular(10)),
                       ),
                       validator: (val) {
-                        if (val == null || val.isEmpty) return 'Required';
+                        if (val == null || val.isEmpty) {
+                          return 'Required';
+                        }
                         final num = int.tryParse(val);
-                        if (num == null || num < 1 || num > 100)
+                        if (num == null || num < 1 || num > 100) {
                           return 'Must be between 1 and 100';
+                        }
                         return null;
                       },
                     ),
@@ -166,13 +172,28 @@ class _AdminGreedyGameScreenState extends State<AdminGreedyGameScreen> {
                     ),
                     const SizedBox(height: 20),
                     SwitchListTile(
+                      title: const Text('Game Active on Game Wall',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      subtitle: const Text(
+                          'Show or hide Greedy Game from the Game Wall',
+                          style: TextStyle(color: Colors.white54)),
+                      value: _isActive,
+                      activeThumbColor: Colors.amber,
+                      onChanged: (val) {
+                        setState(() {
+                          _isActive = val;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
                       title: const Text('Enable Custom Scheduled Win',
                           style: TextStyle(color: Colors.white)),
                       subtitle: const Text(
                           'If true, the custom winning item will be selected',
                           style: TextStyle(color: Colors.white54)),
                       value: _isCustomScheduled,
-                      activeColor: Colors.amber,
+                      activeThumbColor: Colors.amber,
                       onChanged: (val) {
                         setState(() {
                           _isCustomScheduled = val;

@@ -15,6 +15,7 @@ import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 
 import 'package:flutter/services.dart';
+import 'package:chat_messenger/main.dart';
 
 import '../../components/app_loading.dart';
 import '../../components/circle_button.dart';
@@ -42,6 +43,23 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
   late StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>
       callSubscription;
 
+  void _safeClose() {
+    FlutterRingtonePlayer().stop();
+    const MethodChannel('com.imchatapp/app_visibility')
+        .invokeMethod('clearWakeScreen')
+        .catchError((_) {});
+    if (mounted) {
+      final nav = navigatorKey.currentState ?? Get.key.currentState;
+      if (nav != null && nav.canPop()) {
+        nav.pop();
+      } else {
+        Get.offAllNamed(AppRoutes.home);
+      }
+    }
+  }
+
+  bool _documentEverExisted = false;
+
   void _listenToCallState() {
     // Listen to Firestore changes
     try {
@@ -52,10 +70,15 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
           .snapshots()
           .listen((snapshot) {
         if (snapshot.exists) {
+          _documentEverExisted = true;
           String state = snapshot.data()?['state'] ?? '';
-          if (state == 'decline' || state == 'missed' || state == 'ended') {
-            const MethodChannel('com.imchatapp/app_visibility').invokeMethod('clearWakeScreen').catchError((_) {});
-            if (mounted) Get.back();
+          if (state == 'decline' || state == 'missed' || state == 'ended' || state == 'cancel') {
+            _safeClose();
+          }
+        } else {
+          // Only close if the document previously existed and was deleted
+          if (_documentEverExisted) {
+            _safeClose();
           }
         }
       });
@@ -105,17 +128,16 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
 
       final docSnapshot = await docRef.get();
       if (docSnapshot.exists) {
-        await docRef.update({'state': 'missed'});
-        Future.delayed(const Duration(seconds: 2), () {
-          docRef.delete();
+        await docRef.update({'state': 'missed'}).catchError((_) {});
+        Future.delayed(const Duration(seconds: 3), () {
+          docRef.delete().catchError((_) {});
           box.remove('callIsActive');
         });
       }
-      if (mounted) {
-        Get.back();
-      }
+      _safeClose();
     } catch (e) {
       debugPrint('Timeout error: $e');
+      _safeClose();
     }
   }
 
@@ -238,8 +260,9 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
                               size: 35,
                             ),
                             onPress: () {
+                              FlutterRingtonePlayer().stop();
                               if (widget.call.receiverId == 'group_call') {
-                                Get.back();
+                                _safeClose();
                               } else {
                                 try {
                                   final docRef = FirebaseFirestore.instance
@@ -250,21 +273,18 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
                                   docRef.update(
                                       {'state': 'decline'}).catchError((_) {});
 
-                                  // Asynchronously delete document after a small delay to ensure update propagates
+                                  // Asynchronously delete document after delay to ensure update propagates
                                   Future.delayed(
-                                      const Duration(milliseconds: 500), () {
+                                      const Duration(seconds: 3), () {
                                     docRef.delete().catchError((_) {});
                                   });
 
                                   // Immediately remove from local storage and navigate back
                                   box.remove('callIsActive');
-                                  const MethodChannel(
-                                          'com.imchatapp/app_visibility')
-                                      .invokeMethod('clearWakeScreen')
-                                      .catchError((_) {});
-                                  Get.back();
+                                  _safeClose();
                                 } catch (e) {
                                   debugPrint(e.toString());
+                                  _safeClose();
                                 }
                               }
                             },

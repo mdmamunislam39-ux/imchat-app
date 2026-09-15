@@ -62,7 +62,7 @@ class SelectContactsScreen extends StatelessWidget {
                 ),
                 title: Text(item is User ? user!.fullname : group!.name),
                 subtitle: item is User
-                    ? Text('@${user!.number}')
+                    ? Text(user!.searchId.isNotEmpty ? 'ID: ${user.searchId}' : 'ID: ${user.userId}')
                     : Text('${group!.participants.length} ${group.isBroadcast ? 'recipients'.tr : 'participants'.tr}'),
                 tileColor: controller.isSelected(item)
                     ? primaryColor.withValues(alpha: 0.10)

@@ -1,6 +1,8 @@
 import 'package:equatable/equatable.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
+import 'package:chat_messenger/helpers/ranking_helper.dart';
 
 DateTime _parseDateTime(dynamic value) {
   if (value == null) return DateTime.now();
@@ -9,6 +11,18 @@ DateTime _parseDateTime(dynamic value) {
   if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
   if (value is DateTime) return value;
   return DateTime.now();
+}
+
+bool _parseBool(dynamic value, {bool defaultValue = false}) {
+  if (value == null) return defaultValue;
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    final s = value.trim().toLowerCase();
+    if (s == 'true' || s == '1') return true;
+    if (s == 'false' || s == '0') return false;
+  }
+  return defaultValue;
 }
 
 /// Chat message model for live comments
@@ -124,23 +138,23 @@ extension RoomModeExtension on RoomMode {
   String get backgroundAsset {
     switch (this) {
       case RoomMode.lite:
-        return 'assets/images/welcome_image.png';
+        return 'assets/images/welcome_image.webp';
       // case RoomMode.immersive:
-      //   return 'assets/images/welcome_image.png';
+      //   return 'assets/images/welcome_image.webp';
       case RoomMode.party:
-        return 'assets/images/welcome_image.png';
+        return 'assets/images/welcome_image.webp';
       case RoomMode.multiMic:
-        return 'assets/images/welcome_image.png';
+        return 'assets/images/welcome_image.webp';
       // case RoomMode.ktv:
-      //   return 'assets/images/welcome_image.png';
+      //   return 'assets/images/welcome_image.webp';
       // case RoomMode.cp:
-      //   return 'assets/images/welcome_image.png';
+      //   return 'assets/images/welcome_image.webp';
       case RoomMode.fiveSeats:
-        return 'assets/images/welcome_image.png';
+        return 'assets/images/welcome_image.webp';
       case RoomMode.tenSeats:
-        return 'assets/images/welcome_image.png';
+        return 'assets/images/welcome_image.webp';
       case RoomMode.twentySeats:
-        return 'assets/images/welcome_image.png';
+        return 'assets/images/welcome_image.webp';
     }
   }
 
@@ -212,15 +226,106 @@ class RoomContributor extends Equatable {
   });
 
   factory RoomContributor.fromJson(Map<String, dynamic> json) {
+    final DateTime lastContributionAt =
+        _parseDateTime(json['lastContributionAt']);
+
+    final dailySuffix = RankingHelper.dailySuffix;
+    final weeklySuffix = RankingHelper.weeklySuffix;
+    final mondayWeeklySuffix = RankingHelper.mondayWeeklySuffix;
+    final monthlySuffix = RankingHelper.monthlySuffix;
+
+    final localDailySuffix = DateFormat('yyyy_MM_dd').format(DateTime.now());
+    final utcDailySuffix =
+        DateFormat('yyyy_MM_dd').format(DateTime.now().toUtc());
+    final localMonthlySuffix = DateFormat('yyyy_MM').format(DateTime.now());
+
+    int dailyContribution = 0;
+    if (json['dailyContribution_$dailySuffix'] != null) {
+      dailyContribution =
+          (json['dailyContribution_$dailySuffix'] as num).toInt();
+    } else if (json['dailyContribution_$localDailySuffix'] != null) {
+      dailyContribution =
+          (json['dailyContribution_$localDailySuffix'] as num).toInt();
+    } else if (json['dailyContribution_$utcDailySuffix'] != null) {
+      dailyContribution =
+          (json['dailyContribution_$utcDailySuffix'] as num).toInt();
+    } else if (json['dailyContribution'] != null) {
+      dailyContribution = (json['dailyContribution'] as num).toInt();
+    }
+
+    int weeklyContribution = 0;
+    if (json['weeklyContribution_$weeklySuffix'] != null) {
+      weeklyContribution =
+          (json['weeklyContribution_$weeklySuffix'] as num).toInt();
+    } else if (json['weeklyContribution_$mondayWeeklySuffix'] != null) {
+      weeklyContribution =
+          (json['weeklyContribution_$mondayWeeklySuffix'] as num).toInt();
+    } else if (json['weeklyContribution'] != null) {
+      weeklyContribution = (json['weeklyContribution'] as num).toInt();
+    }
+
+    int monthlyContribution = 0;
+    if (json['monthlyContribution_$monthlySuffix'] != null) {
+      monthlyContribution =
+          (json['monthlyContribution_$monthlySuffix'] as num).toInt();
+    } else if (json['monthlyContribution_$localMonthlySuffix'] != null) {
+      monthlyContribution =
+          (json['monthlyContribution_$localMonthlySuffix'] as num).toInt();
+    } else if (json['monthlyContribution'] != null) {
+      monthlyContribution = (json['monthlyContribution'] as num).toInt();
+    }
+
+    // Smart fallback if period keys weren't found:
+    if (dailyContribution == 0) {
+      final now = DateTime.now();
+      final bool isSameDay = lastContributionAt.year == now.year &&
+          lastContributionAt.month == now.month &&
+          lastContributionAt.day == now.day;
+      if (isSameDay) {
+        for (final entry in json.entries) {
+          if (entry.key.startsWith('dailyContribution_') && entry.value is num) {
+            dailyContribution = (entry.value as num).toInt();
+            break;
+          }
+        }
+      }
+    }
+
+    if (weeklyContribution == 0) {
+      final now = DateTime.now();
+      if (now.difference(lastContributionAt).inDays.abs() < 7) {
+        for (final entry in json.entries) {
+          if (entry.key.startsWith('weeklyContribution_') && entry.value is num) {
+            weeklyContribution = (entry.value as num).toInt();
+            break;
+          }
+        }
+      }
+    }
+
+    if (monthlyContribution == 0) {
+      final now = DateTime.now();
+      if (lastContributionAt.year == now.year &&
+          lastContributionAt.month == now.month) {
+        for (final entry in json.entries) {
+          if (entry.key.startsWith('monthlyContribution_') &&
+              entry.value is num) {
+            monthlyContribution = (entry.value as num).toInt();
+            break;
+          }
+        }
+      }
+    }
+
     return RoomContributor(
       userId: json['userId'] ?? '',
       userName: json['userName'] ?? 'Unknown',
       userAvatar: json['userAvatar'],
-      totalContribution: json['totalContribution'] ?? 0,
-      dailyContribution: json['dailyContribution'] ?? 0,
-      weeklyContribution: json['weeklyContribution'] ?? 0,
-      monthlyContribution: json['monthlyContribution'] ?? 0,
-      lastContributionAt: _parseDateTime(json['lastContributionAt']),
+      totalContribution: (json['totalContribution'] as num?)?.toInt() ?? 0,
+      dailyContribution: dailyContribution,
+      weeklyContribution: weeklyContribution,
+      monthlyContribution: monthlyContribution,
+      lastContributionAt: lastContributionAt,
     );
   }
 
@@ -230,6 +335,11 @@ class RoomContributor extends Equatable {
       'userName': userName,
       'userAvatar': userAvatar,
       'totalContribution': totalContribution,
+      'dailyContribution_${RankingHelper.dailySuffix}': dailyContribution,
+      'weeklyContribution_${RankingHelper.weeklySuffix}': weeklyContribution,
+      'weeklyContribution_${RankingHelper.mondayWeeklySuffix}':
+          weeklyContribution,
+      'monthlyContribution_${RankingHelper.monthlySuffix}': monthlyContribution,
       'dailyContribution': dailyContribution,
       'weeklyContribution': weeklyContribution,
       'monthlyContribution': monthlyContribution,
@@ -401,12 +511,17 @@ class AudioRoomV2 extends Equatable {
   final String creatorId;
   final String creatorName;
   final String? creatorImageUrl;
+  final String? creatorPhone;
+  final String? creatorCountry;
   final List<AudioRoomParticipant> participants;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isActive;
   final int maxParticipants;
   final int totalRevenue; // Total value of gifts sent in the room
+  final int dailyRevenue;
+  final int weeklyRevenue;
+  final int monthlyRevenue;
   final Map<String, RoomContributor> contributors; // User contributions
   final AudioRoomSettings settings;
   final PKBattleState pkBattleState;
@@ -425,9 +540,28 @@ class AudioRoomV2 extends Equatable {
   final int youtubeSyncPosition;
   final DateTime? youtubeUpdatedAt;
   final bool isLudoActive;
+  final bool isCarromActive;
   final bool isVotingActive;
   final bool isBanned;
   final DateTime? banEndTime;
+  final String? groupId;
+  final bool isGroupRoom;
+  final bool isPrivate;
+  final List<String> allowedUserIds;
+  final bool excludeFromRanking;
+  final double trendingScore;
+  final int onlineCount;
+  final int uniqueJoiners10m;
+  final int giftCoins10m;
+  final int likes10m;
+  final int messages10m;
+  final int activeSpeakers;
+  final double avgStayTime;
+  final double growthRate;
+  final DateTime? lastCalculated;
+  final int recentGiftsDiamonds;
+  final String? countryCode;
+  final bool isOfficial;
 
   const AudioRoomV2({
     required this.id,
@@ -437,12 +571,17 @@ class AudioRoomV2 extends Equatable {
     required this.creatorId,
     required this.creatorName,
     this.creatorImageUrl,
+    this.creatorPhone,
+    this.creatorCountry,
     required this.participants,
     required this.createdAt,
     required this.updatedAt,
     this.isActive = true,
     this.maxParticipants = 50,
     this.totalRevenue = 0,
+    this.dailyRevenue = 0,
+    this.weeklyRevenue = 0,
+    this.monthlyRevenue = 0,
     this.contributors = const {},
     required this.settings,
     this.pkBattleState = const PKBattleState(),
@@ -461,9 +600,28 @@ class AudioRoomV2 extends Equatable {
     this.youtubeSyncPosition = 0,
     this.youtubeUpdatedAt,
     this.isLudoActive = false,
+    this.isCarromActive = false,
     this.isVotingActive = false,
     this.isBanned = false,
     this.banEndTime,
+    this.groupId,
+    this.isGroupRoom = false,
+    this.isPrivate = false,
+    this.allowedUserIds = const [],
+    this.excludeFromRanking = false,
+    this.trendingScore = 0.0,
+    this.onlineCount = 0,
+    this.uniqueJoiners10m = 0,
+    this.giftCoins10m = 0,
+    this.likes10m = 0,
+    this.messages10m = 0,
+    this.activeSpeakers = 0,
+    this.avgStayTime = 0.0,
+    this.growthRate = 1.0,
+    this.lastCalculated,
+    this.recentGiftsDiamonds = 0,
+    this.countryCode,
+    this.isOfficial = false,
   });
 
   /// Create from Firestore document
@@ -488,7 +646,7 @@ class AudioRoomV2 extends Equatable {
       }
 
       final roomId = doc.id;
-      final generatedLink = 'https://imchat.com/audioroom?id=$roomId';
+      final generatedLink = 'https://invite.imchatapp.com/room/$roomId';
 
       return AudioRoomV2(
         id: roomId,
@@ -498,6 +656,8 @@ class AudioRoomV2 extends Equatable {
         creatorId: data['creatorId'] ?? '',
         creatorName: data['creatorName'] ?? '',
         creatorImageUrl: data['creatorImageUrl'],
+        creatorPhone: data['creatorPhone'],
+        creatorCountry: data['creatorCountry'],
         participants: (data['participants'] as List<dynamic>?)
                 ?.map((p) =>
                     AudioRoomParticipant.fromJson(Map<String, dynamic>.from(p as Map)))
@@ -507,9 +667,19 @@ class AudioRoomV2 extends Equatable {
             (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
         updatedAt:
             (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-        isActive: data['isActive'] ?? true,
+        isActive: _parseBool(data['isActive'], defaultValue: true),
         maxParticipants: data['maxParticipants'] ?? 50,
         totalRevenue: (data['totalRevenue'] as num?)?.toInt() ?? 0,
+        dailyRevenue: (data['dailyRevenue_${RankingHelper.dailySuffix}'] as num?)?.toInt() ??
+            (data['dailyRevenue'] as num?)?.toInt() ??
+            0,
+        weeklyRevenue: (data['weeklyRevenue_${RankingHelper.weeklySuffix}'] as num?)?.toInt() ??
+            (data['weeklyRevenue_${RankingHelper.mondayWeeklySuffix}'] as num?)?.toInt() ??
+            (data['weeklyRevenue'] as num?)?.toInt() ??
+            0,
+        monthlyRevenue: (data['monthlyRevenue_${RankingHelper.monthlySuffix}'] as num?)?.toInt() ??
+            (data['monthlyRevenue'] as num?)?.toInt() ??
+            0,
         contributors: (data['contributors'] is Map)
             ? (data['contributors'] as Map).map(
                 (key, value) => MapEntry(
@@ -546,18 +716,40 @@ class AudioRoomV2 extends Equatable {
             const [],
         category: category,
         roomLink: data['roomLink'] ?? generatedLink,
-        isPinned: data['isPinned'] ?? false,
+        isPinned: _parseBool(data['isPinned']),
         pinnedUntil: data['pinnedUntil'] != null ? _parseDateTime(data['pinnedUntil']) : null,
         roomFrameUrl: data['roomFrameUrl'],
         roomFrameUntil: data['roomFrameUntil'] != null ? _parseDateTime(data['roomFrameUntil']) : null,
         activeYoutubeVideoId: data['activeYoutubeVideoId'],
-        youtubeIsPlaying: data['youtubeIsPlaying'] ?? false,
+        youtubeIsPlaying: _parseBool(data['youtubeIsPlaying']),
         youtubeSyncPosition: data['youtubeSyncPosition'] ?? 0,
         youtubeUpdatedAt: data['youtubeUpdatedAt'] != null ? _parseDateTime(data['youtubeUpdatedAt']) : null,
-        isLudoActive: data['isLudoActive'] ?? false,
-        isVotingActive: data['isVotingActive'] ?? false,
-        isBanned: data['isBanned'] ?? false,
+        isLudoActive: _parseBool(data['isLudoActive']),
+        isCarromActive: _parseBool(data['isCarromActive']),
+        isVotingActive: _parseBool(data['isVotingActive']),
+        isBanned: _parseBool(data['isBanned']),
         banEndTime: data['banEndTime'] != null ? _parseDateTime(data['banEndTime']) : null,
+        groupId: data['groupId'],
+        isGroupRoom: _parseBool(data['isGroupRoom']),
+        isPrivate: _parseBool(data['isPrivate']),
+        allowedUserIds: (data['allowedUserIds'] as List?)
+                ?.map((id) => id.toString())
+                .toList() ??
+            <String>[],
+        excludeFromRanking: _parseBool(data['excludeFromRanking']),
+        trendingScore: (data['trendingScore'] as num?)?.toDouble() ?? 0.0,
+        onlineCount: (data['onlineCount'] as num?)?.toInt() ?? (data['participants'] as List?)?.length ?? 0,
+        uniqueJoiners10m: (data['uniqueJoiners10m'] as num?)?.toInt() ?? 0,
+        giftCoins10m: (data['giftCoins10m'] as num?)?.toInt() ?? (data['recentGiftsDiamonds'] as num?)?.toInt() ?? 0,
+        likes10m: (data['likes10m'] as num?)?.toInt() ?? 0,
+        messages10m: (data['messages10m'] as num?)?.toInt() ?? 0,
+        activeSpeakers: (data['activeSpeakers'] as num?)?.toInt() ?? 0,
+        avgStayTime: (data['avgStayTime'] as num?)?.toDouble() ?? 0.0,
+        growthRate: (data['growthRate'] as num?)?.toDouble() ?? 1.0,
+        lastCalculated: data['lastCalculated'] != null ? _parseDateTime(data['lastCalculated']) : null,
+        recentGiftsDiamonds: (data['recentGiftsDiamonds'] as num?)?.toInt() ?? 0,
+        countryCode: data['countryCode'] ?? data['country'],
+        isOfficial: _parseBool(data['isOfficial']),
       );
     } catch (e, stackTrace) {
       debugPrint('Error parsing AudioRoomV2 from Firestore: $e\n$stackTrace');
@@ -574,12 +766,20 @@ class AudioRoomV2 extends Equatable {
       'creatorId': creatorId,
       'creatorName': creatorName,
       'creatorImageUrl': creatorImageUrl,
+      'creatorPhone': creatorPhone,
+      'creatorCountry': creatorCountry,
       'participants': participants.map((p) => p.toJson()).toList(),
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
       'isActive': isActive,
       'maxParticipants': maxParticipants,
       'totalRevenue': totalRevenue,
+      'dailyRevenue_${RankingHelper.dailySuffix}': dailyRevenue,
+      'weeklyRevenue_${RankingHelper.weeklySuffix}': weeklyRevenue,
+      'monthlyRevenue_${RankingHelper.monthlySuffix}': monthlyRevenue,
+      'dailyRevenue': dailyRevenue,
+      'weeklyRevenue': weeklyRevenue,
+      'monthlyRevenue': monthlyRevenue,
       'contributors':
           contributors.map((key, value) => MapEntry(key, value.toJson())),
       'settings': settings.toJson(),
@@ -591,7 +791,7 @@ class AudioRoomV2 extends Equatable {
       ),
       'removedUsers': removedUsers,
       'category': category,
-      'roomLink': roomLink ?? 'https://imchat.com/audioroom?id=$id',
+      'roomLink': roomLink ?? 'https://invite.imchatapp.com/room/$id',
       'isPinned': isPinned,
       'pinnedUntil': pinnedUntil != null ? Timestamp.fromDate(pinnedUntil!) : null,
       'roomFrameUrl': roomFrameUrl,
@@ -601,9 +801,28 @@ class AudioRoomV2 extends Equatable {
       'youtubeSyncPosition': youtubeSyncPosition,
       'youtubeUpdatedAt': youtubeUpdatedAt != null ? Timestamp.fromDate(youtubeUpdatedAt!) : null,
       'isLudoActive': isLudoActive,
+      'isCarromActive': isCarromActive,
       'isVotingActive': isVotingActive,
       'isBanned': isBanned,
       'banEndTime': banEndTime != null ? Timestamp.fromDate(banEndTime!) : null,
+      'groupId': groupId,
+      'isGroupRoom': isGroupRoom,
+      'isPrivate': isPrivate,
+      'allowedUserIds': allowedUserIds,
+      'excludeFromRanking': excludeFromRanking,
+      'trendingScore': trendingScore,
+      'onlineCount': onlineCount,
+      'uniqueJoiners10m': uniqueJoiners10m,
+      'giftCoins10m': giftCoins10m,
+      'likes10m': likes10m,
+      'messages10m': messages10m,
+      'activeSpeakers': activeSpeakers,
+      'avgStayTime': avgStayTime,
+      'growthRate': growthRate,
+      'lastCalculated': lastCalculated != null ? Timestamp.fromDate(lastCalculated!) : null,
+      'recentGiftsDiamonds': recentGiftsDiamonds,
+      'countryCode': countryCode,
+      'isOfficial': isOfficial,
     };
   }
 
@@ -622,6 +841,9 @@ class AudioRoomV2 extends Equatable {
     bool? isActive,
     int? maxParticipants,
     int? totalRevenue,
+    int? dailyRevenue,
+    int? weeklyRevenue,
+    int? monthlyRevenue,
     Map<String, RoomContributor>? contributors,
     AudioRoomSettings? settings,
     PKBattleState? pkBattleState,
@@ -640,9 +862,28 @@ class AudioRoomV2 extends Equatable {
     int? youtubeSyncPosition,
     DateTime? youtubeUpdatedAt,
     bool? isLudoActive,
+    bool? isCarromActive,
     bool? isVotingActive,
     bool? isBanned,
     DateTime? banEndTime,
+    String? groupId,
+    bool? isGroupRoom,
+    bool? isPrivate,
+    List<String>? allowedUserIds,
+    bool? excludeFromRanking,
+    double? trendingScore,
+    int? recentGiftsDiamonds,
+    String? countryCode,
+    bool? isOfficial,
+    int? onlineCount,
+    int? uniqueJoiners10m,
+    int? giftCoins10m,
+    int? likes10m,
+    int? messages10m,
+    int? activeSpeakers,
+    double? avgStayTime,
+    double? growthRate,
+    DateTime? lastCalculated,
   }) {
     return AudioRoomV2(
       id: id ?? this.id,
@@ -658,6 +899,9 @@ class AudioRoomV2 extends Equatable {
       isActive: isActive ?? this.isActive,
       maxParticipants: maxParticipants ?? this.maxParticipants,
       totalRevenue: totalRevenue ?? this.totalRevenue,
+      dailyRevenue: dailyRevenue ?? this.dailyRevenue,
+      weeklyRevenue: weeklyRevenue ?? this.weeklyRevenue,
+      monthlyRevenue: monthlyRevenue ?? this.monthlyRevenue,
       contributors: contributors ?? this.contributors,
       settings: settings ?? this.settings,
       pkBattleState: pkBattleState ?? this.pkBattleState,
@@ -676,9 +920,28 @@ class AudioRoomV2 extends Equatable {
       youtubeSyncPosition: youtubeSyncPosition ?? this.youtubeSyncPosition,
       youtubeUpdatedAt: youtubeUpdatedAt ?? this.youtubeUpdatedAt,
       isLudoActive: isLudoActive ?? this.isLudoActive,
+      isCarromActive: isCarromActive ?? this.isCarromActive,
       isVotingActive: isVotingActive ?? this.isVotingActive,
       isBanned: isBanned ?? this.isBanned,
       banEndTime: banEndTime ?? this.banEndTime,
+      groupId: groupId ?? this.groupId,
+      isGroupRoom: isGroupRoom ?? this.isGroupRoom,
+      isPrivate: isPrivate ?? this.isPrivate,
+      allowedUserIds: allowedUserIds ?? this.allowedUserIds,
+      excludeFromRanking: excludeFromRanking ?? this.excludeFromRanking,
+      trendingScore: trendingScore ?? this.trendingScore,
+      onlineCount: onlineCount ?? this.onlineCount,
+      uniqueJoiners10m: uniqueJoiners10m ?? this.uniqueJoiners10m,
+      giftCoins10m: giftCoins10m ?? this.giftCoins10m,
+      likes10m: likes10m ?? this.likes10m,
+      messages10m: messages10m ?? this.messages10m,
+      activeSpeakers: activeSpeakers ?? this.activeSpeakers,
+      avgStayTime: avgStayTime ?? this.avgStayTime,
+      growthRate: growthRate ?? this.growthRate,
+      lastCalculated: lastCalculated ?? this.lastCalculated,
+      recentGiftsDiamonds: recentGiftsDiamonds ?? this.recentGiftsDiamonds,
+      countryCode: countryCode ?? this.countryCode,
+      isOfficial: isOfficial ?? this.isOfficial,
     );
   }
 
@@ -763,7 +1026,7 @@ class AudioRoomV2 extends Equatable {
     // User must be a participant
     if (!isParticipant(userId)) return false;
 
-    // Seat number must be valid (use actual seat configuration length)
+    // Seat number must be valid (seats are 1-indexed, from 1 to seatConfiguration.length)
     if (seatNumber < 1 || seatNumber > settings.seatConfiguration.length) {
       return false;
     }
@@ -777,7 +1040,7 @@ class AudioRoomV2 extends Equatable {
     // Check if user is creator or admin
     final bool isUserCreatorOrAdmin = isCreator(userId) || settings.adminIds.contains(userId);
 
-    // Special case: Seat 1 is exclusively for the creator or admins
+    // Special case: Seat 1 is exclusively reserved for the room creator or admins
     if (seatNumber == 1 && !isUserCreatorOrAdmin) {
       return false;
     }
@@ -915,6 +1178,9 @@ class AudioRoomV2 extends Equatable {
         isActive,
         maxParticipants,
         totalRevenue,
+        dailyRevenue,
+        weeklyRevenue,
+        monthlyRevenue,
         settings,
         contributors,
         pkBattleState,
@@ -927,6 +1193,23 @@ class AudioRoomV2 extends Equatable {
         isVotingActive,
         isBanned,
         banEndTime,
+        groupId,
+        isGroupRoom,
+        isPrivate,
+        allowedUserIds,
+        trendingScore,
+        onlineCount,
+        uniqueJoiners10m,
+        giftCoins10m,
+        likes10m,
+        messages10m,
+        activeSpeakers,
+        avgStayTime,
+        growthRate,
+        lastCalculated,
+        recentGiftsDiamonds,
+        countryCode,
+        isOfficial,
       ];
 }
 
@@ -972,16 +1255,16 @@ class AudioRoomParticipant extends Equatable {
         userName: json['userName'] ?? '',
         userImageUrl: json['userImageUrl'],
         joinedAt: _parseDateTime(json['joinedAt']),
-        isMuted: json['isMuted'] ?? false,
-        isMutedByAdmin: json['isMutedByAdmin'] ?? false,
-        isSpeaker: json['isSpeaker'] ?? false,
-        isHost: json['isHost'] ?? false,
+        isMuted: _parseBool(json['isMuted']),
+        isMutedByAdmin: _parseBool(json['isMutedByAdmin']),
+        isSpeaker: _parseBool(json['isSpeaker']),
+        isHost: _parseBool(json['isHost']),
         seatNumber: json['seatNumber'],
-        isSeated: json['isSeated'] ?? false,
+        isSeated: _parseBool(json['isSeated']),
         activeEmojiUrl: json['activeEmojiUrl'],
         frameId: json['frameId'],
-        isMessagingBlocked: json['isMessagingBlocked'] ?? false,
-        isSeatBlocked: json['isSeatBlocked'] ?? false,
+        isMessagingBlocked: _parseBool(json['isMessagingBlocked']),
+        isSeatBlocked: _parseBool(json['isSeatBlocked']),
       );
     } catch (e) {
       throw Exception('Error parsing AudioRoomParticipant from JSON: $e');
@@ -1188,6 +1471,7 @@ class AudioRoomSettings extends Equatable {
   final List<String> adminIds; // Persistent admin IDs (userIds)
   final String? seatDecorUrl;
   final String? lockedSeatDecorUrl;
+  final String? hostSeatDecorUrl;
   final bool isLiveMultipleMode;
 
   const AudioRoomSettings({
@@ -1203,35 +1487,36 @@ class AudioRoomSettings extends Equatable {
     this.musicEnabled = false,
     this.musicUrl,
     this.roomMode = RoomMode.lite, // Changed from immersive (removed mode)
-    this.seatColorMode = SeatColorMode.golden,
+    this.seatColorMode = SeatColorMode.original,
     this.seatConfiguration = const [],
     this.blockedUsers = const [],
     this.adminIds = const [],
     this.seatDecorUrl,
     this.lockedSeatDecorUrl,
+    this.hostSeatDecorUrl,
   });
 
   /// Create from JSON
   factory AudioRoomSettings.fromJson(Map<String, dynamic> json) {
     try {
       return AudioRoomSettings(
-        allowRequestToSpeak: json['allowRequestToSpeak'] ?? true,
-        autoMuteNewParticipants: json['autoMuteNewParticipants'] ?? true,
-        allowBackgroundMusic: json['allowBackgroundMusic'] ?? false,
+        allowRequestToSpeak: _parseBool(json['allowRequestToSpeak'], defaultValue: true),
+        autoMuteNewParticipants: _parseBool(json['autoMuteNewParticipants'], defaultValue: true),
+        allowBackgroundMusic: _parseBool(json['allowBackgroundMusic']),
         maxSpeakers: json['maxSpeakers'] ?? 8,
-        recordSession: json['recordSession'] ?? false,
-        isLiveMultipleMode: json['isLiveMultipleMode'] ?? false,
+        recordSession: _parseBool(json['recordSession']),
+        isLiveMultipleMode: _parseBool(json['isLiveMultipleMode']),
         // maxSpeakers is used as seat count
         backgroundImageUrl: json['backgroundImageUrl'],
         announcement: json['announcement'],
-        musicEnabled: json['musicEnabled'] ?? false,
+        musicEnabled: _parseBool(json['musicEnabled']),
         musicUrl: json['musicUrl'],
         roomMode: json['roomMode'] != null
             ? RoomModeExtension.fromJson(json['roomMode'].toString())
             : RoomMode.lite, // Changed from immersive (removed mode)
         seatColorMode: json['seatColorMode'] != null
             ? SeatColorModeExtension.fromJson(json['seatColorMode'].toString())
-            : SeatColorMode.golden,
+            : SeatColorMode.original,
         seatConfiguration: (json['seatConfiguration'] as List<dynamic>?)
                 ?.map((s) => SeatInfo.fromJson(Map<String, dynamic>.from(s as Map)))
                 .toList() ??
@@ -1246,6 +1531,7 @@ class AudioRoomSettings extends Equatable {
             [],
         seatDecorUrl: json['seatDecorUrl'],
         lockedSeatDecorUrl: json['lockedSeatDecorUrl'],
+        hostSeatDecorUrl: json['hostSeatDecorUrl'],
       );
     } catch (e) {
       throw Exception('Error parsing AudioRoomSettings from JSON: $e');
@@ -1273,6 +1559,7 @@ class AudioRoomSettings extends Equatable {
       'adminIds': adminIds,
       'seatDecorUrl': seatDecorUrl,
       'lockedSeatDecorUrl': lockedSeatDecorUrl,
+      'hostSeatDecorUrl': hostSeatDecorUrl,
     };
   }
 
@@ -1296,6 +1583,7 @@ class AudioRoomSettings extends Equatable {
     List<String>? adminIds,
     String? seatDecorUrl,
     String? lockedSeatDecorUrl,
+    String? hostSeatDecorUrl,
     bool clearBackgroundImage = false,
     bool clearSeatDecor = false,
   }) {
@@ -1319,6 +1607,7 @@ class AudioRoomSettings extends Equatable {
       adminIds: adminIds ?? this.adminIds,
       seatDecorUrl: clearSeatDecor ? null : (seatDecorUrl ?? this.seatDecorUrl),
       lockedSeatDecorUrl: clearSeatDecor ? null : (lockedSeatDecorUrl ?? this.lockedSeatDecorUrl),
+      hostSeatDecorUrl: clearSeatDecor ? null : (hostSeatDecorUrl ?? this.hostSeatDecorUrl),
     );
   }
 
@@ -1342,5 +1631,6 @@ class AudioRoomSettings extends Equatable {
         adminIds,
         seatDecorUrl,
         lockedSeatDecorUrl,
+        hostSeatDecorUrl,
       ];
 }

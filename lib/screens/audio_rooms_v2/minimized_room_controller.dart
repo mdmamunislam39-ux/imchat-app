@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import '../../models/audio_room_v2.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/bloc/audio_rooms_bloc.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/bloc/audio_rooms_event.dart';
+import 'package:chat_messenger/services/background_service.dart';
 import 'minimized_room_overlay.dart';
 import '../../services/emoji_chat_service.dart';
 import '../../controllers/auth_controller.dart';
@@ -23,6 +24,7 @@ class MinimizedRoomController extends GetxController {
 
   // Getters
   AudioRoomV2? get minimizedRoom => _minimizedRoom.value;
+  AudioRoomV2? get currentRoom => _minimizedRoom.value;
   bool get hasMinimizedRoom => _minimizedRoom.value != null;
   AudioRoomsBloc? get audioRoomsBloc => _audioRoomsBloc;
   DateTime? get originalJoinTime => _originalJoinTime;
@@ -57,6 +59,9 @@ class MinimizedRoomController extends GetxController {
     _minimizedRoom.value = null;
     _audioRoomsBloc = null;
     _originalJoinTime = null;
+    try {
+      BackgroundService().stopService();
+    } catch (_) {}
     update();
     debugPrint('🗑️ [MinimizedRoom] Minimized room cleared');
   }
@@ -113,6 +118,11 @@ class MinimizedRoomController extends GetxController {
 
         // 4. Hide the floating overlay
         MinimizedRoomOverlay.hide();
+
+        // 5. Ensure background service is stopped
+        try {
+          BackgroundService().stopService();
+        } catch (_) {}
       }
     } catch (e) {
       debugPrint('⚠️ [MinimizedController] Error leaving room cleanly: $e');
@@ -128,6 +138,7 @@ class MinimizedRoomController extends GetxController {
     required BuildContext context,
     required AudioRoomV2 targetRoom,
     required VoidCallback onProceed,
+    VoidCallback? onCancel,
   }) {
     // Make sure MinimizedRoomController is registered
     if (!Get.isRegistered<MinimizedRoomController>()) {
@@ -139,7 +150,7 @@ class MinimizedRoomController extends GetxController {
       final prevRoom = controller.minimizedRoom;
       if (prevRoom != null && prevRoom.id != targetRoom.id) {
         // Show leave confirmation popup!
-        _showLeaveConfirmationDialog(context, prevRoom, targetRoom, onProceed);
+        _showLeaveConfirmationDialog(context, prevRoom, targetRoom, onProceed, onCancel: onCancel);
         return;
       }
     }
@@ -152,8 +163,10 @@ class MinimizedRoomController extends GetxController {
     BuildContext context,
     AudioRoomV2 prevRoom,
     AudioRoomV2 targetRoom,
-    VoidCallback onProceed,
-  ) {
+    VoidCallback onProceed, {
+    VoidCallback? onCancel,
+  }) {
+    bool didProceed = false;
     showDialog(
       context: context,
       barrierDismissible: true,
@@ -255,6 +268,7 @@ class MinimizedRoomController extends GetxController {
                         ),
                         child: ElevatedButton(
                           onPressed: () {
+                            didProceed = true;
                             Navigator.of(context).pop(); // Close dialog
                             
                             // Exit the previous room cleanly
@@ -289,6 +303,10 @@ class MinimizedRoomController extends GetxController {
           ),
         );
       },
-    );
+    ).then((_) {
+      if (!didProceed) {
+        onCancel?.call();
+      }
+    });
   }
 }

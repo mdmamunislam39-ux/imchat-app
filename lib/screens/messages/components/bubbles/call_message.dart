@@ -3,6 +3,7 @@ import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/screens/calling/helper/call_helper.dart';
 import 'package:chat_messenger/theme/app_theme.dart';
+import 'package:get/get.dart';
 import '../read_time_status.dart';
 
 class CallMessage extends StatelessWidget {
@@ -13,6 +14,7 @@ class CallMessage extends StatelessWidget {
     required this.isMissed,
     required this.isVideo,
     this.isGroup = false,
+    this.isReceiverOnline,
   });
 
   final Message message;
@@ -20,6 +22,7 @@ class CallMessage extends StatelessWidget {
   final bool isMissed;
   final bool isVideo;
   final bool isGroup;
+  final RxBool? isReceiverOnline;
 
   String _formatDuration(int seconds) {
     if (seconds < 60) {
@@ -38,85 +41,118 @@ class CallMessage extends StatelessWidget {
     final bool isDarkMode = AppTheme.of(context).isDarkMode;
     final bool isSender = message.isSender;
 
-    // Determine card background color
+    // 1. Parse structured payload: call|<type>|<status>|<duration>
+    String status = '';
+    int durationSec = 0;
+    bool isVideoCall = isVideo;
+
+    final String raw = message.textMsg.trim();
+    if (raw.startsWith('call|')) {
+      final parts = raw.split('|');
+      if (parts.length > 1) {
+        isVideoCall = parts[1].toLowerCase() == 'video';
+      }
+      if (parts.length > 2) {
+        status = parts[2].toLowerCase(); // 'canceled', 'rejected', 'missed', 'completed'
+      }
+      if (parts.length > 3) {
+        durationSec = int.tryParse(parts[3]) ?? 0;
+      }
+    } else if (raw.toLowerCase().contains('missed') || isMissed) {
+      status = 'missed';
+    } else if (raw.contains('|')) {
+      final parts = raw.split('|');
+      durationSec = int.tryParse(parts.last.trim()) ?? 0;
+      status = durationSec > 0 ? 'completed' : 'ended';
+    }
+
+    if (durationSec > 0 && (status.isEmpty || status == 'ended')) {
+      status = 'completed';
+    }
+
+    // 2. Titles, Subtitles, Icons & Colors
+    String titleText = isVideoCall ? 'Video call' : 'Audio call';
+    String subtitleText = isSender ? 'Tap to call again' : 'Tap to call back';
+    IconData iconData = isVideoCall ? Icons.videocam : (isSender ? Icons.call_made : Icons.call_received);
+    Color iconColor = isDarkMode ? Colors.white : Colors.black87;
+
+    if (isSender) {
+      // --- Caller (Outgoing side) ---
+      if (status == 'rejected') {
+        titleText = 'Rejected';
+        subtitleText = 'Tap to call again';
+        iconData = Icons.phone_disabled_rounded;
+        iconColor = isDarkMode ? Colors.white70 : const Color(0xFF2C2D30);
+      } else if (status == 'canceled' || status == 'missed') {
+        titleText = 'Canceled';
+        subtitleText = 'Tap to call again';
+        iconData = isVideoCall ? Icons.videocam : Icons.call_made_rounded;
+        iconColor = isDarkMode ? Colors.white70 : const Color(0xFF2C2D30);
+      } else if (status == 'completed' || durationSec > 0) {
+        titleText = isVideoCall ? 'Video call' : 'Audio call';
+        subtitleText = _formatDuration(durationSec);
+        iconData = isVideoCall ? Icons.videocam : Icons.call_made_rounded;
+        iconColor = isDarkMode ? Colors.white : const Color(0xFF1A1A1A);
+      }
+    } else {
+      // --- Receiver (Incoming side) ---
+      if (status == 'missed' || status == 'canceled') {
+        titleText = isVideoCall ? 'Missed Video Call' : 'Missed Audio Call';
+        subtitleText = 'Tap to call back';
+        iconData = Icons.call_missed_rounded;
+        iconColor = const Color(0xFFE53935); // Prominent Red
+      } else if (status == 'rejected') {
+        titleText = isVideoCall ? 'Incoming Video Call' : 'Incoming Audio Call';
+        subtitleText = 'Declined';
+        iconData = Icons.call_end_rounded;
+        iconColor = const Color(0xFFE53935);
+      } else if (status == 'completed' || durationSec > 0) {
+        titleText = isVideoCall ? 'Video call' : 'Audio call';
+        subtitleText = _formatDuration(durationSec);
+        iconData = isVideoCall ? Icons.videocam : Icons.call_received_rounded;
+        iconColor = isDarkMode ? Colors.white : const Color(0xFF1A1A1A);
+      }
+    }
+
+    // 3. Card Backgrounds (IMO-style soft blue for sender, white for receiver)
     final Color cardBg = isSender
-        ? (isDarkMode ? const Color(0xFF1E3854) : const Color(0xFFD6EEFF))
+        ? (isDarkMode ? const Color(0xFF1E3854) : const Color(0xFFCBE7FE))
         : (isDarkMode ? const Color(0xFF24262A) : Colors.white);
 
-    // Determine icon & container colors based on state
     final Color iconCircleBg = isSender
-        ? (isDarkMode ? Colors.white.withValues(alpha: 0.2) : const Color(0xFFEAF4FF))
-        : (isDarkMode ? Colors.white.withValues(alpha: 0.15) : Colors.white);
+        ? (isDarkMode ? Colors.white.withValues(alpha: 0.15) : Colors.white)
+        : (isDarkMode ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFF7F8FA));
 
-    final Color iconColor = isMissed
-        ? Colors.red.shade600
-        : (isDarkMode ? Colors.white : Colors.black87);
-
-    final IconData callIcon = isMissed
-        ? Icons.call_missed
-        : (isSender
-            ? (isVideo ? Icons.videocam : Icons.call_made)
-            : (isVideo ? Icons.videocam : Icons.call_received));
-
-    // Determine title text ("Audio call", "Video call", or Missed call)
-    String titleText = isVideo ? 'Video call' : 'Audio call';
-    if (isMissed) {
-      titleText = message.textMsg.replaceAll('📹', '').replaceAll('🎤', '').trim();
-      if (titleText.isEmpty) {
-        titleText = isVideo ? 'Missed video call' : 'You missed a voice call..';
-      }
-    }
-
-    // Parse call duration if available
-    String? durationStr;
-    if (!isMissed && message.textMsg.contains('|')) {
-      final parts = message.textMsg.split('|');
-      if (parts.length > 1) {
-        final sec = int.tryParse(parts[1].trim());
-        if (sec != null && sec > 0) {
-          durationStr = _formatDuration(sec);
-        } else if (parts[1].trim().isNotEmpty) {
-          durationStr = parts[1].trim();
-        }
-      }
-    }
-
-    final Color titleColor = isDarkMode ? Colors.white : Colors.black87;
-    final Color subTextColor = isDarkMode ? Colors.grey.shade400 : Colors.grey.shade700;
+    final Color titleColor = isDarkMode ? Colors.white : const Color(0xFF1E1E1E);
+    final Color subTextColor = isDarkMode ? Colors.grey.shade400 : const Color(0xFF6B7280);
 
     return GestureDetector(
       onTap: () {
         if (partnerUser != null) {
-          CallHelper.makeCall(isVideo: isVideo, user: partnerUser!);
+          CallHelper.makeCall(isVideo: isVideoCall, user: partnerUser!);
         }
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: cardBg,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(
             color: isSender
                 ? (isDarkMode
                     ? Colors.white.withValues(alpha: 0.15)
                     : const Color(0xFFBCE0FF))
                 : (isDarkMode
-                    ? Colors.white.withValues(alpha: 0.12)
-                    : Colors.grey.shade300),
+                    ? Colors.white.withValues(alpha: 0.1)
+                    : Colors.black.withValues(alpha: 0.06)),
             width: 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: isSender
-                  ? (isDarkMode
-                      ? Colors.blue.withValues(alpha: 0.15)
-                      : const Color(0xFF64B5F6).withValues(alpha: 0.2))
-                  : (isDarkMode
-                      ? Colors.black.withValues(alpha: 0.25)
-                      : Colors.grey.withValues(alpha: 0.15)),
-              blurRadius: 8,
-              spreadRadius: 1,
-              offset: const Offset(0, 2),
+              color: Colors.black.withValues(alpha: isDarkMode ? 0.25 : 0.04),
+              blurRadius: 6,
+              spreadRadius: 0.5,
+              offset: const Offset(0, 1.5),
             ),
           ],
         ),
@@ -126,31 +162,29 @@ class CallMessage extends StatelessWidget {
           children: [
             // Circular Icon Badge
             Container(
-              width: 42,
-              height: 42,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: iconCircleBg,
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: isSender
-                      ? Colors.blue.withValues(alpha: 0.12)
-                      : (isDarkMode
-                          ? Colors.white.withValues(alpha: 0.1)
-                          : Colors.grey.shade200),
+                  color: isDarkMode
+                      ? Colors.white.withValues(alpha: 0.1)
+                      : Colors.black.withValues(alpha: 0.04),
                   width: 1,
                 ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: isDarkMode ? 0.2 : 0.05),
-                    blurRadius: 6,
+                    blurRadius: 4,
                     spreadRadius: 0.5,
-                    offset: const Offset(0, 2),
+                    offset: const Offset(0, 1),
                   ),
                 ],
               ),
               child: Center(
                 child: Icon(
-                  callIcon,
+                  iconData,
                   color: iconColor,
                   size: 22,
                 ),
@@ -158,7 +192,7 @@ class CallMessage extends StatelessWidget {
             ),
             const SizedBox(width: 12),
 
-            // Call Title & Duration/Subtext + Timestamp (in the yellow box area!)
+            // Call Title & Duration/Subtext + Timestamp
             Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -181,10 +215,7 @@ class CallMessage extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          durationStr ??
-                              (isMissed
-                                  ? 'Tap to call back'
-                                  : (isVideo ? 'Video call' : 'Voice call')),
+                          subtitleText,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -193,11 +224,13 @@ class CallMessage extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       ReadTimeStatus(
                         message: message,
                         isGroup: isGroup,
                         isInline: true,
+                        receiver: partnerUser,
+                        isReceiverOnline: isReceiverOnline,
                       ),
                     ],
                   ),

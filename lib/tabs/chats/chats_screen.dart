@@ -128,11 +128,13 @@ class _ChatsScreenState extends State<ChatsScreen> {
             final String text = controller.searchController.text.trim().toLowerCase();
             
             combinedList.addAll(userChats.where((chat) =>
-              chat.receiver!.fullname.toLowerCase().contains(text)
+              (chat.receiver?.fullname.toLowerCase().contains(text) ?? false) ||
+              chat.lastMsg.toLowerCase().contains(text)
             ));
             
             combinedList.addAll(groupController.groups.where((group) =>
-              group.name.toLowerCase().contains(text)
+              group.name.toLowerCase().contains(text) ||
+              (group.lastMsg?.textMsg.toLowerCase().contains(text) ?? false)
             ));
           } else {
             combinedList.addAll(userChats);

@@ -85,6 +85,7 @@ final Map<String, String> english = {
   "only_admins_can_send_messages": "Only admins can send messages",
   "both_admins_and_participants_can_send_messages": "Both Admins & participants can send messages",
   "admin": "Admin",
+  "owner": "Owner",
   "you_have": "You've",
   "updated_group_details": "updated group details",
   "photo_updated_successfully": "Photo updated successfully!",

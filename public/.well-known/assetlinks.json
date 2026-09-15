@@ -5,6 +5,18 @@
     ],
     "target": {
       "namespace": "android_app",
+      "package_name": "com.imchatapp",
+      "sha256_cert_fingerprints": [
+        "DD:A6:94:52:96:3A:E2:99:AC:10:1D:B8:61:A8:03:44:1B:B1:E6:D4:48:B1:85:3C:4D:54:2A:87:9B:0E:CD:0B"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
       "package_name": "com.imchat",
       "sha256_cert_fingerprints": [
         "DD:A6:94:52:96:3A:E2:99:AC:10:1D:B8:61:A8:03:44:1B:B1:E6:D4:48:B1:85:3C:4D:54:2A:87:9B:0E:CD:0B"

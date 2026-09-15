@@ -19,31 +19,40 @@ import 'components/call_timer.dart';
 import '../../components/circle_button.dart';
 import 'components/local_user_preview.dart';
 
-class VideoCallScreen extends StatelessWidget {
-   VideoCallScreen({
+class VideoCallScreen extends StatefulWidget {
+  const VideoCallScreen({
     super.key,
     required this.call,
   });
 
   final Call call;
 
-  final GetStorage box = GetStorage();
-  void onPhoneBackButtonPress(){
-    box.write('callIsActive', call.toMap());
-    Get.to(()=>HomeScreen());
-   }
-   
   @override
-  Widget build(BuildContext context) {
-   
-    // Ensure clean fresh CallController for every new call instance
+  State<VideoCallScreen> createState() => _VideoCallScreenState();
+}
+
+class _VideoCallScreenState extends State<VideoCallScreen> {
+  late final CallController controller;
+  final GetStorage box = GetStorage();
+
+  @override
+  void initState() {
+    super.initState();
     if (Get.isRegistered<CallController>()) {
       Get.delete<CallController>(force: true);
     }
+    controller = Get.put(CallController(call: widget.call));
+  }
 
-    // Get call controller
-    final CallController controller = Get.put(CallController(call: call));
+  void onPhoneBackButtonPress() {
+    try {
+      box.write('callIsActive', widget.call.toMap());
+    } catch (_) {}
+    Get.to(() => HomeScreen());
+  }
 
+  @override
+  Widget build(BuildContext context) {
     // Get current user model
     final User currentUser = AuthController.instance.currentUser;
 
@@ -52,11 +61,11 @@ class VideoCallScreen extends StatelessWidget {
       child: Obx(() {
         // Get obx vars
         final int? remoteUid = controller.remoteUid.value;
-        
+
         final String photoUrl =
-            call.isCaller ? call.receiverPhotoUrl : call.callerPhotoUrl;
-         final String profileName =
-        call.isCaller ? call.receiverName : call.callerName;
+            widget.call.isCaller ? widget.call.receiverPhotoUrl : widget.call.callerPhotoUrl;
+        final String profileName =
+            widget.call.isCaller ? widget.call.receiverName : widget.call.callerName;
         return Scaffold(
           // extendBodyBehindAppBar: true,
           // appBar: CustomAppBar(
@@ -93,7 +102,7 @@ class VideoCallScreen extends StatelessWidget {
                                 uid: remoteUid,
                               ),
                               connection: RtcConnection(
-                                channelId: call.callerId
+                                channelId: widget.call.callerId
                               ),
                             ),
                           ),
@@ -107,7 +116,7 @@ class VideoCallScreen extends StatelessWidget {
                           
                             controller.isMinimized.value = true;
                          
-                           box.write('callIsActive',call.toMap());
+                           box.write('callIsActive', widget.call.toMap());
                          
                           Get.to(()=>HomeScreen(
                             passController: controller,routeVideo: 'video',
@@ -205,8 +214,10 @@ class VideoCallScreen extends StatelessWidget {
                                 color: Colors.white,
                               ),
                               onPress: () {
+                                try {
+                                  box.remove('callIsActive');
+                                } catch (_) {}
                                 controller.onEndCall();
-                                box.remove('callIsActive');
                               },
                             ),
                           ],
@@ -235,7 +246,7 @@ class VideoCallScreen extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         // Show when current user is a caller
-        if (call.isCaller && controller.isOnline.value==true)
+        if (widget.call.isCaller && controller.isOnline.value==true)
         Text(
             'Ringing',
             style: Theme.of(context)
@@ -245,7 +256,7 @@ class VideoCallScreen extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
         
-        if (call.isCaller && controller.isOnline.value==false)
+        if (widget.call.isCaller && controller.isOnline.value==false)
           Text(
             'calling'.tr,
             style: Theme.of(context)

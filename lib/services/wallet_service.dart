@@ -201,6 +201,7 @@ class WalletService {
 
   /// Purchase store item
   Future<bool> purchaseStoreItem({
+    int? validityDays,
     required String userId,
     required String storeItemId,
     required int cost,
@@ -257,6 +258,16 @@ class WalletService {
           },
         );
 
+        final rawUrl = storeItemData['imageUrl'] ??
+            storeItemData['thumbnailUrl'] ??
+            storeItemData['fileUrl'] ??
+            storeItemData['image'] ??
+            '';
+        final String resolvedType = (storeItemData['type'] ?? storeItemData['category'] ?? 'avatarFrame').toString();
+        final int starRating = (storeItemData['starRating'] ?? storeItemData['stars'] ?? 1) is num
+            ? (storeItemData['starRating'] ?? storeItemData['stars'] ?? 1).toInt()
+            : 1;
+
         // Add item to user's collection
         final userStoreItemId = _uuid.v4();
         transaction.set(
@@ -265,17 +276,32 @@ class WalletService {
             'id': userStoreItemId,
             'userId': userId,
             'storeItemId': storeItemId,
-            'storeItemName': storeItemData['name'],
-            'itemType': storeItemData['type'],
+            'storeItemName': storeItemData['name'] ?? storeItemData['title'] ?? 'Item',
+            'itemType': resolvedType,
+            'imageUrl': rawUrl,
+            'fileUrl': storeItemData['fileUrl'] ?? rawUrl,
+            'thumbnailUrl': storeItemData['thumbnailUrl'] ?? rawUrl,
+            'starRating': starRating,
+            'description': storeItemData['description'] ?? '',
+            'badgeSubCategory': storeItemData['badgeSubCategory'] ?? storeItemData['subCategory'] ?? 'Verification',
             'assignedAt': FieldValue.serverTimestamp(),
-            'expiresAt': storeItemData['expirationDuration'] != null
+            'expiresAt': ((validityDays ?? storeItemData['expirationDuration']) != null && (validityDays ?? storeItemData['expirationDuration']) > 0)
                 ? Timestamp.fromDate(DateTime.now()
-                    .add(Duration(days: storeItemData['expirationDuration'])))
+                    .add(Duration(days: validityDays ?? storeItemData['expirationDuration'])))
                 : null,
             'isActive': true,
             'assignedBy': 'user_purchase',
           },
         );
+
+        if (resolvedType == 'badge') {
+          transaction.update(
+            _firestore.collection(_usersCollection).doc(userId),
+            {
+              'customization.ownedBadges': FieldValue.arrayUnion([storeItemId]),
+            },
+          );
+        }
 
         // Record transaction
         transaction.set(
@@ -314,6 +340,7 @@ class WalletService {
 
   /// Gift store item to another user
   Future<bool> giftStoreItem({
+    int? validityDays,
     required String senderId,
     required String receiverId,
     required String storeItemId,
@@ -355,6 +382,16 @@ class WalletService {
           },
         );
 
+        final rawUrl = storeItemData['imageUrl'] ??
+            storeItemData['thumbnailUrl'] ??
+            storeItemData['fileUrl'] ??
+            storeItemData['image'] ??
+            '';
+        final String resolvedType = (storeItemData['type'] ?? storeItemData['category'] ?? 'avatarFrame').toString();
+        final int starRating = (storeItemData['starRating'] ?? storeItemData['stars'] ?? 1) is num
+            ? (storeItemData['starRating'] ?? storeItemData['stars'] ?? 1).toInt()
+            : 1;
+
         // Add item to receiver's collection
         final userStoreItemId = _uuid.v4();
         transaction.set(
@@ -363,16 +400,29 @@ class WalletService {
             'id': userStoreItemId,
             'userId': receiverId,
             'storeItemId': storeItemId,
-            'storeItemName': storeItemData['name'],
-            'itemType': storeItemData['type'],
+            'storeItemName': storeItemData['name'] ?? storeItemData['title'] ?? 'Item',
+            'itemType': resolvedType,
+            'imageUrl': rawUrl,
+            'fileUrl': storeItemData['fileUrl'] ?? rawUrl,
+            'thumbnailUrl': storeItemData['thumbnailUrl'] ?? rawUrl,
+            'starRating': starRating,
+            'description': storeItemData['description'] ?? '',
+            'badgeSubCategory': storeItemData['badgeSubCategory'] ?? storeItemData['subCategory'] ?? 'Verification',
             'assignedAt': FieldValue.serverTimestamp(),
-            'expiresAt': storeItemData['expirationDuration'] != null
-                ? Timestamp.fromDate(DateTime.now().add(Duration(days: storeItemData['expirationDuration'])))
-                : null,
+            'expiresAt': ((validityDays ?? storeItemData['expirationDuration']) != null && (validityDays ?? storeItemData['expirationDuration']) > 0) ? Timestamp.fromDate(DateTime.now().add(Duration(days: validityDays ?? storeItemData['expirationDuration']))) : null,
             'isActive': true,
             'assignedBy': 'gift_from_$senderId',
           },
         );
+
+        if (resolvedType == 'badge') {
+          transaction.update(
+            _firestore.collection(_usersCollection).doc(receiverId),
+            {
+              'customization.ownedBadges': FieldValue.arrayUnion([storeItemId]),
+            },
+          );
+        }
 
         // Record transaction for sender
         transaction.set(
@@ -670,3 +720,4 @@ class WalletService {
     }
   }
 }
+

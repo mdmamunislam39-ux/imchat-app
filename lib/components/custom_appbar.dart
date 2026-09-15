@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:get/get.dart';
 
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   const CustomAppBar({
@@ -31,7 +30,7 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
           ? null
           : leading ??
               IconButton(
-                onPressed: onBackPress ?? () => Get.back(),
+                onPressed: onBackPress ?? () => Navigator.maybePop(context),
                 icon: const Icon(Icons.arrow_back_ios_new_sharp,
                     color: Colors.white),
               ),

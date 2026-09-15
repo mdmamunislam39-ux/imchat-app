@@ -32,6 +32,8 @@ class BasicInfo extends StatelessWidget {
                 borderColor: primaryColor,
                 backgroundColor: primaryColor,
                 imageUrl: currentUser.photoUrl,
+                userId: currentUser.userId,
+                showFrame: false,
               ),
             ),
             const SizedBox(width: 10),

@@ -17,34 +17,46 @@ import 'components/call_timer.dart';
 import '../../components/circle_button.dart';
 import 'controller/call_controller.dart';
 
-class VoiceCallScreen extends StatelessWidget {
-  VoiceCallScreen({super.key, required this.call});
+class VoiceCallScreen extends StatefulWidget {
+  const VoiceCallScreen({super.key, required this.call});
 
   final Call call;
-  final GetStorage box = GetStorage();
-  void onPhoneBackButtonPress(){
-    box.write('callIsActive', call.toMap());
-    Get.to(()=>HomeScreen());
-   }
+
   @override
-  Widget build(BuildContext context) {
-    // Ensure clean fresh CallController for every new call instance
+  State<VoiceCallScreen> createState() => _VoiceCallScreenState();
+}
+
+class _VoiceCallScreenState extends State<VoiceCallScreen> {
+  late final CallController controller;
+  final GetStorage box = GetStorage();
+
+  @override
+  void initState() {
+    super.initState();
     if (Get.isRegistered<CallController>()) {
       Get.delete<CallController>(force: true);
     }
-    
-    // Get call controller
-    final CallController controller = Get.put(CallController(call: call));
-  
+    controller = Get.put(CallController(call: widget.call));
+  }
+
+  void onPhoneBackButtonPress() {
+    try {
+      box.write('callIsActive', widget.call.toMap());
+    } catch (_) {}
+    Get.to(() => HomeScreen());
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return PopScope(
       canPop: true,
       child: Obx(() {
         // Get obx vars
         final int? remoteUid = controller.remoteUid.value;
         final String photoUrl =
-            call.isCaller ? call.receiverPhotoUrl : call.callerPhotoUrl;
+            widget.call.isCaller ? widget.call.receiverPhotoUrl : widget.call.callerPhotoUrl;
         final String profileName =
-        call.isCaller ? call.receiverName : call.callerName;
+        widget.call.isCaller ? widget.call.receiverName : widget.call.callerName;
 
         return Scaffold(
           // extendBodyBehindAppBar: true,
@@ -104,7 +116,7 @@ class VoiceCallScreen extends StatelessWidget {
                           
                             controller.isMinimized.value = true;
                          
-                           box.write('callIsActive',call.toMap());
+                           box.write('callIsActive', widget.call.toMap());
                          
                           Get.to(()=>HomeScreen(
                            
@@ -147,7 +159,7 @@ class VoiceCallScreen extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         // Show when current user is a caller
-        if (call.isCaller && controller.isOnline.value==true)
+        if (widget.call.isCaller && controller.isOnline.value==true)
         Text(
             'Ringing',
             style: Theme.of(context)
@@ -157,7 +169,7 @@ class VoiceCallScreen extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
         
-        if (call.isCaller && controller.isOnline.value==false)
+        if (widget.call.isCaller && controller.isOnline.value==false)
           Text(
             'calling'.tr,
             style: Theme.of(context)
@@ -226,9 +238,11 @@ class VoiceCallScreen extends StatelessWidget {
                                   color: Colors.white,
                                 ),
                                 onPress: () {
+                                  try {
+                                    box.remove('callIsActive');
+                                  } catch (_) {}
                                   controller.onEndCall();
-                                  box.remove('callIsActive');
-                                } ,
+                                },
                               ),
                             SizedBox(height: 10,),
                               Text('Hang Up',style: TextStyle(fontSize: 18,color: Colors.white),)

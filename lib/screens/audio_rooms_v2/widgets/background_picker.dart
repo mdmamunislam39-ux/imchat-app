@@ -395,10 +395,10 @@ class DefaultBackgroundsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     // List of default background assets
     final defaultBackgrounds = [
-      'assets/images/welcome_image.png',
-      'assets/images/agency.png',
-      'assets/images/family.png',
-      'assets/images/store.png',
+      'assets/images/welcome_image.webp',
+      'assets/images/agency.webp',
+      'assets/images/family.webp',
+      'assets/images/store.webp',
     ];
 
     return Container(

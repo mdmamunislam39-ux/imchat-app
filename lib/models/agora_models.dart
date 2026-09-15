@@ -39,13 +39,13 @@ extension AudioQualityExtension on AudioQuality {
   AudioScenarioType get agoraScenario {
     switch (this) {
       case AudioQuality.low:
-        return AudioScenarioType.audioScenarioChatroom;
+        return AudioScenarioType.audioScenarioDefault;
       case AudioQuality.standard:
-        return AudioScenarioType.audioScenarioChatroom;
+        return AudioScenarioType.audioScenarioDefault;
       case AudioQuality.high:
-        return AudioScenarioType.audioScenarioGameStreaming;
+        return AudioScenarioType.audioScenarioDefault;
       case AudioQuality.ultra:
-        return AudioScenarioType.audioScenarioGameStreaming;
+        return AudioScenarioType.audioScenarioDefault;
     }
   }
 }
@@ -119,7 +119,7 @@ extension AudioEffectExtension on AudioEffect {
   AudioReverbType get agoraPreset {
     switch (this) {
       case AudioEffect.none:
-        return AudioReverbType.audioReverbDryLevel  ;
+        return AudioReverbType.audioReverbDryLevel;
       case AudioEffect.ktv:
         return AudioReverbType.audioReverbRoomSize;
       case AudioEffect.concert:
@@ -131,7 +131,7 @@ extension AudioEffectExtension on AudioEffect {
       case AudioEffect.ethereal:
         return AudioReverbType.audioReverbRoomSize;
       case AudioEffect.spacial:
-            return AudioReverbType.audioReverbRoomSize;
+        return AudioReverbType.audioReverbRoomSize;
       case AudioEffect.electronic:
         return AudioReverbType.audioReverbRoomSize;
       case AudioEffect.vintage:
@@ -176,8 +176,6 @@ extension VoiceChangerExtension on VoiceChanger {
         return 'Chipmunk';
     }
   }
-
- 
 }
 
 /// Agora user information with enhanced audio properties
@@ -246,9 +244,9 @@ class AgoraUser extends Equatable {
 
   /// Check if user is actively speaking (spoke in last 3 seconds)
   bool get isActivelySpeaking {
-    return isSpeaking && 
-           DateTime.now().difference(lastSpokeAt).inSeconds < 3 &&
-           audioLevel > 10;
+    return isSpeaking &&
+        DateTime.now().difference(lastSpokeAt).inSeconds < 3 &&
+        audioLevel > 10;
   }
 
   /// Get audio level as percentage
@@ -325,12 +323,17 @@ class AgoraRoomConfig extends Equatable {
       token: token ?? this.token,
       uid: uid ?? this.uid,
       audioQuality: audioQuality ?? this.audioQuality,
-      enableAudioVolumeIndication: enableAudioVolumeIndication ?? this.enableAudioVolumeIndication,
-      audioVolumeIndicationInterval: audioVolumeIndicationInterval ?? this.audioVolumeIndicationInterval,
-      enableAudioProcessing: enableAudioProcessing ?? this.enableAudioProcessing,
-      enableEchoCancellation: enableEchoCancellation ?? this.enableEchoCancellation,
+      enableAudioVolumeIndication:
+          enableAudioVolumeIndication ?? this.enableAudioVolumeIndication,
+      audioVolumeIndicationInterval:
+          audioVolumeIndicationInterval ?? this.audioVolumeIndicationInterval,
+      enableAudioProcessing:
+          enableAudioProcessing ?? this.enableAudioProcessing,
+      enableEchoCancellation:
+          enableEchoCancellation ?? this.enableEchoCancellation,
       enableNoiseReduction: enableNoiseReduction ?? this.enableNoiseReduction,
-      enableAutoGainControl: enableAutoGainControl ?? this.enableAutoGainControl,
+      enableAutoGainControl:
+          enableAutoGainControl ?? this.enableAutoGainControl,
       defaultAudioEffect: defaultAudioEffect ?? this.defaultAudioEffect,
       defaultVoiceChanger: defaultVoiceChanger ?? this.defaultVoiceChanger,
     );
@@ -445,7 +448,8 @@ class NetworkQuality extends Equatable {
     required this.rxQuality,
   });
 
-  factory NetworkQuality.fromAgora(int uid, QualityType txQuality, QualityType rxQuality) {
+  factory NetworkQuality.fromAgora(
+      int uid, QualityType txQuality, QualityType rxQuality) {
     return NetworkQuality(
       uid: uid,
       txQuality: txQuality,
@@ -490,7 +494,7 @@ class NetworkQuality extends Equatable {
         return 3;
       case QualityType.qualityBad:
         return 4;
-          case QualityType.qualityVbad:
+      case QualityType.qualityVbad:
         return 5;
       case QualityType.qualityDown:
         return 6;
@@ -606,8 +610,98 @@ class TokenResponse extends Equatable {
 
   /// Check if token is expired or will expire soon
   bool get isExpired => DateTime.now().isAfter(expiresAt);
-  bool get willExpireSoon => DateTime.now().add(const Duration(minutes: 5)).isAfter(expiresAt);
+  bool get willExpireSoon =>
+      DateTime.now().add(const Duration(minutes: 5)).isAfter(expiresAt);
 
   @override
   List<Object?> get props => [token, uid, channelName, expiresAt];
 }
+
+/// Generate a deterministic, collision-resistant non-zero 32-bit integer UID from string user ID
+int generateAgoraUid(String userId) {
+  if (userId.isEmpty) return 100001;
+  int hash = 5381;
+  for (int i = 0; i < userId.length; i++) {
+    hash = (((hash << 5) + hash) + userId.codeUnitAt(i)) & 0x7FFFFFFF;
+  }
+  // Range: 100,000 to 899,999,999 (always positive, non-zero, safe for Agora 32-bit uint)
+  final uid = (hash % 899900000) + 100000;
+  return uid;
+}
+
+/// Represents audio output routing options detected by Agora
+enum AgoraAudioRoute {
+  defaultRoute,
+  headset,
+  earpiece,
+  headsetNoMic,
+  speakerphone,
+  loudspeaker,
+  bluetooth,
+  usb,
+  unknown,
+}
+
+extension AgoraAudioRouteExtension on AgoraAudioRoute {
+  String get displayName {
+    switch (this) {
+      case AgoraAudioRoute.headset:
+        return 'Headset';
+      case AgoraAudioRoute.earpiece:
+        return 'Earpiece';
+      case AgoraAudioRoute.headsetNoMic:
+        return 'Headphones';
+      case AgoraAudioRoute.speakerphone:
+        return 'Speakerphone';
+      case AgoraAudioRoute.loudspeaker:
+        return 'Loudspeaker';
+      case AgoraAudioRoute.bluetooth:
+        return 'Bluetooth Device';
+      case AgoraAudioRoute.usb:
+        return 'USB Audio';
+      case AgoraAudioRoute.defaultRoute:
+      case AgoraAudioRoute.unknown:
+        return 'Default Audio';
+    }
+  }
+
+  bool get isBluetooth => this == AgoraAudioRoute.bluetooth;
+  bool get isHeadset =>
+      this == AgoraAudioRoute.headset || this == AgoraAudioRoute.headsetNoMic;
+  bool get isSpeaker =>
+      this == AgoraAudioRoute.speakerphone ||
+      this == AgoraAudioRoute.loudspeaker;
+  bool get isEarpiece => this == AgoraAudioRoute.earpiece;
+
+  static AgoraAudioRoute fromAgoraInt(int routing) {
+    switch (routing) {
+      case -1:
+        return AgoraAudioRoute.defaultRoute;
+      case 0:
+        return AgoraAudioRoute.headset;
+      case 1:
+        return AgoraAudioRoute.earpiece;
+      case 2:
+        return AgoraAudioRoute.headsetNoMic;
+      case 3:
+        return AgoraAudioRoute.speakerphone;
+      case 4:
+        return AgoraAudioRoute.loudspeaker;
+      case 5:
+        return AgoraAudioRoute.bluetooth;
+      case 6:
+        return AgoraAudioRoute.usb;
+      default:
+        return AgoraAudioRoute.unknown;
+    }
+  }
+}
+
+/// Call session mode for AgoraService
+enum AgoraCallType {
+  audioRoom,
+  audioCall,
+  videoCall,
+  groupCall,
+}
+

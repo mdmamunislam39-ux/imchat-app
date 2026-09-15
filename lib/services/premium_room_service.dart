@@ -3,6 +3,13 @@ import 'package:get/get.dart';
 import '../models/premium_room_id_model.dart';
 
 class PremiumRoomService extends GetxService {
+  static PremiumRoomService get instance {
+    if (!Get.isRegistered<PremiumRoomService>()) {
+      return Get.put(PremiumRoomService(), permanent: true);
+    }
+    return Get.find<PremiumRoomService>();
+  }
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   // Cache to prevent continuous hits

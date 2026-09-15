@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 class VideoLiveController extends GetxController {
   final String roomId;
@@ -28,6 +29,11 @@ class VideoLiveController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    try {
+      WakelockPlus.enable();
+    } catch (e) {
+      debugPrint('Error enabling wakelock in VideoLiveController: $e');
+    }
     _fetchBroadcasterInfo();
     _initAgora();
   }
@@ -52,10 +58,14 @@ class VideoLiveController extends GetxController {
 
   @override
   void onClose() {
-    engine.leaveChannel();
-    engine.release();
+    AgoraService().dispose();
     if (isBroadcaster) {
       FirebaseFirestore.instance.collection('voice_room_messages').doc(roomId).delete();
+    }
+    try {
+      WakelockPlus.disable();
+    } catch (e) {
+      debugPrint('Error disabling wakelock in VideoLiveController: $e');
     }
     super.onClose();
   }

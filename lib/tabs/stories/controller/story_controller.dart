@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:chat_messenger/api/contact_api.dart';
 import 'package:chat_messenger/api/story_api.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
-import 'package:chat_messenger/media/helpers/media_helper.dart';
 import 'package:chat_messenger/models/story/story.dart';
 import 'package:chat_messenger/models/user.dart';
+import 'package:chat_messenger/routes/app_routes.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -91,20 +90,6 @@ class StoryController extends GetxController {
   }
 
   Future<void> uploadFileStory() async {
-    // Open Camera Picker
-    final File? file = await MediaHelper.openCameraScreen(Get.context!);
-    if (file == null) return;
-
-    // Send image story
-    if (MediaHelper.isImage(file.path)) {
-      StoryApi.uploadImageStory(file);
-      return;
-    }
-
-    // Send video story
-    if (MediaHelper.isVideo(file.path)) {
-      StoryApi.uploadVideoStory(file);
-      return;
-    }
+    Get.toNamed(AppRoutes.addStory);
   }
 }

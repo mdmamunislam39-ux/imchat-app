@@ -108,8 +108,7 @@ class _PKBattleOverlayState extends State<PKBattleOverlay> with SingleTickerProv
       if (!mounted) return;
       
       // If current user is host, reset the PK state
-      final isHost = widget.room.isCreator(widget.currentUserId) ||
-          widget.room.participants.any((p) => p.userId == widget.currentUserId && p.isHost);
+      final isHost = _isHost;
           
       if (isHost) {
         Future.delayed(const Duration(seconds: 3), () {
@@ -140,6 +139,125 @@ class _PKBattleOverlayState extends State<PKBattleOverlay> with SingleTickerProv
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
+  bool get _isHost {
+    return widget.room.isCreator(widget.currentUserId) ||
+        widget.room.participants.any(
+          (p) => p.userId == widget.currentUserId && (p.isHost || p.seatNumber == 1),
+        );
+  }
+
+  void _showConfirmEndPKDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'End PK Battle?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Are you sure you want to end the PK battle early? Whichever team has earned more points will win.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _endPKEarly();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('End PK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _endPKEarly() {
+    final pkState = widget.room.pkBattleState;
+    if (!pkState.isActive) return;
+
+    final endedPkState = pkState.copyWith(
+      durationMinutes: 0,
+      startTime: DateTime.now().subtract(const Duration(minutes: 10)),
+    );
+
+    context.read<AudioRoomsBloc>().add(
+      UpdatePKBattleState(
+        roomId: widget.room.id,
+        userId: widget.currentUserId,
+        pkBattleState: endedPkState,
+      ),
+    );
+  }
+
+  Widget _buildPKBadgeHeader(String timeText) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0x8024133A),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(16),
+          topLeft: Radius.circular(10),
+          topRight: Radius.circular(10),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Text(
+            'P',
+            style: TextStyle(
+              color: Color(0xFF2EB5FF),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              fontStyle: FontStyle.italic,
+              height: 1.0,
+            ),
+          ),
+          const Text(
+            'K',
+            style: TextStyle(
+              color: Color(0xFFFF2B67),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              fontStyle: FontStyle.italic,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            timeText,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 19,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pkState = widget.room.pkBattleState;
@@ -164,131 +282,141 @@ class _PKBattleOverlayState extends State<PKBattleOverlay> with SingleTickerProv
         color: Colors.black.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(30),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Stack(
         children: [
-          // Top: Timer
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              'PK ${_formatTime(_secondsRemaining)}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          
-          // Avatars and progress bar
-          Row(
+          Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // Left Avatar (Seat 1)
-              _buildPKSeat(1, true, is1vs1: true, overrideUserId: pkState.leftTeamUserIds.isNotEmpty ? pkState.leftTeamUserIds.first : null),
+              // Top: Timer
+              _buildPKBadgeHeader(_formatTime(_secondsRemaining)),
+              const SizedBox(height: 8),
               
-              const SizedBox(width: 8),
+              // Avatars and progress bar
+              Row(
+                children: [
+                  // Left Avatar (Seat 1)
+                  _buildPKSeat(1, true, is1vs1: true, overrideUserId: pkState.leftTeamUserIds.isNotEmpty ? pkState.leftTeamUserIds.first : null),
+                  
+                  const SizedBox(width: 8),
+                  
+                  // Middle section (Progress Bar + VS)
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // Progress Bar
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: SizedBox(
+                                height: 12,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      flex: ((leftPercentage * 100).toInt()).clamp(1, 99),
+                                      child: Container(color: Colors.redAccent),
+                                    ),
+                                    Expanded(
+                                      flex: (((1 - leftPercentage) * 100).toInt()).clamp(1, 99),
+                                      child: Container(color: Colors.blueAccent),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // VS Icon
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: Colors.amber,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Text(
+                                'VS',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        // Scores text
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('${pkState.leftTeamScore}', style: const TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                            Text('${pkState.rightTeamScore}', style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(width: 8),
+                  
+                  // Right Avatar (Seat 2)
+                  _buildPKSeat(2, false, is1vs1: true, overrideUserId: pkState.rightTeamUserIds.isNotEmpty ? pkState.rightTeamUserIds.first : null),
+                ],
+              ),
               
-              // Middle section (Progress Bar + VS)
-              Expanded(
-                child: Column(
+              if (_battleJustEnded && _winnerText.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // Progress Bar
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: SizedBox(
-                            height: 12,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  flex: ((leftPercentage * 100).toInt()).clamp(1, 99),
-                                  child: Container(color: Colors.redAccent),
-                                ),
-                                Expanded(
-                                  flex: (((1 - leftPercentage) * 100).toInt()).clamp(1, 99),
-                                  child: Container(color: Colors.blueAccent),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // VS Icon
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            color: Colors.amber,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Text(
-                            'VS',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                        ),
-                      ],
+                    Text(
+                      _winnerText,
+                      style: const TextStyle(
+                        color: Colors.yellowAccent,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                      ),
                     ),
-                    const SizedBox(height: 4),
-                    // Scores text
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('${pkState.leftTeamScore}', style: const TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold)),
-                        Text('${pkState.rightTeamScore}', style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
+                    const SizedBox(height: 8),
+                    if (widget.room.participants.any((p) => p.seatNumber == 1 && p.userId == widget.currentUserId))
+                      ElevatedButton(
+                        onPressed: () {
+                          final resetState = pkState.copyWith(isActive: false);
+                          context.read<AudioRoomsBloc>().add(UpdatePKBattleState(
+                            roomId: widget.room.id,
+                            userId: widget.currentUserId,
+                            pkBattleState: resetState,
+                          ));
+                        },
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                        child: const Text('Close PK', style: TextStyle(color: Colors.white)),
+                      ),
                   ],
                 ),
-              ),
-              
-              const SizedBox(width: 8),
-              
-              // Right Avatar (Seat 2)
-              _buildPKSeat(2, false, is1vs1: true, overrideUserId: pkState.rightTeamUserIds.isNotEmpty ? pkState.rightTeamUserIds.first : null),
+              ],
             ],
           ),
-          
-          if (_battleJustEnded && _winnerText.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _winnerText,
-                  style: const TextStyle(
-                    color: Colors.yellowAccent,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+          if (_isHost && !_battleJustEnded)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: GestureDetector(
+                onTap: _showConfirmEndPKDialog,
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.power_settings_new,
+                    color: Colors.white,
+                    size: 20,
                   ),
                 ),
-                const SizedBox(height: 8),
-                if (widget.room.participants.any((p) => p.seatNumber == 1 && p.userId == widget.currentUserId))
-                  ElevatedButton(
-                    onPressed: () {
-                      final resetState = pkState.copyWith(isActive: false);
-                      context.read<AudioRoomsBloc>().add(UpdatePKBattleState(
-                        roomId: widget.room.id,
-                        userId: widget.currentUserId,
-                        pkBattleState: resetState,
-                      ));
-                    },
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                    child: const Text('Close PK', style: TextStyle(color: Colors.white)),
-                  ),
-              ],
+              ),
             ),
-          ],
         ],
       ),
     );
@@ -304,89 +432,105 @@ class _PKBattleOverlayState extends State<PKBattleOverlay> with SingleTickerProv
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header Timer
-          Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                'PK ${_formatTime(_secondsRemaining)}',
-                style: const TextStyle(color: Colors.yellowAccent, fontSize: 14, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ),
-          
-          const SizedBox(height: 12),
-          
-          // Split screen area
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Left Team (Blue)
-                Expanded(
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF2E46E6), // Solid Blue
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned(
-                          top: 10,
-                          left: 10,
-                          child: Text(
-                            'A',
-                            style: TextStyle(
-                              fontSize: 120,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white.withValues(alpha: 0.15),
-                              height: 1.0,
-                            ),
-                          ),
+          // Split screen area with PK timer overlay
+          Stack(
+            alignment: Alignment.topCenter,
+            children: [
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Left Team (Blue)
+                    Expanded(
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF2E46E6), // Solid Blue
                         ),
-                        _buildTeamGrid(true),
-                      ],
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              top: 10,
+                              left: 10,
+                              child: Text(
+                                'A',
+                                style: TextStyle(
+                                  fontSize: 120,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white.withValues(alpha: 0.15),
+                                  height: 1.0,
+                                ),
+                              ),
+                            ),
+                            _buildTeamGrid(true),
+                          ],
+                        ),
+                      ),
+                    ),
+                    
+                    // VS Divider - Optional, removed or kept thin based on screenshot
+                    Container(
+                      width: 1,
+                      color: Colors.black26,
+                    ),
+                    
+                    // Right Team (Red)
+                    Expanded(
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFE21A42), // Solid Red
+                        ),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              top: 10,
+                              right: 10,
+                              child: Text(
+                                'B',
+                                style: TextStyle(
+                                  fontSize: 120,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white.withValues(alpha: 0.15),
+                                  height: 1.0,
+                                ),
+                              ),
+                            ),
+                            _buildTeamGrid(false),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Header Timer - Positioned right inside top center marked box area
+              Positioned(
+                top: 0,
+                child: _buildPKBadgeHeader(_formatTime(_secondsRemaining)),
+              ),
+
+              // Host Power Switch Button in Top-Right Corner
+              if (_isHost && !_battleJustEnded)
+                Positioned(
+                  top: 6,
+                  right: 10,
+                  child: GestureDetector(
+                    onTap: _showConfirmEndPKDialog,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.4),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.power_settings_new,
+                        color: Colors.white,
+                        size: 20,
+                      ),
                     ),
                   ),
                 ),
-                
-                // VS Divider - Optional, removed or kept thin based on screenshot
-                Container(
-                  width: 1,
-                  color: Colors.black26,
-                ),
-                
-                // Right Team (Red)
-                Expanded(
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE21A42), // Solid Red
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned(
-                          top: 10,
-                          right: 10,
-                          child: Text(
-                            'B',
-                            style: TextStyle(
-                              fontSize: 120,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white.withValues(alpha: 0.15),
-                              height: 1.0,
-                            ),
-                          ),
-                        ),
-                        _buildTeamGrid(false),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            ],
           ),
           
           // Bottom Progress Bar
@@ -485,36 +629,68 @@ class _PKBattleOverlayState extends State<PKBattleOverlay> with SingleTickerProv
             ),
           ),
           
-          // Winner Overlay (if any, although we will move this to Leader overlay later)
-          if (_battleJustEnded && _winnerText.isNotEmpty && pkState.teamSize == 1)
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _winnerText,
-                    style: const TextStyle(
-                      color: Colors.yellowAccent,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      shadows: [Shadow(color: Colors.black, blurRadius: 4)],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (widget.room.participants.any((p) => p.seatNumber == 1 && p.userId == widget.currentUserId))
-                    ElevatedButton(
-                      onPressed: () {
-                        final resetState = widget.room.pkBattleState.copyWith(isActive: false);
-                        context.read<AudioRoomsBloc>().add(UpdatePKBattleState(
-                          roomId: widget.room.id,
-                          userId: widget.currentUserId,
-                          pkBattleState: resetState,
-                        ));
-                      },
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                      child: const Text('Close PK', style: TextStyle(color: Colors.white)),
-                    ),
+          // Yellow / Golden accent divider line right under PK battle section
+          Container(
+            height: 2,
+            margin: const EdgeInsets.only(top: 4),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.transparent,
+                  const Color(0xFFFFD700).withValues(alpha: 0.8),
+                  const Color(0xFFFFD700),
+                  const Color(0xFFFFD700).withValues(alpha: 0.8),
+                  Colors.transparent,
                 ],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFFFD700).withValues(alpha: 0.5),
+                  blurRadius: 4,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+          ),
+          
+          // Winner Overlay (if any)
+          if (_battleJustEnded && _winnerText.isNotEmpty)
+            Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.amber, width: 2),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _winnerText,
+                      style: const TextStyle(
+                        color: Colors.yellowAccent,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (_isHost)
+                      ElevatedButton(
+                        onPressed: () {
+                          final resetState = widget.room.pkBattleState.copyWith(isActive: false);
+                          context.read<AudioRoomsBloc>().add(UpdatePKBattleState(
+                            roomId: widget.room.id,
+                            userId: widget.currentUserId,
+                            pkBattleState: resetState,
+                          ));
+                        },
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                        child: const Text('Close PK', style: TextStyle(color: Colors.white)),
+                      ),
+                  ],
+                ),
               ),
             ),
         ],
@@ -633,7 +809,8 @@ class _PKBattleOverlayState extends State<PKBattleOverlay> with SingleTickerProv
                 ),
                 child: isOccupied && occupant != null
                     ? SpeakingRippleAnimation(
-                        isSpeaking: occupant.isSpeaker && !occupant.isMuted,
+                        isSpeaking: !occupant.isMuted,
+                        userId: occupant.userId,
                         minRadius: occupant.frameId != null ? (avatarSize / 2 * 1.3) : (avatarSize / 2),
                         rippleColor: (isLeftTeam ? Colors.blueAccent : Colors.redAccent).withValues(alpha: 0.4),
                         child: CachedCircleAvatar(
@@ -641,7 +818,7 @@ class _PKBattleOverlayState extends State<PKBattleOverlay> with SingleTickerProv
                           radius: avatarSize / 2,
                           backgroundColor: Colors.grey[800],
                           frameId: null, // Removed frame for PK mode
-                          userId: occupant.userId,
+                          userId: null, // Set to null so frame preview is NOT rendered on PK seat
                           frameScale: 1.35,
                           borderWidth: 0,
                           padding: 0,

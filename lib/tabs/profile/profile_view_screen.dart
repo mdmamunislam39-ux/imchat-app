@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
 import 'package:chat_messenger/api/report_api.dart';
 import 'package:chat_messenger/api/user_api.dart';
-import 'package:chat_messenger/api/contact_api.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/components/custom_appbar.dart';
 import 'package:chat_messenger/config/theme_config.dart';
@@ -16,6 +16,12 @@ import 'package:chat_messenger/screens/calling/helper/call_helper.dart';
 import 'package:chat_messenger/theme/app_theme.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/services/global_settings_service.dart';
+import 'package:chat_messenger/components/svg_icon.dart';
+import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:chat_messenger/models/news_feed_post.dart';
+import 'package:chat_messenger/screens/news_feed/post_media_viewer.dart';
 
 import 'components/action_button.dart';
 import 'controllers/profile_view_controller.dart';
@@ -57,11 +63,28 @@ class ProfileViewScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     // Profile photo (no frame shown in this minimal view)
-                    CachedCircleAvatar(
-                          radius: 70,
-                          iconSize: 60,
-                          imageUrl: user.photoUrl,
-                        ),
+                    GestureDetector(
+                      onTap: () {
+                        if (user.photoUrl.isNotEmpty) {
+                          Get.to(() => PostMediaViewer(
+                            mediaList: [
+                              PostMedia(
+                                url: user.photoUrl,
+                                type: 'image',
+                              ),
+                            ],
+                            initialIndex: 0,
+                          ));
+                        }
+                      },
+                      child: CachedCircleAvatar(
+                        radius: 70,
+                        iconSize: 60,
+                        imageUrl: user.photoUrl,
+                        userId: user.userId,
+                        showFrame: false,
+                      ),
+                    ),
                     // Profile name
                     Padding(
                       padding: const EdgeInsets.symmetric(
@@ -91,22 +114,42 @@ class ProfileViewScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                    // Profile @username (Phone number logic)
-                    FutureBuilder<bool>(
-                      future: ContactApi.isContact(user.userId),
-                      builder: (context, snapshot) {
-                        final isContact = snapshot.data ?? false;
-                        final displayNumber = isContact ? user.number : '*** *** ****';
-                        return Center(
-                          child: Text(
-                            displayNumber,
+                    Center(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            user.searchId.isNotEmpty ? 'ID: ${user.searchId}' : 'ID: ${user.userId}',
                             style: Theme.of(context)
                                 .textTheme
                                 .titleLarge!
                                 .copyWith(color: greyColor),
                           ),
-                        );
-                      },
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            onTap: () async {
+                              final idToCopy = user.searchId.isNotEmpty ? user.searchId : user.userId;
+                              await Clipboard.setData(ClipboardData(text: idToCopy));
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'ID $idToCopy copied to clipboard!',
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                  backgroundColor: primaryColor,
+                                  duration: const Duration(seconds: 1),
+                                ),
+                              );
+                            },
+                            child: const Icon(
+                              Icons.copy_rounded,
+                              size: 16,
+                              color: greyColor,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 8),
                     // Last seen
@@ -135,6 +178,98 @@ class ProfileViewScreen extends StatelessWidget {
                           return Text(
                               "${updatedUser.lastActive?.getLastSeenTime}");
                         },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: defaultPadding),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () {
+                            Get.to(() => ProfilePageForRoom(
+                              userID: user.userId,
+                              userName: user.fullname,
+                              userImage: user.photoUrl,
+                            ));
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: isDarkMode ? Colors.grey[900] : Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: isDarkMode ? Colors.grey[800]! : Colors.grey[200]!,
+                                width: 1,
+                              ),
+                              boxShadow: isDarkMode ? null : [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.03),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                )
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                SvgIcon(
+                                  'assets/icons/broadcast.svg',
+                                  width: 24,
+                                  height: 24,
+                                  color: isDarkMode ? Colors.white : Colors.black87,
+                                ),
+                                 const SizedBox(width: 12),
+                                 Text(
+                                   'Room Profile',
+                                   style: TextStyle(
+                                     fontSize: 16,
+                                     fontWeight: FontWeight.w600,
+                                     color: isDarkMode ? Colors.white : Colors.black87,
+                                   ),
+                                 ),
+                                 const SizedBox(width: 8),
+                                 StreamBuilder<User>(
+                                   stream: UserApi.getUserUpdates(user.userId),
+                                   initialData: user,
+                                   builder: (context, snapshot) {
+                                     final updatedUser = snapshot.data ?? user;
+                                     final sendingLevelVal = updatedUser.sendingLevel?.level;
+                                     final receivingLevelVal = updatedUser.receivingLevel?.level;
+                                     
+                                     return Row(
+                                       mainAxisSize: MainAxisSize.min,
+                                       children: [
+                                         if (sendingLevelVal != null) ...[
+                                           _buildSingleLevelBadge('sending_config', sendingLevelVal),
+                                           const SizedBox(width: 4),
+                                         ],
+                                         if (receivingLevelVal != null) ...[
+                                           _buildSingleLevelBadge('receiving_config', receivingLevelVal),
+                                         ],
+                                       ],
+                                     );
+                                   },
+                                 ),
+                                 const Spacer(),
+                                 Text(
+                                   'See more',
+                                   style: TextStyle(
+                                     fontSize: 14,
+                                     color: Colors.grey[500],
+                                   ),
+                                 ),
+                                const SizedBox(width: 4),
+                                Icon(
+                                  Icons.chevron_right,
+                                  color: Colors.grey[400],
+                                  size: 20,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -258,6 +393,44 @@ class ProfileViewScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSingleLevelBadge(String configDoc, int levelNumber) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('level_configurations')
+          .doc(configDoc)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || !snapshot.data!.exists) {
+          return const SizedBox.shrink();
+        }
+        final data = snapshot.data!.data() as Map<String, dynamic>?;
+        if (data == null || data['levels'] == null) {
+          return const SizedBox.shrink();
+        }
+
+        final levels = List<Map<String, dynamic>>.from(data['levels']);
+        String? imageUrl;
+        for (final lvl in levels) {
+          if (lvl['levelNumber']?.toString() == levelNumber.toString()) {
+            imageUrl = lvl['imageUrl'] as String?;
+            break;
+          }
+        }
+
+        if (imageUrl == null || imageUrl.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return CachedNetworkImage(
+          imageUrl: imageUrl,
+          height: 14,
+          fit: BoxFit.contain,
+          errorWidget: (_, __, ___) => const SizedBox.shrink(),
+        );
+      },
     );
   }
 }

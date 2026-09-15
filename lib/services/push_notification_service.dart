@@ -4,7 +4,7 @@ import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:get/get.dart';
 
-enum NotificationType { alert, call, message, group }
+enum NotificationType { alert, call, cancel_call, message, group }
 
 abstract class PushNotificationService {
   //
@@ -21,16 +21,14 @@ abstract class PushNotificationService {
     Map<String, dynamic>? call,
   }) async {
     try {
-      await _functions
-      .httpsCallable('sendPushNotification')
-      .call({
+      await _functions.httpsCallable('sendPushNotification').call({
         'type': type.name,
         'title': title,
         'body': body,
         'deviceToken': deviceToken,
         'call': call ?? {},
         'senderId': AuthController.instance.currentUser.userId,
-        'senderAvatar': AuthController.instance.currentUser.photoUrl ?? '',
+        'senderAvatar': AuthController.instance.currentUser.photoUrl,
       });
       debugPrint('sendPushNotification() -> success');
     } catch (e) {
@@ -50,10 +48,11 @@ abstract class PushNotificationService {
   //     _ => '',
   //   };
   // }
-   static String getMessageType(Message message) {
+  static String getMessageType(Message message) {
     // Special case for text messages, return the actual message text
     if (message.type == MessageType.text) {
-      return message.textMsg; // This assumes the text content is in `message.content`
+      return message
+          .textMsg; // This assumes the text content is in `message.content`
     }
 
     // Return predefined labels for other message types
@@ -66,8 +65,8 @@ abstract class PushNotificationService {
       MessageType.location => '📍 ${'location_shared'.tr}',
       MessageType.roomShare => '🎙️ Voice Room Shared',
       MessageType.hostInvitation => '🏆 Agency Invitation',
+      MessageType.relationshipInvitation => '❤️ Intimacy Invitation',
       _ => '',
     };
   }
-
 }

@@ -52,15 +52,15 @@ class _PostReactionsSummaryBarState extends State<PostReactionsSummaryBar> {
   Color _getReactionBgColor(ReactionType type) {
     switch (type) {
       case ReactionType.like:
-        return Colors.blue;
+        return const Color(0xFF1877F2);
       case ReactionType.love:
-        return Colors.redAccent;
+        return const Color(0xFFE41E3F);
       case ReactionType.haha:
       case ReactionType.wow:
       case ReactionType.sad:
-        return Colors.amber;
+        return const Color(0xFFF7B125);
       case ReactionType.angry:
-        return Colors.deepOrange;
+        return const Color(0xFFE94B35);
     }
   }
 

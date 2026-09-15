@@ -154,8 +154,8 @@ class _FamilyScreenState extends State<FamilyScreen> with TickerProviderStateMix
       if (_tabController != null && _tabController!.length != tabCount) {
         _tabController!.dispose();
         _tabController = TabController(length: tabCount, vsync: this);
-      } else if (_tabController == null) {
-        _tabController = TabController(length: tabCount, vsync: this);
+      } else {
+        _tabController ??= TabController(length: tabCount, vsync: this);
       }
 
       if (mounted) {

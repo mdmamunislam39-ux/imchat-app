@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
 
 
 class SupportersPage extends StatelessWidget {
@@ -75,7 +76,7 @@ class SupportersPage extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.diamond_outlined, color: Colors.orange, size: 14),
+            const DynamicDiamondIcon(width: 14, height: 14),
             const SizedBox(width: 2),
             Text(
               _formatDiamondCount(value),
@@ -172,7 +173,7 @@ class SupportersPage extends StatelessWidget {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.diamond_outlined, color: Colors.orange, size: 16),
+                      const DynamicDiamondIcon(width: 16, height: 16),
                       const SizedBox(width: 4),
                       Text(
                         _formatDiamondCount(value),

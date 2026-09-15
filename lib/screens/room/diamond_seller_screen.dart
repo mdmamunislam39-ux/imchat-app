@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
@@ -159,88 +160,103 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
     setState(() => _isSending = true);
 
     try {
-      final sellerRef = _firestore.collection('sellers').doc(_sellerDocId);
-      final userRef =
-          _firestore.collection('Users').doc(_foundUser!.userId);
-      final txnRef = _firestore.collection('seller_transactions').doc();
-
-      // Fetch SVIP levels outside transaction
-      final svipLevelsSnap = await _firestore.collection('config').doc('svip_levels').collection('levels').get();
-      final svipLevels = svipLevelsSnap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
-
-      await _firestore.runTransaction((transaction) async {
-        // Re-read seller to verify balance
-        final sellerSnap = await transaction.get(sellerRef);
-        final currentBalance = sellerSnap.data()?['accountBalance'] ?? 0;
-
-        if (currentBalance < amount) {
-          throw Exception('Insufficient account balance');
-        }
-
-        // Re-read user to check monthly reset
-        final userSnap = await transaction.get(userRef);
-        final userData = userSnap.data() ?? {};
-        final lastMonth = userData['lastRechargeMonth'] as String? ?? '';
-        final now = DateTime.now();
-        final currentMonth = "${now.year}-${now.month.toString().padLeft(2, '0')}";
-        
-        // int currentRecharge = (userData['monthlyRechargeAmount'] as num?)?.toInt() ?? 0;
-
-        if (currentBalance < amount) {
-          throw Exception('Insufficient account balance');
-        }
-
-        // Deduct seller balance
-        transaction.update(sellerRef, {
-          'accountBalance': FieldValue.increment(-amount),
-          'totalSales': FieldValue.increment(amount),
-          'totalUsersRecharged': FieldValue.increment(1),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-
-        // Increment user diamonds & monthly recharge tracking atomically
-        int previousMonthlyRecharge = (userData['monthlyRechargeAmount'] as num?)?.toInt() ?? 0;
-        int newMonthlyRecharge = amount;
-
-        if (lastMonth != currentMonth) {
-          transaction.update(userRef, {
-            'diamonds': FieldValue.increment(amount),
-            'totalDiamonds': FieldValue.increment(amount),
-            'monthlyRechargeAmount': amount,
-            'lastRechargeMonth': currentMonth,
-          });
-        } else {
-          newMonthlyRecharge = previousMonthlyRecharge + amount;
-          transaction.update(userRef, {
-            'diamonds': FieldValue.increment(amount),
-            'totalDiamonds': FieldValue.increment(amount),
-            'monthlyRechargeAmount': FieldValue.increment(amount),
-            'lastRechargeMonth': currentMonth,
-          });
-        }
-
-        // Auto upgrade SVIP
-        await SvipService.checkAndAutoUpgradeSvip(
-          userId: _foundUser!.userId,
-          newRechargeAmount: newMonthlyRecharge,
-          currentMonth: currentMonth,
-          transaction: transaction,
-          userRef: userRef,
-          userData: userData,
-          svipLevels: svipLevels,
-        );
-
-        // Record transaction
-        transaction.set(txnRef, {
-          'sellerId': widget.currentUser.userId,
-          'userId': _foundUser!.userId,
+      bool backendHandled = false;
+      try {
+        final callable = FirebaseFunctions.instance.httpsCallable('sellerRecharge');
+        final result = await callable.call({
+          'targetUserId': _foundUser!.userId,
           'amount': amount,
-          'type': 'recharge',
-          'description':
-              'Seller recharge: $amount diamonds to ${_foundUser!.fullname}',
-          'createdAt': FieldValue.serverTimestamp(),
         });
-      });
+        if (result.data is Map && result.data['success'] == true) {
+          backendHandled = true;
+        }
+      } catch (cloudFnErr) {
+        debugPrint('sellerRecharge callable note: $cloudFnErr; falling back to transaction');
+      }
+
+      if (!backendHandled) {
+        final sellerRef = _firestore.collection('sellers').doc(_sellerDocId);
+        final userRef =
+            _firestore.collection('Users').doc(_foundUser!.userId);
+        final txnRef = _firestore.collection('seller_transactions').doc();
+
+        // Fetch SVIP levels outside transaction
+        final svipLevelsSnap = await _firestore.collection('config').doc('svip_levels').collection('levels').get();
+        final svipLevels = svipLevelsSnap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+
+        await _firestore.runTransaction((transaction) async {
+          // Re-read seller to verify balance
+          final sellerSnap = await transaction.get(sellerRef);
+          final currentBalance = sellerSnap.data()?['accountBalance'] ?? 0;
+
+          if (currentBalance < amount) {
+            throw Exception('Insufficient account balance');
+          }
+
+          // Re-read user to check monthly reset
+          final userSnap = await transaction.get(userRef);
+          final userData = userSnap.data() ?? {};
+          final lastMonth = userData['lastRechargeMonth'] as String? ?? '';
+          final now = DateTime.now();
+          final currentMonth = "${now.year}-${now.month.toString().padLeft(2, '0')}";
+
+          // Deduct seller balance
+          transaction.update(sellerRef, {
+            'accountBalance': FieldValue.increment(-amount),
+            'totalSales': FieldValue.increment(amount),
+            'totalUsersRecharged': FieldValue.increment(1),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+          // Increment user diamonds & eligible seller recharge tracking atomically
+          int previousMonthlyRecharge = (userData['monthlyRechargeAmount'] as num?)?.toInt() ?? 0;
+          int newMonthlyRecharge = amount;
+
+          if (lastMonth != currentMonth) {
+            transaction.update(userRef, {
+              'diamonds': FieldValue.increment(amount),
+              'totalDiamonds': FieldValue.increment(amount),
+              'monthlyRechargeAmount': amount,
+              'eligibleSellerRechargeAmount': FieldValue.increment(amount),
+              'totalEligibleSellerRechargeAmount': FieldValue.increment(amount),
+              'lastRechargeMonth': currentMonth,
+            });
+          } else {
+            newMonthlyRecharge = previousMonthlyRecharge + amount;
+            transaction.update(userRef, {
+              'diamonds': FieldValue.increment(amount),
+              'totalDiamonds': FieldValue.increment(amount),
+              'monthlyRechargeAmount': FieldValue.increment(amount),
+              'eligibleSellerRechargeAmount': FieldValue.increment(amount),
+              'totalEligibleSellerRechargeAmount': FieldValue.increment(amount),
+              'lastRechargeMonth': currentMonth,
+            });
+          }
+
+          // Auto upgrade SVIP
+          await SvipService.checkAndAutoUpgradeSvip(
+            userId: _foundUser!.userId,
+            newRechargeAmount: newMonthlyRecharge,
+            currentMonth: currentMonth,
+            transaction: transaction,
+            userRef: userRef,
+            userData: userData,
+            svipLevels: svipLevels,
+          );
+
+          // Record transaction
+          transaction.set(txnRef, {
+            'sellerId': widget.currentUser.userId,
+            'userId': _foundUser!.userId,
+            'amount': amount,
+            'type': 'recharge',
+            'source': 'seller_page',
+            'description':
+                'Seller recharge: $amount diamonds to ${_foundUser!.fullname}',
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        });
+      }
 
       // Update local seller balance
       setState(() {

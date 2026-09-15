@@ -14,6 +14,12 @@ class RichTextController extends TextEditingController {
     fontStyle: FontStyle.italic,
   );
 
+  final TextStyle linkStyle = const TextStyle(
+    color: Color(0xFF1877F2),
+    decoration: TextDecoration.underline,
+    fontWeight: FontWeight.w500,
+  );
+
   RichTextController({String? text}) : super(text: text);
 
   @override
@@ -29,14 +35,17 @@ class RichTextController extends TextEditingController {
       return TextSpan(style: style, text: '');
     }
 
-    // A combined pattern to match mentions and hashtags
-    final pattern = RegExp(r'(@\w+)|(#\w+)');
+    final pattern = RegExp(
+      r'(https?:\/\/[^\s]+|www\.[^\s]+)|(@\w+)|(#\w+)',
+      caseSensitive: false,
+    );
     final matches = pattern.allMatches(textStr);
 
     int lastMatchEnd = 0;
+    final TextStyle defaultBaseStyle =
+        style ?? DefaultTextStyle.of(context).style;
 
     for (final match in matches) {
-      // Add normal text before the match
       if (match.start > lastMatchEnd) {
         children.add(TextSpan(
           text: textStr.substring(lastMatchEnd, match.start),
@@ -44,24 +53,31 @@ class RichTextController extends TextEditingController {
         ));
       }
 
-      // Add the matched text with appropriate styling
       final matchedText = match.group(0)!;
-      if (matchedText.startsWith('@')) {
+      final lowerMatched = matchedText.toLowerCase();
+
+      if (lowerMatched.startsWith('http://') ||
+          lowerMatched.startsWith('https://') ||
+          lowerMatched.startsWith('www.')) {
         children.add(TextSpan(
           text: matchedText,
-          style: (style ?? const TextStyle()).merge(mentionStyle),
+          style: defaultBaseStyle.merge(linkStyle),
+        ));
+      } else if (matchedText.startsWith('@')) {
+        children.add(TextSpan(
+          text: matchedText,
+          style: defaultBaseStyle.merge(mentionStyle),
         ));
       } else if (matchedText.startsWith('#')) {
         children.add(TextSpan(
           text: matchedText,
-          style: (style ?? const TextStyle()).merge(hashtagStyle),
+          style: defaultBaseStyle.merge(hashtagStyle),
         ));
       }
 
       lastMatchEnd = match.end;
     }
 
-    // Add any remaining text
     if (lastMatchEnd < textStr.length) {
       children.add(TextSpan(
         text: textStr.substring(lastMatchEnd),

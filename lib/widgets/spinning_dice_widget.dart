@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 class SpinningDiceWidget extends StatefulWidget {
   final int targetNumber;
   final double size;
+  final String diceStyle; // 'classic' or 'blue'
 
   const SpinningDiceWidget({
     super.key,
     required this.targetNumber,
     this.size = 40.0,
+    this.diceStyle = 'classic',
   });
 
   @override
@@ -57,13 +59,15 @@ class _SpinningDiceWidgetState extends State<SpinningDiceWidget>
 
   @override
   Widget build(BuildContext context) {
+    final bool isBlue = widget.diceStyle == 'blue';
+
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
         // Combine rotation with a slight bouncing scale
         final angle = _controller.value * 4 * pi; // Spin 2 full times
         final scale = 1.0 + sin(_controller.value * pi) * 0.5; // Bounce effect
-        
+
         return Transform.scale(
           scale: scale,
           child: Transform.rotate(
@@ -72,13 +76,25 @@ class _SpinningDiceWidgetState extends State<SpinningDiceWidget>
               width: widget.size,
               height: widget.size,
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(widget.size * 0.2),
+                gradient: isBlue
+                    ? const LinearGradient(
+                        colors: [Color(0xFF29B6F6), Color(0xFF0277BD)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: isBlue ? null : Colors.white,
+                borderRadius: BorderRadius.circular(widget.size * 0.22),
+                border: isBlue
+                    ? Border.all(color: const Color(0xFF81D4FA), width: 1.5)
+                    : null,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 4,
-                    offset: const Offset(2, 2),
+                    color: isBlue
+                        ? const Color(0xFF01579B).withValues(alpha: 0.6)
+                        : Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 5,
+                    offset: const Offset(2, 3),
                   ),
                 ],
               ),
@@ -91,23 +107,26 @@ class _SpinningDiceWidgetState extends State<SpinningDiceWidget>
   }
 
   Widget _buildDiceFace(int number) {
-    // Simple custom painter to draw dice dots
     return CustomPaint(
-      painter: _DiceFacePainter(number),
+      painter: _DiceFacePainter(
+        number,
+        dotColor: widget.diceStyle == 'blue' ? Colors.white : Colors.black,
+      ),
     );
   }
 }
 
 class _DiceFacePainter extends CustomPainter {
   final int number;
-  
-  _DiceFacePainter(this.number);
+  final Color dotColor;
+
+  _DiceFacePainter(this.number, {this.dotColor = Colors.black});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.black;
+    final paint = Paint()..color = dotColor;
     final double radius = size.width * 0.1;
-    
+
     final center = Offset(size.width / 2, size.height / 2);
     final topLeft = Offset(size.width * 0.25, size.height * 0.25);
     final topRight = Offset(size.width * 0.75, size.height * 0.25);
@@ -164,31 +183,50 @@ class _DiceFacePainter extends CustomPainter {
 class StaticDiceWidget extends StatelessWidget {
   final int number;
   final double size;
+  final String diceStyle; // 'classic' or 'blue'
 
   const StaticDiceWidget({
     super.key,
     required this.number,
     this.size = 24.0,
+    this.diceStyle = 'classic',
   });
 
   @override
   Widget build(BuildContext context) {
+    final bool isBlue = diceStyle == 'blue';
+
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(size * 0.2),
+        gradient: isBlue
+            ? const LinearGradient(
+                colors: [Color(0xFF29B6F6), Color(0xFF0277BD)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        color: isBlue ? null : Colors.white,
+        borderRadius: BorderRadius.circular(size * 0.22),
+        border: isBlue
+            ? Border.all(color: const Color(0xFF81D4FA), width: 1.2)
+            : null,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 2,
-            offset: const Offset(1, 1),
+            color: isBlue
+                ? const Color(0xFF01579B).withValues(alpha: 0.5)
+                : Colors.black.withValues(alpha: 0.3),
+            blurRadius: 3,
+            offset: const Offset(1, 2),
           ),
         ],
       ),
       child: CustomPaint(
-        painter: _DiceFacePainter(number),
+        painter: _DiceFacePainter(
+          number,
+          dotColor: isBlue ? Colors.white : Colors.black,
+        ),
       ),
     );
   }

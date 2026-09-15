@@ -62,21 +62,26 @@ abstract class ChatApi {
         .orderBy('sentAt', descending: true)
         .snapshots()
         .asyncMap((event) async {
-      // Hold the list
-      List<Chat> chats = [];
-
-      for (var doc in event.docs) {
-        // Get map data
-        final data = doc.data();
-        // Fetch user data
-        final User? user = await UserApi.getUser(doc.id);
-        // Add chat to the list
-        if (user != null) {
-          chats.add(Chat.fromMap(data, doc: doc, receiver: user));
-        }
-      }
-      return chats;
-    });
+          // Hold the list
+          List<Chat> chats = [];
+          debugPrint('--- [Diagnostic] getChats(): Fetched ${event.docs.length} docs from Users/${currentUer.userId}/Chats ---');
+          for (var doc in event.docs) {
+            try {
+              // Get map data
+              final data = doc.data();
+              // Fetch user data
+              final User? user = await UserApi.getUser(doc.id);
+              debugPrint('[Diagnostic] Chat doc.id: ${doc.id} -> User found in database: ${user != null}');
+              // Add chat to the list
+              if (user != null) {
+                chats.add(Chat.fromMap(data, doc: doc, receiver: user));
+              }
+            } catch (e) {
+              debugPrint('Error mapping chat doc ${doc.id}: $e');
+            }
+          }
+          return chats;
+        });
   }
 
   // Update Chat Node
@@ -137,14 +142,12 @@ abstract class ChatApi {
   }
 
   // Update the Chat Node
-  static Future<void> leaveChat(
-    String receiverId,
-  ) async {
+  static Future<void> leaveChat(String receiverId) async {
     try {
       final User currentUer = AuthController.instance.currentUser;
 
       await Future.wait([
-       UserApi.closeTypingOrRecordingStatus(),
+        UserApi.closeTypingOrRecordingStatus(),
         updateChatNode(
           userId1: receiverId,
           userId2: currentUer.userId,
@@ -183,10 +186,11 @@ abstract class ChatApi {
     required String userId1,
     required String userId2,
   }) async {
-    _firestore
-        .collection('Users/$userId1/Chats')
-        .doc(userId2)
-        .set({'msgType': 'text', 'lastMsg': null, 'sentAt': null});
+    _firestore.collection('Users/$userId1/Chats').doc(userId2).set({
+      'msgType': 'text',
+      'lastMsg': null,
+      'sentAt': null,
+    });
   }
 
   static Future<void> clearChat({
@@ -201,8 +205,9 @@ abstract class ChatApi {
       resetChat(userId1: currentUer.userId, userId2: receiverId);
 
       // Loop the message futures
-      final List<Future<void>> messageFutures =
-          messages.map((msg) => msg.docRef!.delete()).toList();
+      final List<Future<void>> messageFutures = messages
+          .map((msg) => msg.docRef!.delete())
+          .toList();
 
       if (messageFutures.isNotEmpty) {
         Future.wait(messageFutures);
@@ -254,7 +259,9 @@ abstract class ChatApi {
     try {
       final User currentUer = AuthController.instance.currentUser;
 
-      final reference = _firestore.collection('Users/${currentUer.userId}/Chats');
+      final reference = _firestore.collection(
+        'Users/${currentUer.userId}/Chats',
+      );
 
       // Delete messages
       final results = await reference.doc(userId).collection('Messages').get();

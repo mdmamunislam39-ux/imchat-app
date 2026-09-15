@@ -180,6 +180,29 @@ class NewsFeedPost {
   final String visibility; // 'public', 'friends', 'private'
   final bool isPinned;
   final bool isDeleted;
+  final bool isNotice;
+  final String? noticeTitle;
+  final int reportCount;
+  final int viewCount;
+  final double trendingScore;
+
+  /// Dynamic calculated trending score combining base score, likes, comments, shares, views and recency boost
+  double get calculatedTrendingScore {
+    double score = trendingScore;
+    score += (likeCount * 3.0);
+    score += (commentCount * 5.0);
+    score += (shareCount * 10.0);
+    score += (viewCount * 0.5);
+
+    // Recency boost: bonus points for newer posts (up to 72 hours)
+    final hoursAgo = DateTime.now().difference(createdAt).inHours;
+    if (hoursAgo < 24) {
+      score += (24 - hoursAgo) * 2.0;
+    } else if (hoursAgo < 72) {
+      score += (72 - hoursAgo) * 0.5;
+    }
+    return score;
+  }
 
   const NewsFeedPost({
     required this.id,
@@ -202,6 +225,11 @@ class NewsFeedPost {
     this.visibility = 'public',
     this.isPinned = false,
     this.isDeleted = false,
+    this.isNotice = false,
+    this.noticeTitle,
+    this.reportCount = 0,
+    this.viewCount = 0,
+    this.trendingScore = 0.0,
   });
 
   factory NewsFeedPost.fromFirestore(DocumentSnapshot doc) {
@@ -230,6 +258,11 @@ class NewsFeedPost {
       visibility: data['visibility'] ?? 'public',
       isPinned: data['isPinned'] ?? false,
       isDeleted: data['isDeleted'] ?? false,
+      isNotice: data['isNotice'] ?? false,
+      noticeTitle: data['noticeTitle'],
+      reportCount: data['reportCount'] ?? 0,
+      viewCount: data['viewCount'] ?? 0,
+      trendingScore: (data['trendingScore'] as num?)?.toDouble() ?? 0.0,
     );
   }
 
@@ -254,6 +287,11 @@ class NewsFeedPost {
       'visibility': visibility,
       'isPinned': isPinned,
       'isDeleted': isDeleted,
+      'isNotice': isNotice,
+      'noticeTitle': noticeTitle,
+      'reportCount': reportCount,
+      'viewCount': viewCount,
+      'trendingScore': trendingScore,
     };
   }
 
@@ -278,6 +316,11 @@ class NewsFeedPost {
     String? visibility,
     bool? isPinned,
     bool? isDeleted,
+    bool? isNotice,
+    String? noticeTitle,
+    int? reportCount,
+    int? viewCount,
+    double? trendingScore,
   }) {
     return NewsFeedPost(
       id: id ?? this.id,
@@ -300,6 +343,11 @@ class NewsFeedPost {
       visibility: visibility ?? this.visibility,
       isPinned: isPinned ?? this.isPinned,
       isDeleted: isDeleted ?? this.isDeleted,
+      isNotice: isNotice ?? this.isNotice,
+      noticeTitle: noticeTitle ?? this.noticeTitle,
+      reportCount: reportCount ?? this.reportCount,
+      viewCount: viewCount ?? this.viewCount,
+      trendingScore: trendingScore ?? this.trendingScore,
     );
   }
 

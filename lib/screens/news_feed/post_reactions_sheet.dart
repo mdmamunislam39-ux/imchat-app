@@ -74,15 +74,15 @@ class _PostReactionsSheetState extends State<PostReactionsSheet> {
   Color _getReactionBgColor(ReactionType type) {
     switch (type) {
       case ReactionType.like:
-        return Colors.blue;
+        return const Color(0xFF1877F2);
       case ReactionType.love:
-        return Colors.redAccent;
+        return const Color(0xFFE41E3F);
       case ReactionType.haha:
       case ReactionType.wow:
       case ReactionType.sad:
-        return Colors.amber;
+        return const Color(0xFFF7B125);
       case ReactionType.angry:
-        return Colors.deepOrange;
+        return const Color(0xFFE94B35);
     }
   }
 
@@ -312,54 +312,57 @@ class _PostReactionsSheetState extends State<PostReactionsSheet> {
                                 return const SizedBox.shrink();
                               }
 
-                              return ListTile(
-                                onTap: () => _navigateToProfile(userId, userName: userName, userPhoto: userPhoto),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                leading: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    CachedCircleAvatar(
-                                      imageUrl: userPhoto,
-                                      radius: 22,
-                                    ),
-                                    Positioned(
-                                      right: -2,
-                                      bottom: -2,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(2),
-                                        decoration: BoxDecoration(
-                                          color: _getReactionBgColor(type),
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: isDarkMode ? const Color(0xFF161622) : Colors.white,
-                                            width: 1.5,
+                              return Material(
+                                color: Colors.transparent,
+                                child: ListTile(
+                                  onTap: () => _navigateToProfile(userId, userName: userName, userPhoto: userPhoto),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                  leading: Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      CachedCircleAvatar(
+                                        imageUrl: userPhoto,
+                                        radius: 22,
+                                      ),
+                                      Positioned(
+                                        right: -2,
+                                        bottom: -2,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(2),
+                                          decoration: BoxDecoration(
+                                            color: _getReactionBgColor(type),
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: isDarkMode ? const Color(0xFF161622) : Colors.white,
+                                              width: 1.5,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            type.emoji,
+                                            style: const TextStyle(fontSize: 10),
                                           ),
                                         ),
-                                        child: Text(
-                                          type.emoji,
-                                          style: const TextStyle(fontSize: 10),
-                                        ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                                title: Text(
-                                  userName,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 15,
-                                    color: isDarkMode ? Colors.white : Colors.black87,
+                                    ],
                                   ),
+                                  title: Text(
+                                    userName,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 15,
+                                      color: isDarkMode ? Colors.white : Colors.black87,
+                                    ),
+                                  ),
+                                  subtitle: searchId.isNotEmpty
+                                      ? Text(
+                                          'ID: $searchId',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: isDarkMode ? Colors.white54 : Colors.grey[600],
+                                          ),
+                                        )
+                                      : null,
                                 ),
-                                subtitle: searchId.isNotEmpty
-                                    ? Text(
-                                        'ID: $searchId',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: isDarkMode ? Colors.white54 : Colors.grey[600],
-                                        ),
-                                      )
-                                    : null,
                               );
                             },
                           );

@@ -8,6 +8,7 @@ import 'package:chat_messenger/media/helpers/media_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/models/location.dart';
 import 'package:chat_messenger/screens/messages/controllers/message_controller.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/audio_rooms_v2_integration.dart';
 import 'package:get/get.dart';
 import 'widgets/attachment_button.dart';
 import 'widgets/preview_attachment.dart';
@@ -223,6 +224,45 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                             ),
                           ],
                         ),
+                        if (messageController.selectedGroup != null) ...[
+                          const SizedBox(height: 15),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              // <--- Group Audio Room --->
+                              AttachmentButton(
+                                icon: Icons.event_seat,
+                                title: 'AudioRoom',
+                                color: Colors.deepPurple,
+                                onPress: () {
+                                  Get.back();
+                                  AudioRoomsV2Integration.openGroupAudioRoom(
+                                    messageController.selectedGroup!,
+                                  );
+                                },
+                              ),
+                              // Invisible placeholders for 3-column alignment
+                              const Opacity(
+                                opacity: 0,
+                                child: IgnorePointer(
+                                  child: AttachmentButton(
+                                    icon: Icons.event_seat,
+                                    title: 'AudioRoom',
+                                  ),
+                                ),
+                              ),
+                              const Opacity(
+                                opacity: 0,
+                                child: IgnorePointer(
+                                  child: AttachmentButton(
+                                    icon: Icons.event_seat,
+                                    title: 'AudioRoom',
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                         const SizedBox(height: 20),
                       ],
                     ),

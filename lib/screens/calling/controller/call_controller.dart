@@ -15,6 +15,9 @@ import 'package:chat_messenger/models/call.dart';
 import 'package:chat_messenger/services/background_service.dart';
 import 'package:chat_messenger/services/agora_token_service.dart';
 import 'package:chat_messenger/services/agora_service.dart';
+import 'package:get_storage/get_storage.dart';
+import 'package:chat_messenger/main.dart';
+import 'package:chat_messenger/routes/app_routes.dart';
 
 class CallController extends GetxController {
   // Parameter
@@ -58,12 +61,21 @@ class CallController extends GetxController {
           .doc(call.callerId) // or use receiverId based on your logic
           .snapshots()
           .listen((snapshot) {
-        if (snapshot.exists) {
-          // Get the 'state' field from Firestore document
-          String state = snapshot.data()?['state'] ?? '';
-          if (state == 'decline' || state == 'missed' || state == 'ended') {
-            onEndCall();
-          }
+        if (!snapshot.exists) {
+          // Call document deleted or cancelled
+          onEndCall(endReason: seconds.value > 0 ? 'completed' : 'canceled');
+          return;
+        }
+        // Get the 'state' field from Firestore document
+        String state = snapshot.data()?['state'] ?? '';
+        if (state == 'decline') {
+          onEndCall(endReason: 'rejected');
+        } else if (state == 'missed') {
+          onEndCall(endReason: 'missed');
+        } else if (state == 'cancel') {
+          onEndCall(endReason: 'canceled');
+        } else if (state == 'ended') {
+          onEndCall(endReason: (seconds.value > 0 || remoteUid.value != null) ? 'completed' : 'ended');
         }
       });
     } catch (e) {
@@ -118,7 +130,9 @@ class CallController extends GetxController {
     }
     _timer = null;
     _stopRingtone();
-    callSubscription.cancel();
+    try {
+      callSubscription.cancel();
+    } catch (_) {}
     _cancelAutoEndCallTimer();
     // Stop background service
     try {
@@ -131,30 +145,38 @@ class CallController extends GetxController {
 
   Future<void> _initAgora() async {
     try {
-      // retrieve permissions
+      // retrieve permissions safely (check isGranted first so background doesn't fail)
       bool permissionsGranted = false;
-      if (call.isVideo) {
-        Map<Permission, PermissionStatus> statuses =
-            await [Permission.microphone, Permission.camera].request();
-        permissionsGranted = statuses[Permission.camera]!.isGranted &&
-            statuses[Permission.microphone]!.isGranted;
-      } else {
-        final status = await Permission.microphone.request();
-        permissionsGranted = status.isGranted;
+      bool micGranted = await Permission.microphone.isGranted;
+      bool camGranted = call.isVideo ? await Permission.camera.isGranted : true;
+
+      if (!micGranted || !camGranted) {
+        if (call.isVideo) {
+          Map<Permission, PermissionStatus> statuses =
+              await [Permission.microphone, Permission.camera].request();
+          micGranted = statuses[Permission.microphone]?.isGranted ?? false;
+          camGranted = statuses[Permission.camera]?.isGranted ?? false;
+        } else {
+          final status = await Permission.microphone.request();
+          micGranted = status.isGranted;
+        }
       }
+      permissionsGranted = micGranted && (call.isVideo ? camGranted : true);
 
       if (permissionsGranted) {
         // Permissions granted, proceed with video call
         // Play the ringtone sound ASAP.
         _playRingtone();
 
-        final agoraService = Get.isRegistered<AgoraService>()
-            ? Get.find<AgoraService>()
-            : Get.put(AgoraService());
+        final agoraService = AgoraService();
+        agoraService.setChannelMode(
+            call.isVideo ? AgoraChannelMode.videoCall : AgoraChannelMode.audioCall);
+        if (agoraService.isConnected || agoraService.isConnecting) {
+          try {
+            await agoraService.engine?.leaveChannel();
+          } catch (_) {}
+        }
         await agoraService.initialize();
-
-        // Force leave any existing channel (like Voice Room) to avoid ERR_ALREADY_IN_USE on the shared engine
-        await agoraService.leaveChannel();
 
         engine = agoraService.engine!;
 
@@ -197,14 +219,41 @@ class CallController extends GetxController {
               UserOfflineReasonType reason) {
             debugPrint("remote user $uid left channel");
             remoteUid.value = null;
-            seconds.value = 0;
             _timer?.cancel();
-            // Close the call page
-            Future(() => Get.back());
+            onEndCall(endReason: (seconds.value > 0) ? 'completed' : 'ended');
           },
-          onTokenPrivilegeWillExpire: (RtcConnection connection, String token) {
+          onTokenPrivilegeWillExpire: (RtcConnection connection, String token) async {
             debugPrint(
                 '[onTokenPrivilegeWillExpire] conn:${connection.toJson()}, token: $token');
+            try {
+              final renewed = await AgoraTokenService.instance.refreshToken(
+                channelName: call.callerId,
+                uid: 0,
+                currentToken: token,
+              );
+              if (renewed != null && renewed.token.isNotEmpty) {
+                await engine.renewToken(renewed.token);
+                debugPrint('[onTokenPrivilegeWillExpire] Call token renewed successfully');
+              }
+            } catch (e) {
+              debugPrint('[onTokenPrivilegeWillExpire] Failed to renew call token: $e');
+            }
+          },
+          onRequestToken: (RtcConnection connection) async {
+            debugPrint('[onRequestToken] Call token requested, renewing...');
+            try {
+              final renewed = await AgoraTokenService.instance.refreshToken(
+                channelName: call.callerId,
+                uid: 0,
+                currentToken: '',
+              );
+              if (renewed != null && renewed.token.isNotEmpty) {
+                await engine.renewToken(renewed.token);
+                debugPrint('[onRequestToken] Call token renewed successfully');
+              }
+            } catch (e) {
+              debugPrint('[onRequestToken] Failed to renew call token: $e');
+            }
           },
         );
 
@@ -225,13 +274,8 @@ class CallController extends GetxController {
             ),
           );
 
-          // Auto-fallback to audio if network becomes too weak
-          await engine.setLocalPublishFallbackOption(
-              StreamFallbackOptions.streamFallbackOptionAudioOnly);
-          await engine.setRemoteSubscribeFallbackOption(
-              StreamFallbackOptions.streamFallbackOptionAudioOnly);
-
           await engine.startPreview();
+
         } else {
           await engine.enableAudio();
         }
@@ -267,15 +311,19 @@ class CallController extends GetxController {
             message: 'Please allow camera and microphone permission');
 
         // End the call automatically if permissions are denied so the app doesn't hang
-        Future.delayed(const Duration(seconds: 2), () {
-          onEndCall();
+        Future.delayed(const Duration(seconds: 4), () {
+          if (!_isCallEnded && !isLocalUserJoined.value) {
+            onEndCall();
+          }
         });
       }
     } catch (e) {
       debugPrint('❌ [CallController] _initAgora failed: $e');
       AppStyle().failedSnackBar(message: 'Call initialization failed: $e');
-      Future.delayed(const Duration(seconds: 2), () {
-        onEndCall();
+      Future.delayed(const Duration(seconds: 3), () {
+        if (!_isCallEnded && !isLocalUserJoined.value) {
+          onEndCall();
+        }
       });
     }
   }
@@ -284,28 +332,30 @@ class CallController extends GetxController {
   void _startAutoEndCallTimer() {
     _autoEndCallTimer = Timer(const Duration(seconds: 45), () {
       if (remoteUid.value == null) {
-        FirebaseFirestore.instance
-            .collection('Calls')
-            .doc(call.callerId)
-            .update({
-          'callerId': call.callerId,
-          'callerName': call.callerName,
-          'callerPhotoUrl': call.callerPhotoUrl,
-          // Set receiver info
-          'receiverName': call.receiverName,
-          'receiverPhotoUrl': call.receiverPhotoUrl,
-          'receiverId': call.receiverId,
-          'state': 'missed'
-        });
-        onEndCall();
-        Future.delayed(Duration(seconds: 2), () {
+        try {
           FirebaseFirestore.instance
               .collection('Calls')
               .doc(call.callerId)
-              .delete();
+              .update({
+            'callerId': call.callerId,
+            'callerName': call.callerName,
+            'callerPhotoUrl': call.callerPhotoUrl,
+            // Set receiver info
+            'receiverName': call.receiverName,
+            'receiverPhotoUrl': call.receiverPhotoUrl,
+            'receiverId': call.receiverId,
+            'state': 'missed'
+          }).catchError((_) {});
+        } catch (_) {}
+        onEndCall(endReason: 'missed');
+        Future.delayed(const Duration(seconds: 3), () {
+          FirebaseFirestore.instance
+              .collection('Calls')
+              .doc(call.callerId)
+              .delete()
+              .catchError((_) {});
         });
-        debugPrint("User did not join within 30 seconds. Ending call.");
-        // Automatically end the call if no user joins
+        debugPrint("User did not join within 45 seconds. Ending call.");
       }
     });
   }
@@ -355,15 +405,89 @@ class CallController extends GetxController {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => seconds.value++);
   }
 
+  String _endReason = '';
+
+  void _closeCallScreen() {
+    final Map<String, dynamic> resultMap = {
+      'status': _endReason.isNotEmpty
+          ? _endReason
+          : (seconds.value > 0 || remoteUid.value != null
+              ? 'completed'
+              : (call.isCaller ? 'canceled' : 'rejected')),
+      'duration': seconds.value,
+      'isVideo': call.isVideo,
+      'remoteUid': remoteUid.value,
+    };
+
+    try {
+      final nav = navigatorKey.currentState ?? Get.key.currentState;
+      if (nav != null && nav.canPop()) {
+        nav.pop(resultMap);
+      } else {
+        Get.offAllNamed(AppRoutes.home);
+      }
+    } catch (e) {
+      debugPrint('Error closing call screen: $e');
+      try {
+        Get.offAllNamed(AppRoutes.home);
+      } catch (_) {}
+    }
+  }
+
   // End the call and pass the value
-  void onEndCall() {
-    if (_isCallEnded) return;
+  void onEndCall({String? endReason}) {
+    try {
+      GetStorage().remove('callIsActive');
+    } catch (e) {
+      debugPrint('Safe GetStorage ignored: $e');
+    }
+
+    if (endReason != null && endReason.isNotEmpty) {
+      _endReason = endReason;
+    } else if (_endReason.isEmpty) {
+      if (seconds.value > 0 || remoteUid.value != null) {
+        _endReason = 'completed';
+      } else if (call.isCaller) {
+        _endReason = 'canceled';
+      } else {
+        _endReason = 'rejected';
+      }
+    }
+
+    if (_isCallEnded) {
+      _closeCallScreen();
+      return;
+    }
     _isCallEnded = true;
 
-    // Close the call screen INSTANTLY for nanosecond response time
-    Get.back(result: remoteUid.value);
+    // 1. Send Firestore state update IMMEDIATELY in real-time
+    try {
+      final String finalState = (call.isCaller && remoteUid.value == null)
+          ? (_endReason == 'rejected'
+              ? 'decline'
+              : (_endReason == 'missed' ? 'missed' : 'cancel'))
+          : 'ended';
+      final docRef =
+          FirebaseFirestore.instance.collection('Calls').doc(call.callerId);
+      docRef.update({'state': finalState}).catchError((_) {});
 
-    // Run all heavy cleanup asynchronously in the background
+      // Safe delayed delete to ensure both devices receive the snapshot event
+      Future.delayed(const Duration(seconds: 3), () {
+        docRef.delete().catchError((_) {});
+      });
+    } catch (e) {
+      debugPrint('Error updating call state in Firestore: $e');
+    }
+
+    // 2. Stop timers & ringtone immediately
+    _stopRingtone();
+    _cancelAutoEndCallTimer();
+    _timer?.cancel();
+
+    // 3. Immediately close the call screen UI safely
+    _closeCallScreen();
+
+    // 4. Run heavy cleanup asynchronously in the background
     Future(() async {
       // Clear wake screen flags so the app doesn't stay over the lock screen
       const MethodChannel('com.imchatapp/app_visibility')
@@ -378,26 +502,16 @@ class CallController extends GetxController {
         await engine.leaveChannel().catchError((_) {});
         AgoraService().setupEventHandlers();
       } catch (e) {
-        debugPrint('Engine not initialized, skipping leaveChannel');
+        debugPrint('Engine leaveChannel error: $e');
       }
 
-      FlutterCallkitIncoming.endAllCalls();
+      FlutterCallkitIncoming.endAllCalls().catchError((_) {});
 
-      if (call.isCaller) {
-        String finalState = remoteUid.value == null ? 'missed' : 'ended';
-        final docRef =
-            FirebaseFirestore.instance.collection('Calls').doc(call.callerId);
-
-        docRef.update({'state': finalState}).catchError((_) {});
-
-        Future.delayed(const Duration(milliseconds: 500), () {
-          docRef.delete().catchError((_) {});
-        });
-      } else {
-        FirebaseFirestore.instance
-            .collection('Calls')
-            .doc(call.callerId)
-            .update({'state': 'ended'}).catchError((_) {});
+      // Stop background service
+      try {
+        BackgroundService().stopService();
+      } catch (e) {
+        debugPrint('Error stopping background service: $e');
       }
     });
   }

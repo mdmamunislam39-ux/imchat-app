@@ -33,12 +33,22 @@ abstract class NotificationHelper {
     // Handle notification type
     switch (type) {
       case 'call':
-        // Get call data
-        final Call call = Call.fromMap(data: jsonDecode(payload['call']));
+        try {
+          final dynamic rawCall = payload['call'];
+          final Map<String, dynamic> callMap = rawCall is Map
+              ? Map<String, dynamic>.from(rawCall)
+              : (rawCall is String ? jsonDecode(rawCall) : {});
+          final Call call = Call.fromMap(data: callMap);
 
-        // Go to incoming call page if not already there
-        if (Get.currentRoute != AppRoutes.incomingCall) {
-          Get.toNamed(AppRoutes.incomingCall, arguments: {'call': call});
+          // Go to incoming call page if not already on a call screen
+          if (Get.currentRoute != AppRoutes.incomingCall &&
+              Get.currentRoute != AppRoutes.voiceCall &&
+              Get.currentRoute != AppRoutes.videoCall &&
+              Get.currentRoute != AppRoutes.groupCall) {
+            Get.toNamed(AppRoutes.incomingCall, arguments: {'call': call});
+          }
+        } catch (e) {
+          debugPrint('Error parsing incoming call payload: $e');
         }
         break;
 

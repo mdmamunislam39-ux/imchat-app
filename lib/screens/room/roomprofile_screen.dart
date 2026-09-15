@@ -7,21 +7,31 @@ import 'package:chat_messenger/services/store_service.dart';
 import 'package:chat_messenger/api/contact_api.dart';
 import 'package:chat_messenger/services/family_service.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
+import 'package:chat_messenger/helpers/nameplate_helper.dart';
+import 'package:chat_messenger/widgets/relationship_badge_widget.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:get/get.dart';
 import 'gift_wall_page.dart';
 import 'badge_wall_page.dart';
+import 'package:chat_messenger/dialogs/badge_detail_dialog.dart';
 import 'decoration_wall_page.dart';
 import 'family_screen.dart';
 import 'supporters_page.dart';
+import 'intimacy_list_page.dart';
+import 'package:chat_messenger/api/message_api.dart';
+import 'package:chat_messenger/models/message.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:chat_messenger/models/news_feed_post.dart';
+import 'package:chat_messenger/components/rich_text_viewer.dart';
 import 'package:chat_messenger/screens/news_feed/post_media_viewer.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
+import 'package:chat_messenger/api/official_team_api.dart';
 
 import 'package:chat_messenger/tabs/profile/edit_profile_screen.dart';
 import 'package:chat_messenger/services/news_feed_service.dart';
@@ -68,10 +78,12 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
   String receivingLevelName = 'Beginner';
   String? currentFrameUrl;
   String? currentNameplateUrl;
+  List<String> currentNameplateUrls = [];
   String bio = '';
   String userType = 'regular';
   String? agencyName;
   String? _roomProfileBackgroundUrl;
+  String? _shortProfileThemeUrl;
   int currentDiamonds = 0;
   int beans = 0;
   int coins = 0;
@@ -86,6 +98,9 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
   List<Map<String, dynamic>> allSupporters = [];
   List<String> ownedBadges = [];
   List<Map<String, dynamic>> userRooms = [];
+  List<Map<String, dynamic>> relationshipsList = [];
+  bool isLoadingRelationships = false;
+  String _giftSortMode = 'price';
 
   List<Map<String, dynamic>> _archiveGiftDocs = [];
   List<Map<String, dynamic>> _activeGiftDocs = [];
@@ -94,8 +109,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
       _giftActiveSubscription;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _userRoomsSubscription;
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _familySubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+      _userRoomsSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+      _familySubscription;
   Map<String, dynamic>? _familyData;
   final Map<String, Map<String, dynamic>> _cachedUserProfiles = {};
 
@@ -110,10 +127,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     _homePageBgTimer?.cancel();
     _homePageBgTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (_viewedUser == null || !mounted) return;
-      final int bgCount = _viewedUser!.homePageBackgrounds.isNotEmpty 
-          ? _viewedUser!.homePageBackgrounds.length 
+      final int bgCount = _viewedUser!.homePageBackgrounds.isNotEmpty
+          ? _viewedUser!.homePageBackgrounds.length
           : (_viewedUser!.homePageBackground.isNotEmpty ? 1 : 0);
-      
+
       if (bgCount > 1 && _homePageBgPageController.hasClients) {
         int nextPage = _homePageBgPageController.page!.round() + 1;
         if (nextPage >= bgCount) {
@@ -158,11 +175,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       // Record visitor log if it's not the viewed user viewing their own profile
       if (currentUser.userId != u.userId) {
         // Atomic increment of visitorCount in the user doc
-        _firestore
-            .collection('Users')
-            .doc(u.userId)
-            .update({'visitorCount': FieldValue.increment(1)})
-            .catchError((_) {});
+        _firestore.collection('Users').doc(u.userId).update(
+            {'visitorCount': FieldValue.increment(1)}).catchError((_) {});
 
         _firestore
             .collection('Users')
@@ -202,19 +216,24 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       isFriend = await ContactApi.isContact(widget.userID);
 
       await _loadCustomizationDetails(u);
-      // Load gifts, store items, follow status, level images in parallel
-      await Future.wait([
-        _loadReceivedGifts(),
-        _loadStoreItems(),
-        _checkFollowStatus(currentUser.userId),
-        _loadLevelImages(),
-        _loadUserRooms(),
-      ]);
+      _loadGiftSortPreference();
+      _checkFollowStatus(currentUser.userId);
+      _loadLevelImages();
 
-      setState(() => isLoadingData = false);
+      if (mounted) {
+        setState(() => isLoadingData = false);
+      }
+
+      // Load heavy secondary data in background asynchronously
+      _loadReceivedGifts();
+      _loadStoreItems();
+      _loadUserRooms();
+      _loadRelationships();
     } catch (e) {
       debugPrint('❌ Error loading user data: $e');
-      setState(() => isLoadingData = false);
+      if (mounted) {
+        setState(() => isLoadingData = false);
+      }
     }
   }
 
@@ -239,8 +258,6 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       receivedGifts = [];
     }
   }
-
-
 
   void _subscribeToGiftUpdates() {
     _giftArchiveSubscription = _firestore
@@ -362,11 +379,12 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         // Auto-migrate this old family on the fly!
         FamilyService().migrateSingleFamily(u.familyId!);
       }
-      
+
       // Always subscribe to the current familyId so the UI can display real-time data
       if (_familySubscription == null) {
         _subscribeToFamilyDoc(u.familyId!);
-      } else if (_familyData != null && _familyData!['familyId'] != u.familyId) {
+      } else if (_familyData != null &&
+          _familyData!['familyId'] != u.familyId) {
         _familySubscription?.cancel();
         _subscribeToFamilyDoc(u.familyId!);
       }
@@ -381,6 +399,7 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         setState(() {
           ownedBadges = u.customization!.ownedBadges;
         });
+        _loadStoreItems();
       }
     }
 
@@ -405,26 +424,31 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     }
 
     // Load nameplate
-    if (u.customization?.selectedNameplateId != null) {
+    List<String> newNameplateUrls = [];
+    List<String> nameplateIds = [];
+    if (u.customization?.selectedNameplateIds.isNotEmpty == true) {
+      nameplateIds = u.customization!.selectedNameplateIds;
+    } else if (u.customization?.selectedNameplateId != null &&
+        u.customization!.selectedNameplateId!.isNotEmpty) {
+      nameplateIds = [u.customization!.selectedNameplateId!];
+    }
+
+    if (nameplateIds.isNotEmpty) {
       try {
-        final nameplateDetails = await _storeService
-            .getStoreItemDetails(u.customization!.selectedNameplateId!);
-        if (nameplateDetails != null) {
-          newNameplateUrl = nameplateDetails['fileUrl'] ??
-              nameplateDetails['thumbnailUrl'] ??
-              nameplateDetails['imageUrl'] ??
-              nameplateDetails['image'];
+        newNameplateUrls = await NameplateHelper.getNameplateUrls(nameplateIds);
+        if (newNameplateUrls.isNotEmpty) {
+          newNameplateUrl = newNameplateUrls.first;
         }
       } catch (e) {
-        debugPrint('❌ Error loading nameplate: $e');
+        debugPrint('❌ Error loading nameplates: $e');
       }
     }
 
     // Load room profile background
     if (u.customization?.selectedRoomProfileBackgroundId != null) {
       try {
-        final rpBgDetails = await _storeService
-            .getStoreItemDetails(u.customization!.selectedRoomProfileBackgroundId!);
+        final rpBgDetails = await _storeService.getStoreItemDetails(
+            u.customization!.selectedRoomProfileBackgroundId!);
         if (rpBgDetails != null) {
           newRpBgUrl = rpBgDetails['fileUrl'] ??
               rpBgDetails['thumbnailUrl'] ??
@@ -436,14 +460,36 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       }
     }
 
+    String? newShortProfileThemeUrl;
+    // Load short profile theme
+    if (u.customization?.selectedShortProfileThemeId != null) {
+      try {
+        final themeDetails = await _storeService
+            .getStoreItemDetails(u.customization!.selectedShortProfileThemeId!);
+        if (themeDetails != null) {
+          newShortProfileThemeUrl = themeDetails['fileUrl'] ??
+              themeDetails['thumbnailUrl'] ??
+              themeDetails['imageUrl'] ??
+              themeDetails['image'];
+        }
+      } catch (e) {
+        debugPrint('❌ Error loading short profile theme: $e');
+      }
+    }
+
     if (mounted) {
       setState(() {
         currentFrameUrl = newFrameUrl;
         currentNameplateUrl = newNameplateUrl;
+        currentNameplateUrls = newNameplateUrls;
         _roomProfileBackgroundUrl = newRpBgUrl;
+        _shortProfileThemeUrl = newShortProfileThemeUrl;
       });
 
-      if (_roomProfileBackgroundUrl != null && _roomProfileBackgroundUrl!.isNotEmpty && !_hasPlayedRoomProfileBackground && _bgAnimationTimer == null) {
+      if (_roomProfileBackgroundUrl != null &&
+          _roomProfileBackgroundUrl!.isNotEmpty &&
+          !_hasPlayedRoomProfileBackground &&
+          _bgAnimationTimer == null) {
         _bgAnimationTimer = Timer(const Duration(seconds: 4), () {
           if (mounted) {
             setState(() {
@@ -477,16 +523,21 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
 
   String _cleanGiftName(String name) {
     var cleaned = name.trim();
-    cleaned = cleaned.replaceAll(RegExp(r'\s+x\s*\d+$', caseSensitive: false), '');
-    cleaned = cleaned.replaceAll(RegExp(r'\s+\d+\s*x$', caseSensitive: false), '');
-    cleaned = cleaned.replaceAll(RegExp(r'\s*\(\s*x?\s*\d+\s*x?\s*\)$', caseSensitive: false), '');
-    cleaned = cleaned.replaceAll(RegExp(r'\s*\(\s*combo\s*\)$', caseSensitive: false), '');
+    cleaned =
+        cleaned.replaceAll(RegExp(r'\s+x\s*\d+$', caseSensitive: false), '');
+    cleaned =
+        cleaned.replaceAll(RegExp(r'\s+\d+\s*x$', caseSensitive: false), '');
+    cleaned = cleaned.replaceAll(
+        RegExp(r'\s*\(\s*x?\s*\d+\s*x?\s*\)$', caseSensitive: false), '');
+    cleaned = cleaned.replaceAll(
+        RegExp(r'\s*\(\s*combo\s*\)$', caseSensitive: false), '');
     return cleaned.trim();
   }
 
   String _getGiftGroupKey(Map<String, dynamic> data) {
     final rawName = _stringGiftValue(data, ['giftName', 'name']);
-    final cleanName = _cleanGiftName(rawName.isEmpty ? 'Gift' : rawName).toLowerCase();
+    final cleanName =
+        _cleanGiftName(rawName.isEmpty ? 'Gift' : rawName).toLowerCase();
     final rawImageUrl = _stringGiftValue(
       data,
       ['giftPngUrl', 'giftImageUrl', 'pngUrl', 'imageUrl'],
@@ -522,7 +573,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
 
     for (final data in allDocs) {
       final rawGiftName = _stringGiftValue(data, ['giftName', 'name']);
-      final cleanName = _cleanGiftName(rawGiftName.isEmpty ? 'Gift' : rawGiftName);
+      final cleanName =
+          _cleanGiftName(rawGiftName.isEmpty ? 'Gift' : rawGiftName);
       final giftImageUrl = _stringGiftValue(
         data,
         ['giftPngUrl', 'giftImageUrl', 'pngUrl', 'imageUrl'],
@@ -560,11 +612,35 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
 
     final updatedList = giftMap.values.toList();
     updatedList.sort((a, b) {
-      final aDate = a['lastTimestamp'] as DateTime;
-      final bDate = b['lastTimestamp'] as DateTime;
-      // First sort by total value (descending), then by most recent
-      int valueCompare = (b['totalValue'] as int).compareTo(a['totalValue'] as int);
-      if (valueCompare != 0) return valueCompare;
+      final aDate = a['lastTimestamp'] is DateTime
+          ? a['lastTimestamp'] as DateTime
+          : DateTime.now();
+      final bDate = b['lastTimestamp'] is DateTime
+          ? b['lastTimestamp'] as DateTime
+          : DateTime.now();
+
+      if (_giftSortMode == 'quantity') {
+        final countCompare =
+            (b['count'] as int? ?? 0).compareTo(a['count'] as int? ?? 0);
+        if (countCompare != 0) return countCompare;
+        final unitCompare =
+            (b['credits'] as int? ?? 0).compareTo(a['credits'] as int? ?? 0);
+        if (unitCompare != 0) return unitCompare;
+        final valueCompare = (b['totalValue'] as int? ?? 0)
+            .compareTo(a['totalValue'] as int? ?? 0);
+        if (valueCompare != 0) return valueCompare;
+      } else {
+        // 'price' mode: Sort by unit diamond price (credits) descending
+        final unitCompare =
+            (b['credits'] as int? ?? 0).compareTo(a['credits'] as int? ?? 0);
+        if (unitCompare != 0) return unitCompare;
+        final valueCompare = (b['totalValue'] as int? ?? 0)
+            .compareTo(a['totalValue'] as int? ?? 0);
+        if (valueCompare != 0) return valueCompare;
+        final countCompare =
+            (b['count'] as int? ?? 0).compareTo(a['count'] as int? ?? 0);
+        if (countCompare != 0) return countCompare;
+      }
       return bDate.compareTo(aDate);
     });
 
@@ -576,12 +652,15 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       if (senderId == null || senderId.isEmpty) continue;
 
       final senderName = data['senderName'] as String? ?? 'User';
-      
-      String photoUrl = data['senderPhotoUrl'] ?? data['senderAvatar'] ?? 'https://i.pravatar.cc/150?img=1';
+
+      String photoUrl = data['senderPhotoUrl'] ??
+          data['senderAvatar'] ??
+          'https://i.pravatar.cc/150?img=1';
       String searchId = '';
 
       if (_cachedUserProfiles.containsKey(senderId)) {
-        if (_cachedUserProfiles[senderId]!['photoUrl']?.toString().isNotEmpty == true) {
+        if (_cachedUserProfiles[senderId]!['photoUrl']?.toString().isNotEmpty ==
+            true) {
           photoUrl = _cachedUserProfiles[senderId]!['photoUrl'].toString();
         }
         searchId = _cachedUserProfiles[senderId]!['searchId']?.toString() ?? '';
@@ -590,7 +669,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       }
 
       final credits = _intGiftValue(data['credits'] ?? data['diamondAmount']);
-      final quantity = _intGiftValue(data['quantity'] ?? data['count'], fallback: 1);
+      final quantity =
+          _intGiftValue(data['quantity'] ?? data['count'], fallback: 1);
       final value = credits * quantity;
 
       if (!supporterMap.containsKey(senderId)) {
@@ -602,10 +682,13 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           'totalValue': 0,
         };
       }
-      supporterMap[senderId]!['totalValue'] = (supporterMap[senderId]!['totalValue'] as int) + value;
+      supporterMap[senderId]!['totalValue'] =
+          (supporterMap[senderId]!['totalValue'] as int) + value;
     }
 
-    final topSupporters = supporterMap.values.toList()..sort((a, b) => (b['totalValue'] as int).compareTo(a['totalValue'] as int));
+    final topSupporters = supporterMap.values.toList()
+      ..sort(
+          (a, b) => (b['totalValue'] as int).compareTo(a['totalValue'] as int));
 
     if (mounted) {
       setState(() {
@@ -633,7 +716,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         if (doc.exists) {
           _cachedUserProfiles[uid] = {
             'searchId': doc.data()?['searchId']?.toString() ?? '',
-            'photoUrl': doc.data()?['photoUrl'] ?? doc.data()?['imageUrl'] ?? doc.data()?['profileImageUrl'] ?? '',
+            'photoUrl': doc.data()?['photoUrl'] ??
+                doc.data()?['imageUrl'] ??
+                doc.data()?['profileImageUrl'] ??
+                '',
           };
           updated = true;
         } else {
@@ -673,6 +759,7 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     _userSubscription?.cancel();
     _userRoomsSubscription?.cancel();
     _familySubscription?.cancel();
+    _storeItemSubscription?.cancel();
     _bgAnimationTimer?.cancel();
     _homePageBgTimer?.cancel();
     _homePageBgPageController.dispose();
@@ -688,25 +775,30 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           .listen((snapshot) {
         if (mounted) {
           setState(() {
-            final allRooms = snapshot.docs.map((doc) => AudioRoomV2.fromFirestore(doc)).toList();
-            
+            final allRooms = snapshot.docs
+                .map((doc) => AudioRoomV2.fromFirestore(doc))
+                .toList();
+
             int getRoleScore(AudioRoomV2 room) {
               if (room.creatorId == widget.userID) return 0;
               if (room.settings.adminIds.contains(widget.userID)) return 1;
               return 2;
             }
-            
+
             // Sort rooms: Owner (0) -> Admin (1) -> Member (2)
             allRooms.sort((a, b) {
               return getRoleScore(a).compareTo(getRoleScore(b));
             });
 
-            userRooms = allRooms.map((r) => {
-              'imageUrl': r.imageUrl ?? r.creatorImageUrl,
-              'name': r.name,
-              'role': getRoleScore(r),
-              'participants': r.participants.map((p) => p.toJson()).toList(),
-            }).toList();
+            userRooms = allRooms
+                .map((r) => {
+                      'imageUrl': r.imageUrl ?? r.creatorImageUrl,
+                      'name': r.name,
+                      'role': getRoleScore(r),
+                      'participants':
+                          r.participants.map((p) => p.toJson()).toList(),
+                    })
+                .toList();
           });
         }
       });
@@ -774,17 +866,148 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           .where('userId', isEqualTo: widget.userID)
           .get();
 
-      if (snapshot.docs.isEmpty) {
-        if (mounted) {
-          setState(() {
-            badgeItems = [];
-            decorationItems = [];
-          });
-        } else {
-          badgeItems = [];
-          decorationItems = [];
+      // 1. Fetch user ownedBadges from user profile / customization
+      List<dynamic> userOwnedBadges = List<dynamic>.from(ownedBadges);
+      if (userOwnedBadges.isEmpty && _viewedUser?.customization?.ownedBadges != null) {
+        userOwnedBadges = List<dynamic>.from(_viewedUser!.customization!.ownedBadges);
+      }
+      try {
+        final userDoc =
+            await _firestore.collection('Users').doc(widget.userID).get();
+        if (userDoc.exists && userDoc.data() != null) {
+          final uData = userDoc.data()!;
+          final cust = uData['customization'] as Map<String, dynamic>?;
+          final List<dynamic> dbBadges = cust?['ownedBadges'] ?? [];
+          for (var b in dbBadges) {
+            if (b is String && b.isNotEmpty && !userOwnedBadges.contains(b)) {
+              userOwnedBadges.add(b);
+            }
+          }
         }
-        return;
+      } catch (e) {
+        debugPrint('Error fetching user ownedBadges: $e');
+      }
+
+      // 2. Load catalog badges from market_items and official_items
+      final List<Map<String, dynamic>> catalog = [];
+
+      try {
+        final marketSnap = await _firestore
+            .collection('market_items')
+            .where('type', isEqualTo: 'badge')
+            .get();
+
+        for (final doc in marketSnap.docs) {
+          final data = doc.data();
+          catalog.add({
+            'id': doc.id,
+            'storeItemId': doc.id,
+            'name': data['name'] ?? data['title'] ?? 'Badge',
+            'storeItemName': data['name'] ?? data['title'] ?? 'Badge',
+            'imageUrl': data['thumbnailUrl'] ??
+                data['fileUrl'] ??
+                data['imageUrl'] ??
+                data['image'],
+            'subCategory': data['badgeSubCategory'] ??
+                data['subCategory'] ??
+                data['category'] ??
+                '',
+            'description': data['description'] ??
+                'Become an official assistant to get this honor',
+            'tag': data['tag'] ?? data['badgeTag'] ?? '',
+            'createdAt': data['createdAt'],
+            'assignedAt': data['assignedAt'],
+            'order': data['order'] ?? data['sortOrder'] ?? data['index'] ?? data['priority'],
+            'sortOrder': data['sortOrder'] ?? data['order'],
+            'starRating': data['starRating'] ??
+                data['stars'] ??
+                data['rating'] ??
+                data['level'] ??
+                1,
+            'verifyLevel': data['verifyLevel'] ??
+                data['verificationLevel'] ??
+                data['officialLevel'] ??
+                0,
+          });
+        }
+      } catch (e) {
+        debugPrint('Error loading market badges in roomprofile: $e');
+      }
+
+      try {
+        final officialSnap = await _firestore
+            .collection('official_items')
+            .where('category', isEqualTo: 'badge')
+            .get();
+
+        for (final doc in officialSnap.docs) {
+          final data = doc.data();
+          if (!catalog.any(
+              (item) => item['id'] == doc.id || item['storeItemId'] == doc.id)) {
+            catalog.add({
+              'id': doc.id,
+              'storeItemId': doc.id,
+              'name': data['name'] ?? data['title'] ?? 'Badge',
+              'storeItemName': data['name'] ?? data['title'] ?? 'Badge',
+              'imageUrl': data['thumbnailUrl'] ??
+                  data['fileUrl'] ??
+                  data['imageUrl'] ??
+                  data['image'],
+              'subCategory': data['badgeSubCategory'] ??
+                  data['subCategory'] ??
+                  '',
+              'description': data['description'] ??
+                  'Become an official assistant to get this honor',
+              'tag': data['tag'] ?? data['badgeTag'] ?? '',
+              'createdAt': data['createdAt'],
+              'assignedAt': data['assignedAt'],
+              'order': data['order'] ?? data['sortOrder'] ?? data['index'] ?? data['priority'],
+              'sortOrder': data['sortOrder'] ?? data['order'],
+              'starRating': data['starRating'] ??
+                  data['stars'] ??
+                  data['rating'] ??
+                  data['level'] ??
+                  1,
+              'verifyLevel': data['verifyLevel'] ??
+                  data['verificationLevel'] ??
+                  data['officialLevel'] ??
+                  0,
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('Error loading official badges in roomprofile: $e');
+      }
+
+      // Catalog admin ordering index map
+      catalog.sort((a, b) {
+        final orderA = a['order'] ?? a['sortOrder'] ?? a['index'] ?? a['priority'];
+        final orderB = b['order'] ?? b['sortOrder'] ?? b['index'] ?? b['priority'];
+        if (orderA is num && orderB is num && orderA != orderB) {
+          return orderA.compareTo(orderB);
+        }
+        final aDate = a['createdAt'] as Timestamp?;
+        final bDate = b['createdAt'] as Timestamp?;
+        if (aDate != null && bDate != null && aDate != bDate) {
+          return bDate.compareTo(aDate);
+        }
+        final starA = a['starRating'] as int? ?? 1;
+        final starB = b['starRating'] as int? ?? 1;
+        if (starB != starA) return starB.compareTo(starA);
+        return (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString());
+      });
+
+      final Map<String, int> catalogAdminIndexMap = {};
+      for (int i = 0; i < catalog.length; i++) {
+        catalog[i]['adminCatalogIndex'] = i;
+        final id = catalog[i]['id']?.toString() ?? '';
+        final storeItemId = catalog[i]['storeItemId']?.toString() ?? '';
+        final name = (catalog[i]['name'] ?? '').toString().toLowerCase().trim();
+        final img = (catalog[i]['imageUrl'] ?? '').toString().trim();
+        if (id.isNotEmpty) catalogAdminIndexMap[id] = i;
+        if (storeItemId.isNotEmpty) catalogAdminIndexMap[storeItemId] = i;
+        if (name.isNotEmpty) catalogAdminIndexMap[name] = i;
+        if (img.isNotEmpty) catalogAdminIndexMap[img] = i;
       }
 
       final List<Map<String, dynamic>> allBadges = [];
@@ -795,24 +1018,92 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         'entryEffect',
         'backgroundTheme',
         'profileSkin',
-        'roomTheme',
         'nameplate',
+        'svipTag',
+        'roomTheme',
         'micRefill',
         'roomProfileBackground',
+        'shortProfileTheme',
+        'roomEntry',
       ];
+
+      // Add badges from user customization.ownedBadges
+      for (var badgeUrl in userOwnedBadges) {
+        if (badgeUrl is String && badgeUrl.isNotEmpty) {
+          allBadges.add({
+            'id': badgeUrl,
+            'storeItemId': badgeUrl,
+            'storeItemName': 'VIP / Member Badge',
+            'itemType': 'badge',
+            'imageUrl': badgeUrl,
+            'fileUrl': badgeUrl,
+            'thumbnailUrl': badgeUrl,
+            'badgeUrl': badgeUrl,
+            'description': 'Exclusive member badge representing user status.',
+            'subCategory': 'VIP',
+            'starRating': 1,
+            'verifyLevel': 1,
+            'assignedAt': Timestamp.now(),
+          });
+        }
+      }
+
+      String extractMediaUrl(Map<String, dynamic> data) {
+        for (final key in [
+          'imageUrl',
+          'thumbnailUrl',
+          'fileUrl',
+          'badgeUrl',
+          'badgeMediaUrl',
+          'iconUrl',
+          'pngUrl',
+          'image',
+          'url',
+          'mediaUrl',
+          'assetUrl',
+          'badge',
+          'photoUrl',
+        ]) {
+          final val = data[key];
+          if (val != null && val.toString().trim().isNotEmpty) {
+            return val.toString().trim();
+          }
+        }
+        return '';
+      }
 
       for (final doc in snapshot.docs) {
         final data = doc.data();
         if (data['isActive'] != true) continue;
-        
+
         final itemType = data['itemType'] as String? ?? '';
+        final mediaUrl = extractMediaUrl(data);
         final entry = {
           'id': doc.id,
           'storeItemId': data['storeItemId'] ?? '',
-          'storeItemName': data['storeItemName'] ?? 'Item',
+          'storeItemName': data['storeItemName'] ?? data['name'] ?? 'Item',
           'itemType': itemType,
           'expiresAt': data['expiresAt'],
           'assignedAt': data['assignedAt'],
+          'createdAt': data['createdAt'],
+          'imageUrl': mediaUrl,
+          'fileUrl': data['fileUrl'] ?? mediaUrl,
+          'thumbnailUrl': data['thumbnailUrl'] ?? mediaUrl,
+          'description': data['description'] ?? 'Exclusive item.',
+          'subCategory': data['badgeSubCategory'] ??
+              data['subCategory'] ??
+              data['category'] ??
+              '',
+          'starRating': data['starRating'] ??
+              data['stars'] ??
+              data['rating'] ??
+              data['level'] ??
+              1,
+          'verifyLevel': data['verifyLevel'] ??
+              data['verificationLevel'] ??
+              data['officialLevel'] ??
+              0,
+          'order': data['order'] ?? data['sortOrder'] ?? data['index'] ?? data['priority'],
         };
 
         if (itemType == 'badge') {
@@ -828,17 +1119,61 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       // Load details for all items in parallel
       final allItemsToLoad = [...dedupBadges, ...dedupDecorations];
       final detailFutures = allItemsToLoad.map((item) async {
-        final storeItemId = item['storeItemId'] as String;
+        final storeItemId = (item['storeItemId'] ?? '').toString();
         if (storeItemId.isNotEmpty) {
           try {
-            final details = await _storeService.getStoreItemDetails(storeItemId);
+            var details = await _storeService.getStoreItemDetails(storeItemId);
+            if (details == null) {
+              try {
+                final offDoc = await _firestore
+                    .collection('official_items')
+                    .doc(storeItemId)
+                    .get();
+                if (offDoc.exists && offDoc.data() != null) {
+                  details = offDoc.data();
+                }
+              } catch (_) {}
+            }
             if (details != null) {
-              item['imageUrl'] = details['thumbnailUrl'] ??
-                  details['fileUrl'] ??
-                  details['imageUrl'] ??
-                  details['image'];
-              item['description'] = details['description'] ?? 
-                  (item['itemType'] == 'badge' ? 'A prestigious badge representing user achievements.' : '');
+              final newImg = extractMediaUrl(details);
+              if (newImg.isNotEmpty) {
+                item['imageUrl'] = newImg;
+              }
+              if (details['name'] != null && details['name'].toString().isNotEmpty) {
+                item['storeItemName'] = details['name'];
+              }
+              if (details['description'] != null &&
+                  details['description'].toString().isNotEmpty) {
+                item['description'] = details['description'];
+              }
+              if (details['badgeSubCategory'] != null ||
+                  details['subCategory'] != null ||
+                  details['category'] != null) {
+                item['subCategory'] = details['badgeSubCategory'] ??
+                    details['subCategory'] ??
+                    details['category'];
+              }
+              if (details['starRating'] != null ||
+                  details['stars'] != null ||
+                  details['level'] != null) {
+                item['starRating'] = details['starRating'] ??
+                    details['stars'] ??
+                    details['level'];
+              }
+              final detailVerify = details['verifyLevel'] ??
+                  details['verificationLevel'] ??
+                  details['officialLevel'];
+              if (detailVerify != null) {
+                item['verifyLevel'] = detailVerify;
+              }
+              if (details['order'] != null || details['sortOrder'] != null || details['index'] != null) {
+                item['order'] = details['order'] ?? details['sortOrder'] ?? details['index'];
+              }
+              if (details['createdAt'] != null && item['createdAt'] == null) {
+                item['createdAt'] = details['createdAt'];
+              }
+            } else if (storeItemId.startsWith('http')) {
+              item['imageUrl'] = storeItemId;
             }
           } catch (_) {}
         }
@@ -846,8 +1181,371 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
 
       await Future.wait(detailFutures);
 
-      badgeItems = dedupBadges;
-      decorationItems = dedupDecorations;
+      // Dedicated VIP/SVIP badge image resolution fallback
+      for (final item in dedupBadges) {
+        final currImg = (item['imageUrl'] ?? '').toString().trim();
+        if (currImg.isEmpty) {
+          final sName = (item['storeItemName'] ?? item['name'] ?? '').toString().toLowerCase();
+          final sId = (item['storeItemId'] ?? item['id'] ?? '').toString().toLowerCase();
+          if (sName.contains('vip') || sId.contains('vip')) {
+            final isSvip = sName.contains('svip') || sId.contains('svip');
+            final m = RegExp(r'(\d+)').firstMatch(sName.isNotEmpty ? sName : sId);
+            final lvlNum = m != null ? m.group(1)! : '1';
+            final col = isSvip ? 'svip_levels' : 'vip_levels';
+            final candidateDocIds = isSvip
+                ? ['svip$lvlNum', 'level_$lvlNum', 'svip_$lvlNum', lvlNum]
+                : ['vip$lvlNum', 'level_$lvlNum', 'vip_$lvlNum', lvlNum];
+            for (final dId in candidateDocIds) {
+              try {
+                final cfgDoc = await _firestore
+                    .collection('config')
+                    .doc(col)
+                    .collection('levels')
+                    .doc(dId)
+                    .get();
+                if (cfgDoc.exists && cfgDoc.data() != null) {
+                  final resolved = extractMediaUrl(cfgDoc.data()!);
+                  if (resolved.isNotEmpty) {
+                    item['imageUrl'] = resolved;
+                    break;
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+        }
+      }
+
+      int getBadgeTier(Map<String, dynamic> item) {
+        final name = (item['name'] ?? item['storeItemName'] ?? item['title'] ?? '')
+            .toString()
+            .toLowerCase();
+        final cat = (item['subCategory'] ?? item['category'] ?? item['badgeSubCategory'] ?? '')
+            .toString()
+            .toLowerCase();
+        final id = (item['storeItemId'] ?? item['id'] ?? '').toString().toLowerCase();
+        final tag = (item['tag'] ?? item['badgeTag'] ?? '').toString().toLowerCase();
+
+        final bool isOfficialOrVerif = (cat == 'verification' && !cat.contains('svip') && !cat.contains('vip')) ||
+            cat.contains('official') ||
+            name.contains('official') ||
+            name.contains('verif') ||
+            name.contains('assistant') ||
+            name.contains('admin') ||
+            name.contains('moderator') ||
+            name.contains('staff') ||
+            name.contains('ভেরিফাই') ||
+            name.contains('অফিসিয়াল') ||
+            id.contains('official') ||
+            id.contains('verif') ||
+            tag.contains('official') ||
+            tag.contains('verif');
+
+        final bool isVip = name.contains('svip') ||
+            name.contains('vip') ||
+            name.contains('premium') ||
+            name.contains('member') ||
+            name.contains('এসভিআইপি') ||
+            name.contains('ভিআইপি') ||
+            cat.contains('svip') ||
+            cat.contains('vip') ||
+            cat.contains('premium') ||
+            cat.contains('member') ||
+            id.contains('svip') ||
+            id.contains('vip') ||
+            tag.contains('vip') ||
+            tag.contains('svip');
+
+        if (isOfficialOrVerif && !isVip) return 3; // Official & Verification
+        if (isVip) return 2;                      // VIP & SVIP
+        if (isOfficialOrVerif) return 3;
+        return 1;                                 // Other / Non-verify
+      }
+
+      int getBadgeVerifyLevel(Map<String, dynamic> item) {
+        int explicitLevel = 0;
+
+        for (final key in [
+          'verifyLevel',
+          'verificationLevel',
+          'officialLevel',
+          'badgeLevel',
+          'levelNum',
+          'level',
+        ]) {
+          final val = item[key];
+          if (val is num && val > explicitLevel) {
+            explicitLevel = val.toInt();
+          } else if (val is String && val.isNotEmpty) {
+            final parsed = int.tryParse(val);
+            if (parsed != null && parsed > explicitLevel) {
+              explicitLevel = parsed;
+            } else {
+              final match = RegExp(r'(\d+)').firstMatch(val);
+              if (match != null) {
+                final numVal = int.tryParse(match.group(1)!);
+                if (numVal != null && numVal > explicitLevel) explicitLevel = numVal;
+              }
+            }
+          }
+        }
+
+        if (explicitLevel > 0) {
+          return explicitLevel;
+        }
+
+        final name =
+            (item['name'] ?? item['storeItemName'] ?? item['title'] ?? '').toString();
+        final match = RegExp(r'(?:level|lvl|official|verif|v|svip|vip)\s*(\d+)',
+                caseSensitive: false)
+            .firstMatch(name);
+        if (match != null) {
+          final val = int.tryParse(match.group(1)!);
+          if (val != null && val > explicitLevel) explicitLevel = val;
+        }
+
+        if (explicitLevel > 0) {
+          return explicitLevel;
+        }
+
+        final int tier = getBadgeTier(item);
+        if (tier == 3) {
+          return 2; // Official / Verification badges default to level 2
+        } else if (tier == 2) {
+          return 1; // VIP / SVIP badges default to level 1
+        }
+
+        return 0; // Non-verified badges have level 0
+      }
+
+      int getBadgeStar(dynamic rating, Map<String, dynamic> item) {
+        int maxStars = 1;
+        if (rating is num && rating > maxStars) {
+          maxStars = rating.toInt();
+        } else if (rating is String && rating.isNotEmpty) {
+          final p = int.tryParse(rating);
+          if (p != null && p > maxStars) {
+            maxStars = p;
+          } else {
+            final m = RegExp(r'(\d+)').firstMatch(rating);
+            if (m != null) {
+              final numVal = int.tryParse(m.group(1)!);
+              if (numVal != null && numVal > maxStars) maxStars = numVal;
+            }
+          }
+        }
+
+        for (final key in [
+          'starRating',
+          'stars',
+          'star',
+          'rating',
+          'tier'
+        ]) {
+          final val = item[key];
+          if (val is num && val > maxStars) {
+            maxStars = val.toInt();
+          } else if (val is String && val.isNotEmpty) {
+            final parsed = int.tryParse(val);
+            if (parsed != null && parsed > maxStars) {
+              maxStars = parsed;
+            } else {
+              final match = RegExp(r'(\d+)').firstMatch(val);
+              if (match != null) {
+                final numVal = int.tryParse(match.group(1)!);
+                if (numVal != null && numVal > maxStars) maxStars = numVal;
+              }
+            }
+          }
+        }
+
+        final name = (item['storeItemName'] ?? item['name'] ?? '').toString();
+        final starMatch =
+            RegExp(r'(\d+)\s*(?:star|stars|★)', caseSensitive: false).firstMatch(name);
+        if (starMatch != null) {
+          final val = int.tryParse(starMatch.group(1)!);
+          if (val != null && val > maxStars) maxStars = val;
+        }
+
+        final upper = name.toUpperCase();
+        if (upper.contains(' IV') || upper.endsWith('IV')) {
+          if (4 > maxStars) maxStars = 4;
+        } else if (upper.contains(' III') || upper.endsWith('III')) {
+          if (3 > maxStars) maxStars = 3;
+        } else if (upper.contains(' II') || upper.endsWith('II')) {
+          if (2 > maxStars) maxStars = 2;
+        } else if (upper.contains(' V') || upper.endsWith('V')) {
+          if (5 > maxStars) maxStars = 5;
+        }
+
+        return maxStars;
+      }
+
+      int getAdminIndex(Map<String, dynamic> b) {
+        if (catalogAdminIndexMap.isEmpty) return -1;
+        final storeItemId = (b['storeItemId'] ?? '').toString();
+        if (storeItemId.isNotEmpty && catalogAdminIndexMap.containsKey(storeItemId)) {
+          return catalogAdminIndexMap[storeItemId]!;
+        }
+        final id = (b['id'] ?? '').toString();
+        if (id.isNotEmpty && catalogAdminIndexMap.containsKey(id)) {
+          return catalogAdminIndexMap[id]!;
+        }
+        final img = (b['imageUrl'] ?? '').toString().trim();
+        if (img.isNotEmpty && catalogAdminIndexMap.containsKey(img)) {
+          return catalogAdminIndexMap[img]!;
+        }
+        final name = (b['name'] ?? b['storeItemName'] ?? '').toString().toLowerCase().trim();
+        if (name.isNotEmpty && catalogAdminIndexMap.containsKey(name)) {
+          return catalogAdminIndexMap[name]!;
+        }
+        return -1;
+      }
+
+      // Combine all catalog badges with user owned badges
+      final Map<String, Map<String, dynamic>> combinedBadgesMap = {};
+
+      for (final catBadge in catalog) {
+        final key = catBadge['storeItemId'] ?? catBadge['id'];
+        combinedBadgesMap[key] = {
+          ...catBadge,
+          'isUnlocked': false,
+        };
+      }
+
+      for (final owned in dedupBadges) {
+        final key = owned['storeItemId'] ?? owned['id'];
+        String? matchKey;
+        if (combinedBadgesMap.containsKey(key)) {
+          matchKey = key;
+        } else {
+          for (final entry in combinedBadgesMap.entries) {
+            final catImg = (entry.value['imageUrl'] ?? '').toString().trim();
+            final ownedImg = (owned['imageUrl'] ?? '').toString().trim();
+            if (catImg.isNotEmpty && ownedImg.isNotEmpty && catImg == ownedImg) {
+              matchKey = entry.key;
+              break;
+            }
+            final catName = (entry.value['name'] ?? entry.value['storeItemName'] ?? '').toString().toLowerCase().trim();
+            final ownedName = (owned['storeItemName'] ?? owned['name'] ?? '').toString().toLowerCase().trim();
+            if (catName.isNotEmpty && ownedName.isNotEmpty && catName == ownedName) {
+              matchKey = entry.key;
+              break;
+            }
+          }
+        }
+
+        if (matchKey != null) {
+          final target = combinedBadgesMap[matchKey]!;
+          target['isUnlocked'] = true;
+          target['expiresAt'] = owned['expiresAt'];
+          target['assignedAt'] = owned['assignedAt'];
+          if (owned['createdAt'] != null) target['createdAt'] = owned['createdAt'];
+          if (owned['order'] != null) target['order'] = owned['order'];
+          if (owned['starRating'] != null) target['starRating'] = getBadgeStar(owned['starRating'], owned);
+          if (owned['verifyLevel'] != null) target['verifyLevel'] = owned['verifyLevel'];
+          if (owned['description'] != null && owned['description'].toString().isNotEmpty) {
+            target['description'] = owned['description'];
+          }
+          if (owned['subCategory'] != null && owned['subCategory'].toString().isNotEmpty) {
+            target['subCategory'] = owned['subCategory'];
+          }
+          final ownedImg = (owned['imageUrl'] ?? '').toString().trim();
+          if (ownedImg.isNotEmpty) {
+            target['imageUrl'] = ownedImg;
+          }
+        } else {
+          combinedBadgesMap[key] = {
+            'id': key,
+            'storeItemId': key,
+            'name': owned['storeItemName'] ?? owned['name'] ?? 'Badge',
+            'storeItemName': owned['storeItemName'] ?? owned['name'] ?? 'Badge',
+            'imageUrl': owned['imageUrl'],
+            'subCategory': owned['subCategory'] ?? '',
+            'description': owned['description'] ?? 'Exclusive badge',
+            'isUnlocked': true,
+            'expiresAt': owned['expiresAt'],
+            'assignedAt': owned['assignedAt'],
+            'createdAt': owned['createdAt'],
+            'order': owned['order'],
+            'starRating': getBadgeStar(owned['starRating'], owned),
+            'verifyLevel': owned['verifyLevel'] ?? getBadgeVerifyLevel(owned),
+          };
+        }
+      }
+
+      final allDisplayBadges = combinedBadgesMap.values
+          .where((b) => b['isUnlocked'] == true)
+          .toList();
+      allDisplayBadges.sort((a, b) {
+        // 1. Unlocked badges before locked badges
+        final bool unlockedA = a['isUnlocked'] == true;
+        final bool unlockedB = b['isUnlocked'] == true;
+        if (unlockedA != unlockedB) {
+          return unlockedA ? -1 : 1;
+        }
+
+        // 2. Primary: Verify Level ("স্টার এর চেয়ে ভেরিফাই লেবেল এর প্রাধান্য বেশি")
+        final int vLevelA = getBadgeVerifyLevel(a);
+        final int vLevelB = getBadgeVerifyLevel(b);
+        if (vLevelA != vLevelB) {
+          return vLevelB.compareTo(vLevelA);
+        }
+
+        // 3. Secondary: Star Level ("তার পরে স্টার, যত স্টার কমবে তত নিচে যাবে")
+        final int ratingA = getBadgeStar(a['starRating'], a);
+        final int ratingB = getBadgeStar(b['starRating'], b);
+        if (ratingB != ratingA) {
+          return ratingB.compareTo(ratingA);
+        }
+
+        // 4. Tier tie-breaker (Official > VIP > Non-verified)
+        final int tierA = getBadgeTier(a);
+        final int tierB = getBadgeTier(b);
+        if (tierA != tierB) {
+          return tierB.compareTo(tierA);
+        }
+
+        // 5. Explicit admin order / sortOrder / index (lowest number on top)
+        final orderA = a['order'] ?? a['sortOrder'] ?? a['index'] ?? a['priority'];
+        final orderB = b['order'] ?? b['sortOrder'] ?? b['index'] ?? b['priority'];
+        if (orderA is num && orderB is num && orderA != orderB) {
+          return orderA.compareTo(orderB);
+        }
+        if (orderA is num && orderB == null) return -1;
+        if (orderA == null && orderB is num) return 1;
+
+        // 6. Admin Panel catalog order
+        final int idxA = getAdminIndex(a);
+        final int idxB = getAdminIndex(b);
+        if (idxA != -1 && idxB != -1 && idxA != idxB) {
+          return idxA.compareTo(idxB);
+        }
+        if (idxA != -1 && idxB == -1) return -1;
+        if (idxA == -1 && idxB != -1) return 1;
+
+        // 7. Timestamp (newer on top)
+        final dateA = a['assignedAt'] ?? a['createdAt'];
+        final dateB = b['assignedAt'] ?? b['createdAt'];
+        if (dateA is Timestamp && dateB is Timestamp && dateA != dateB) {
+          return dateB.compareTo(dateA);
+        }
+
+        // 8. Alphabetical fallback
+        final String nameA = (a['storeItemName'] ?? a['name'] ?? '').toString();
+        final String nameB = (b['storeItemName'] ?? b['name'] ?? '').toString();
+        return nameA.compareTo(nameB);
+      });
+
+      if (mounted) {
+        setState(() {
+          badgeItems = allDisplayBadges;
+          decorationItems = dedupDecorations;
+        });
+      } else {
+        badgeItems = allDisplayBadges;
+        decorationItems = dedupDecorations;
+      }
     } catch (e) {
       debugPrint('❌ Error loading store items: $e');
       badgeItems = [];
@@ -855,26 +1553,33 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     }
   }
 
-  List<Map<String, dynamic>> _deduplicateItems(List<Map<String, dynamic>> items) {
+  List<Map<String, dynamic>> _deduplicateItems(
+      List<Map<String, dynamic>> items) {
     final Map<String, Map<String, dynamic>> dedup = {};
     for (var item in items) {
-      final sId = item['storeItemId'] as String?;
-      if (sId != null && sId.isNotEmpty) {
-        if (!dedup.containsKey(sId)) {
-          dedup[sId] = item;
+      final sId = (item['storeItemId'] ?? '').toString().trim();
+      final img = (item['imageUrl'] ?? item['fileUrl'] ?? item['thumbnailUrl'] ?? '')
+          .toString()
+          .trim();
+      final id = (item['id'] ?? '').toString().trim();
+      // Use imageUrl as primary key if distinct, otherwise storeItemId
+      final key = img.isNotEmpty ? img : (sId.isNotEmpty && sId != 'badge' ? sId : id);
+      if (key.isNotEmpty) {
+        if (!dedup.containsKey(key)) {
+          dedup[key] = item;
         } else {
           final currentExp = item['expiresAt'] as Timestamp?;
-          final existingExp = dedup[sId]!['expiresAt'] as Timestamp?;
+          final existingExp = dedup[key]!['expiresAt'] as Timestamp?;
           if (currentExp == null && existingExp != null) {
-            dedup[sId] = item;
+            dedup[key] = item;
           } else if (currentExp != null && existingExp != null) {
             if (currentExp.toDate().isAfter(existingExp.toDate())) {
-              dedup[sId] = item;
+              dedup[key] = item;
             }
           }
         }
       } else {
-        dedup[item['id'] ?? DateTime.now().microsecondsSinceEpoch.toString()] = item;
+        dedup[DateTime.now().microsecondsSinceEpoch.toString()] = item;
       }
     }
     final now = DateTime.now();
@@ -917,6 +1622,19 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
             otherUserRef.set({'followers': FieldValue.increment(1)},
                 SetOptions(merge: true)),
           ]);
+          // Send follow notification & sound feedback
+          try {
+            OfficialTeamApi.sendFollowNotification(
+              receiverId: _viewedUser!.userId,
+              senderName: currentUser.fullname.isNotEmpty
+                  ? currentUser.fullname
+                  : 'User',
+            );
+            final player = AudioPlayer();
+            await player.play(AssetSource('sounds/sent_msg.mp3'));
+          } catch (soundErr) {
+            debugPrint('Follow sound error: $soundErr');
+          }
         }
         if (mounted) {
           setState(() {
@@ -955,12 +1673,27 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     }
   }
 
-  void _navigateToGiftWall() {
-    Get.to(() => GiftWallPage(
+  Future<void> _loadGiftSortPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedMode = prefs.getString('gift_sort_mode');
+      if (savedMode != null && savedMode.isNotEmpty) {
+        _giftSortMode = savedMode;
+      }
+      _rebuildGiftHistory();
+    } catch (e) {
+      debugPrint('❌ Error loading gift sort pref: $e');
+    }
+  }
+
+  Future<void> _navigateToGiftWall() async {
+    await Get.to(() => GiftWallPage(
           userId: widget.userID,
           userName: widget.userName,
+          userImage: widget.userImage,
           gifts: receivedGifts,
         ));
+    await _loadGiftSortPreference();
   }
 
   String _formatDate(DateTime? date) {
@@ -1003,7 +1736,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
             children: [
               const CircularProgressIndicator(),
               const SizedBox(height: 16),
-              Text('Loading profile...', style: TextStyle(color: Colors.grey.shade600)),
+              Text('Loading profile...',
+                  style: TextStyle(color: Colors.grey.shade600)),
             ],
           ),
         ),
@@ -1017,42 +1751,44 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         Scaffold(
           backgroundColor: Colors.white,
           body: DefaultTabController(
-        length: 2,
-        child: NestedScrollView(
-          headerSliverBuilder: (context, innerBoxIsScrolled) {
-            return [
-              _buildSliverAppBar(),
-              SliverToBoxAdapter(
-                child: _buildWhiteCardHeader(),
-              ),
-              SliverPersistentHeader(
-                pinned: true,
-                delegate: _SliverAppBarDelegate(
-                  TabBar(
-                    labelColor: Colors.black,
-                    unselectedLabelColor: Colors.grey,
-                    indicatorColor: Colors.tealAccent,
-                    indicatorSize: TabBarIndicatorSize.label,
-                    tabs: const [
-                      Tab(text: "Profile"),
-                      Tab(text: "Moment"),
-                    ],
+            length: 2,
+            child: NestedScrollView(
+              headerSliverBuilder: (context, innerBoxIsScrolled) {
+                return [
+                  _buildSliverAppBar(),
+                  SliverToBoxAdapter(
+                    child: _buildWhiteCardHeader(),
                   ),
-                ),
+                  SliverPersistentHeader(
+                    pinned: true,
+                    delegate: _SliverAppBarDelegate(
+                      TabBar(
+                        labelColor: Colors.black,
+                        unselectedLabelColor: Colors.grey,
+                        indicatorColor: Colors.tealAccent,
+                        indicatorSize: TabBarIndicatorSize.label,
+                        tabs: const [
+                          Tab(text: "Profile"),
+                          Tab(text: "Moment"),
+                        ],
+                      ),
+                    ),
+                  ),
+                ];
+              },
+              body: TabBarView(
+                children: [
+                  _buildProfileTab(),
+                  _buildMomentTab(),
+                ],
               ),
-            ];
-          },
-          body: TabBarView(
-            children: [
-              _buildProfileTab(),
-              _buildMomentTab(),
-            ],
+            ),
           ),
-        ),
-      ),
           bottomNavigationBar: isOwner ? null : _buildBottomNavigationBar(),
         ),
-        if (!_hasPlayedRoomProfileBackground && _roomProfileBackgroundUrl != null && _roomProfileBackgroundUrl!.isNotEmpty)
+        if (!_hasPlayedRoomProfileBackground &&
+            _roomProfileBackgroundUrl != null &&
+            _roomProfileBackgroundUrl!.isNotEmpty)
           Positioned.fill(
             child: IgnorePointer(
               child: UniversalAssetWidget(
@@ -1069,7 +1805,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
   // ===== New UI Methods =====
 
   Widget _buildSliverAppBar() {
-    final name = (_viewedUser?.fullname.isNotEmpty == true ? _viewedUser!.fullname : widget.userName).formattedUsername;
+    final name = (_viewedUser?.fullname.isNotEmpty == true
+            ? _viewedUser!.fullname
+            : widget.userName)
+        .formattedUsername;
 
     return SliverAppBar(
       expandedHeight: 280,
@@ -1089,7 +1828,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       flexibleSpace: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           final top = constraints.biggest.height;
-          final collapsedHeight = MediaQuery.of(context).padding.top + kToolbarHeight;
+          final collapsedHeight =
+              MediaQuery.of(context).padding.top + kToolbarHeight;
           double opacity = (collapsedHeight + 60 - top) / 60;
           if (opacity < 0.0) opacity = 0.0;
           if (opacity > 1.0) opacity = 1.0;
@@ -1109,281 +1849,358 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
               ),
             ),
             background: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Background image
-            Builder(
-              builder: (context) {
-                final List<String> bgUrls = [];
-                if (_viewedUser != null) {
-                  if (_viewedUser!.homePageBackgrounds.isNotEmpty) {
-                    bgUrls.addAll(_viewedUser!.homePageBackgrounds);
-                  } else if (_viewedUser!.homePageBackground.isNotEmpty) {
-                    bgUrls.add(_viewedUser!.homePageBackground);
-                  }
-                }
-                
-                if (bgUrls.isNotEmpty) {
-                  return PageView.builder(
-                    controller: _homePageBgPageController,
-                    itemCount: bgUrls.length,
-                    itemBuilder: (context, index) {
-                      return GestureDetector(
-                        onTap: () {
-                          // Open full screen image viewer
-                          Get.to(() => PostMediaViewer(
-                            mediaList: bgUrls.map((url) => PostMedia(type: 'image', url: url)).toList(),
-                            initialIndex: index,
-                          ));
-                        },
-                        child: UniversalAssetWidget(
-                          url: bgUrls[index],
-                          fit: BoxFit.cover,
-                        ),
-                      );
-                    },
-                  );
-                }
-                return Container(color: const Color(0xFF1B2236));
-              },
-            ),
-            // Gradient overlay
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.3),
-                    Colors.transparent,
-                    Colors.black.withValues(alpha: 0.5),
-                  ],
-                ),
-              ),
-            ),
-            // Profile Info (Avatar, Name, ID)
-            Positioned(
-              left: 20,
-              bottom: 40,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CachedCircleAvatar(
-                    imageUrl: (_viewedUser?.photoUrl.isNotEmpty == true) 
-                        ? _viewedUser!.photoUrl 
-                        : (widget.userImage.isEmpty ? "https://i.pravatar.cc/150?img=9" : widget.userImage),
-                    radius: 40,
-                    frameUrl: currentFrameUrl,
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Text(
-                        (_viewedUser?.fullname.isNotEmpty == true ? _viewedUser!.fullname : widget.userName).formattedUsername,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Builder(
-                        builder: (context) {
-                          final isBoy = _viewedUser?.gender.toLowerCase() == 'boy' || _viewedUser?.gender.toLowerCase() == 'male';
-                          final color = isBoy ? Colors.blueAccent : Colors.pinkAccent;
-                          final icon = isBoy ? Icons.male : Icons.female;
-                          
-                          int age = 18; // default
-                          if (_viewedUser?.birthday != null && _viewedUser!.birthday.isNotEmpty) {
-                            try {
-                              final parts = _viewedUser!.birthday.split('-');
-                              if (parts.length >= 3) {
-                                final year = int.tryParse(parts[0]);
-                                if (year != null) {
-                                  age = DateTime.now().year - year;
-                                }
-                              }
-                            } catch (_) {}
-                          }
+              fit: StackFit.expand,
+              children: [
+                // Background image
+                Builder(
+                  builder: (context) {
+                    final List<String> bgUrls = [];
+                    if (_viewedUser != null) {
+                      if (_viewedUser!.homePageBackgrounds.isNotEmpty) {
+                        bgUrls.addAll(_viewedUser!.homePageBackgrounds);
+                      } else if (_viewedUser!.homePageBackground.isNotEmpty) {
+                        bgUrls.add(_viewedUser!.homePageBackground);
+                      }
+                    }
 
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: color,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(icon, color: Colors.white, size: 12),
-                                const SizedBox(width: 2),
-                                Text('$age', style: const TextStyle(color: Colors.white, fontSize: 10)),
-                              ],
+                    if (bgUrls.isNotEmpty) {
+                      return PageView.builder(
+                        controller: _homePageBgPageController,
+                        itemCount: bgUrls.length,
+                        itemBuilder: (context, index) {
+                          return GestureDetector(
+                            onTap: () {
+                              // Open full screen image viewer
+                              Get.to(() => PostMediaViewer(
+                                    mediaList: bgUrls
+                                        .map((url) =>
+                                            PostMedia(type: 'image', url: url))
+                                        .toList(),
+                                    initialIndex: index,
+                                  ));
+                            },
+                            child: UniversalAssetWidget(
+                              url: bgUrls[index],
+                              fit: BoxFit.cover,
                             ),
                           );
-                        }
-                      ),
-                    ],
+                        },
+                      );
+                    }
+                    return Container(color: const Color(0xFF1B2236));
+                  },
+                ),
+                // Gradient overlay
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.3),
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.5),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
+                ),
+                // Profile Info (Avatar, Name, ID)
+                Positioned(
+                  left: 20,
+                  bottom: 40,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      GestureDetector(
-                        onTap: () async {
-                          final idToCopy = searchId.isNotEmpty ? searchId : widget.userID;
-                          await Clipboard.setData(ClipboardData(text: idToCopy));
-                          if (!context.mounted) return;
-                          final overlay = Overlay.of(context);
-                          final entry = OverlayEntry(
-                            builder: (ctx) => Positioned(
-                              top: MediaQuery.of(context).size.height * 0.42,
-                              left: 0,
-                              right: 0,
-                              child: Center(
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.75),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          'ID $idToCopy copied!',
-                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                      CachedCircleAvatar(
+                        imageUrl: (_viewedUser?.photoUrl.isNotEmpty == true)
+                            ? _viewedUser!.photoUrl
+                            : (widget.userImage.isEmpty
+                                ? "https://i.pravatar.cc/150?img=9"
+                                : widget.userImage),
+                        radius: 40,
+                        frameUrl: currentFrameUrl,
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Text(
+                            (_viewedUser?.fullname.isNotEmpty == true
+                                    ? _viewedUser!.fullname
+                                    : widget.userName)
+                                .formattedUsername,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          if (_viewedUser?.isVerified == true) ...[
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.verified,
+                              color: Colors.blue,
+                              size: 18,
+                            ),
+                          ],
+                          const SizedBox(width: 8),
+                          Builder(builder: (context) {
+                            final isBoy =
+                                _viewedUser?.gender.toLowerCase() == 'boy' ||
+                                    _viewedUser?.gender.toLowerCase() == 'male';
+                            final color =
+                                isBoy ? Colors.blueAccent : Colors.pinkAccent;
+                            final icon = isBoy ? Icons.male : Icons.female;
+
+                            int age = 18; // default
+                            if (_viewedUser?.birthday != null &&
+                                _viewedUser!.birthday.isNotEmpty) {
+                              try {
+                                final parts = _viewedUser!.birthday.split('-');
+                                if (parts.length >= 3) {
+                                  final year = int.tryParse(parts[0]);
+                                  if (year != null) {
+                                    age = DateTime.now().year - year;
+                                  }
+                                }
+                              } catch (_) {}
+                            }
+
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: color,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(icon, color: Colors.white, size: 12),
+                                  const SizedBox(width: 2),
+                                  Text('$age',
+                                      style: const TextStyle(
+                                          color: Colors.white, fontSize: 10)),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          GestureDetector(
+                            onTap: () async {
+                              final idToCopy = searchId.isNotEmpty
+                                  ? searchId
+                                  : widget.userID;
+                              await Clipboard.setData(
+                                  ClipboardData(text: idToCopy));
+                              if (!context.mounted) return;
+                              final overlay = Overlay.of(context);
+                              final entry = OverlayEntry(
+                                builder: (ctx) => Positioned(
+                                  top:
+                                      MediaQuery.of(context).size.height * 0.42,
+                                  left: 0,
+                                  right: 0,
+                                  child: Center(
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 20, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.75),
+                                          borderRadius:
+                                              BorderRadius.circular(20),
                                         ),
-                                      ],
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.check_circle,
+                                                color: Colors.greenAccent,
+                                                size: 16),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'ID $idToCopy copied!',
+                                              style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 13),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
+                              );
+                              overlay.insert(entry);
+                              await Future.delayed(const Duration(seconds: 2));
+                              entry.remove();
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'ID:${searchId.isNotEmpty ? searchId : widget.userID}',
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.8),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(width: 3),
+                                Icon(
+                                  Icons.copy_rounded,
+                                  size: 11,
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            ' | ${_viewedUser?.country.isNotEmpty == true ? _viewedUser!.country : "Unknown"}',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (sendingLevelImageUrl != null &&
+                              sendingLevelImageUrl!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4),
+                              child: Image.network(
+                                sendingLevelImageUrl!,
+                                height: 18,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const SizedBox(),
                               ),
                             ),
-                          );
-                          overlay.insert(entry);
-                          await Future.delayed(const Duration(seconds: 2));
-                          entry.remove();
-                        },
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'ID:${searchId.isNotEmpty ? searchId : widget.userID}',
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.8),
-                                fontSize: 12,
+                          if (receivingLevelImageUrl != null &&
+                              receivingLevelImageUrl!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4),
+                              child: Image.network(
+                                receivingLevelImageUrl!,
+                                height: 18,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const SizedBox(),
                               ),
                             ),
-                            const SizedBox(width: 3),
-                            Icon(
-                              Icons.copy_rounded,
-                              size: 11,
-                              color: Colors.white.withValues(alpha: 0.7),
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
-                      Text(
-                        ' | ${_viewedUser?.country.isNotEmpty == true ? _viewedUser!.country : "Unknown"}',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.8),
-                          fontSize: 12,
-                        ),
-                      ),
+                      if (currentNameplateUrls.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        ...() {
+                          final List<List<String>> chunked = [];
+                          for (int i = 0;
+                              i < currentNameplateUrls.length;
+                              i += 5) {
+                            chunked.add(currentNameplateUrls.sublist(i,
+                                (i + 5).clamp(0, currentNameplateUrls.length)));
+                          }
+                          return chunked.map((rowItems) => Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: rowItems
+                                      .map((url) => Padding(
+                                            padding:
+                                                const EdgeInsets.only(right: 6),
+                                            child: Image.network(
+                                              url,
+                                              height: 22,
+                                              fit: BoxFit.contain,
+                                              errorBuilder: (context, error,
+                                                      stackTrace) =>
+                                                  const SizedBox(),
+                                            ),
+                                          ))
+                                      .toList(),
+                                ),
+                              ));
+                        }(),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      if (sendingLevelImageUrl != null && sendingLevelImageUrl!.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Image.network(
-                            sendingLevelImageUrl!,
-                            height: 20,
-                            errorBuilder: (context, error, stackTrace) => const SizedBox(),
-                          ),
-                        ),
-                      if (receivingLevelImageUrl != null && receivingLevelImageUrl!.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Image.network(
-                            receivingLevelImageUrl!,
-                            height: 20,
-                            errorBuilder: (context, error, stackTrace) => const SizedBox(),
-                          ),
-                        ),
-                      if (currentNameplateUrl != null && currentNameplateUrl!.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Image.network(
-                            currentNameplateUrl!,
-                            height: 20,
-                            errorBuilder: (context, error, stackTrace) => const SizedBox(),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ); // closes FlexibleSpaceBar
-    }, // closes builder
-  ), // closes LayoutBuilder
-); // closes SliverAppBar
-}
+          ); // closes FlexibleSpaceBar
+        }, // closes builder
+      ), // closes LayoutBuilder
+    ); // closes SliverAppBar
+  }
 
   Widget _buildWhiteCardHeader() {
     return Container(
       transform: Matrix4.translationValues(0, -20, 0),
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+      clipBehavior: Clip.antiAlias,
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
-            children: [
-              _buildModernStatItem('Follow', followingCount.toString()),
-              const SizedBox(width: 24),
-              _buildModernStatItem('Fans', followerCount.toString()),
-              const SizedBox(width: 24),
-              _buildModernStatItem('Visitor', visitorCount.toString()),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            bio.isEmpty ? 'This user is a bit lazy and leaves nothing' : bio,
-            style: const TextStyle(color: Colors.grey, fontSize: 13),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Icon(Icons.access_time, size: 14, color: Colors.grey),
-              const SizedBox(width: 4),
-              Text(
-                memberSince != null ? 'Joined imChat : ${_formatDate(memberSince!)}' : 'Joined imChat : 0 days',
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+          if (_shortProfileThemeUrl != null &&
+              _shortProfileThemeUrl!.isNotEmpty)
+            Positioned.fill(
+              child: UniversalAssetWidget(
+                url: _shortProfileThemeUrl,
+                fit: BoxFit.cover,
               ),
-            ],
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _buildModernStatItem('Follow', followingCount.toString()),
+                    const SizedBox(width: 24),
+                    _buildModernStatItem('Fans', followerCount.toString()),
+                    const SizedBox(width: 24),
+                    _buildModernStatItem('Visitor', visitorCount.toString()),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  bio.isEmpty
+                      ? 'This user is a bit lazy and leaves nothing'
+                      : bio,
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(Icons.access_time, size: 14, color: Colors.grey),
+                    const SizedBox(width: 4),
+                    Text(
+                      memberSince != null
+                          ? 'Joined imChat : ${_formatDate(memberSince!)}'
+                          : 'Joined imChat : 0 days',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _buildModernBadge('Ring collection', '0', Colors.pinkAccent,
+                        Icons.favorite_border),
+                    const SizedBox(width: 12),
+                    _buildModernBadge('Game Level', '20', Colors.blueAccent,
+                        Icons.emoji_events),
+                  ],
+                ),
+                const SizedBox(height: 10),
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildModernBadge('Ring collection', '0', Colors.pinkAccent, Icons.favorite_border),
-              const SizedBox(width: 12),
-              _buildModernBadge('Game Level', '20', Colors.blueAccent, Icons.emoji_events),
-            ],
-          ),
-          const SizedBox(height: 10),
         ],
       ),
     );
@@ -1393,14 +2210,19 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Text(count, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black)),
+        Text(count,
+            style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black)),
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ],
     );
   }
 
-  Widget _buildModernBadge(String label, String value, Color color, IconData icon) {
+  Widget _buildModernBadge(
+      String label, String value, Color color, IconData icon) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
@@ -1414,8 +2236,13 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(value, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-              Text(label, style: const TextStyle(color: Colors.white, fontSize: 10)),
+              Text(value,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold)),
+              Text(label,
+                  style: const TextStyle(color: Colors.white, fontSize: 10)),
             ],
           ),
         ],
@@ -1430,43 +2257,65 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         _buildSectionHeader('Family', trailing: 'Family Center >'),
         _buildFamilyCardPlaceholder(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Relationships', count: '0/4', trailing: 'Props store >', icon: Icons.favorite),
-        _buildRelationshipsPlaceholder(),
+        _buildSectionHeader('Intimacy',
+            trailing: '${relationshipsList.length} >', onTapTrailing: () {
+          Get.to(() => IntimacyListPage(
+                userID: widget.userID,
+                userName: widget.userName,
+                userImage: widget.userImage,
+                relationships: relationshipsList,
+              ))?.then((_) => _loadRelationships());
+        }),
+        _buildRelationshipsList(),
         const SizedBox(height: 20),
-        _buildSectionHeader(
-          'Supporter', 
-          count: '${allSupporters.length}', // total unique supporters
-          trailing: '>', 
-          onTapTrailing: () {
-            Get.to(() => SupportersPage(
-                  userID: widget.userID,
-                  userName: widget.userName,
-                  supporters: allSupporters,
-                ));
-          }
-        ),
+        _buildSectionHeader('Supporter',
+            count: '${allSupporters.length}', // total unique supporters
+            trailing: '>', onTapTrailing: () {
+          Get.to(() => SupportersPage(
+                userID: widget.userID,
+                userName: widget.userName,
+                supporters: allSupporters,
+              ));
+        }),
         _buildSupporterPlaceholder(),
         const SizedBox(height: 20),
         _buildSectionHeader(
-          'All Joined Room', 
-          count: '${userRooms.length}', 
+          'All Joined Room',
+          count: '${userRooms.length}',
           trailing: '${userRooms.length} >',
           icon: Icons.shield,
         ),
         _buildVoiceClubRoomsList(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Medal', count: '${badgeItems.length}', trailing: 'Badge Wall >', onTapTrailing: () {
-          Get.to(() => BadgeWallPage(userID: widget.userID, userName: widget.userName, badgeItems: badgeItems));
+        _buildSectionHeader('Medal',
+            count: '${badgeItems.length}',
+            trailing: 'Badge Wall >', onTapTrailing: () {
+          Get.to(() => BadgeWallPage(
+              userID: widget.userID,
+              userName: widget.userName,
+              badgeItems: badgeItems));
         }),
         _buildBadgeList(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Decoration', count: '${decorationItems.length}', trailing: 'Decoration Wall >', onTapTrailing: () {
-          Get.to(() => DecorationWallPage(userID: widget.userID, userName: widget.userName, decorationItems: decorationItems));
+        _buildSectionHeader('Decoration',
+            count: '${decorationItems.length}',
+            trailing: 'Decoration Wall >', onTapTrailing: () {
+          Get.to(() => DecorationWallPage(
+              userID: widget.userID,
+              userName: widget.userName,
+              decorationItems: decorationItems));
         }),
         _buildDecorationList(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Gift', count: '${receivedGifts.length}', trailing: 'Gift Wall >', onTapTrailing: () {
-          Get.to(() => GiftWallPage(userId: widget.userID, userName: widget.userName, gifts: receivedGifts));
+        _buildSectionHeader('Gift',
+            count: '${receivedGifts.length}',
+            trailing: 'Gift Wall >', onTapTrailing: () async {
+          await Get.to(() => GiftWallPage(
+              userId: widget.userID,
+              userName: widget.userName,
+              userImage: widget.userImage,
+              gifts: receivedGifts));
+          await _loadGiftSortPreference();
         }),
         _buildGiftList(),
         const SizedBox(height: 40), // Bottom padding
@@ -1482,11 +2331,16 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()));
+          return const Center(
+              child: Padding(
+                  padding: EdgeInsets.all(40),
+                  child: CircularProgressIndicator()));
         }
 
         if (snapshot.hasError) {
-          return Center(child: Text('Error loading moments: ${snapshot.error}', style: const TextStyle(color: Colors.grey)));
+          return Center(
+              child: Text('Error loading moments: ${snapshot.error}',
+                  style: const TextStyle(color: Colors.grey)));
         }
 
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
@@ -1496,14 +2350,17 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
               Center(
                 child: Padding(
                   padding: EdgeInsets.only(top: 50.0),
-                  child: Text('No moments yet', style: TextStyle(color: Colors.grey)),
+                  child: Text('No moments yet',
+                      style: TextStyle(color: Colors.grey)),
                 ),
               ),
             ],
           );
         }
 
-        var posts = snapshot.data!.docs.map((doc) => NewsFeedPost.fromFirestore(doc)).toList();
+        var posts = snapshot.data!.docs
+            .map((doc) => NewsFeedPost.fromFirestore(doc))
+            .toList();
         posts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
         return ListView.builder(
@@ -1540,7 +2397,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                   children: [
                     Text(
                       post.userName,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: Colors.black),
                     ),
                     Text(
                       post.timeAgo,
@@ -1559,8 +2419,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           if (post.content.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                post.content,
+              child: RichTextViewer(
+                text: post.content,
                 style: const TextStyle(fontSize: 14.5, color: Colors.black87),
               ),
             ),
@@ -1572,7 +2432,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
               return Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: GestureDetector(
-                  onTap: () => Get.to(() => PostMediaViewer(mediaList: post.media)),
+                  onTap: () =>
+                      Get.to(() => PostMediaViewer(mediaList: post.media)),
                   child: Container(
                     constraints: const BoxConstraints(maxHeight: 250),
                     decoration: BoxDecoration(
@@ -1587,7 +2448,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                     ),
                     child: post.media.first.type == 'video'
                         ? const Center(
-                            child: Icon(Icons.play_circle_fill, color: Colors.white, size: 48),
+                            child: Icon(Icons.play_circle_fill,
+                                color: Colors.white, size: 48),
                           )
                         : null,
                   ),
@@ -1597,13 +2459,16 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           const SizedBox(height: 12),
           Row(
             children: [
-              Icon(Icons.thumb_up_alt_outlined, size: 16, color: Colors.grey[600]),
+              Icon(Icons.thumb_up_alt_outlined,
+                  size: 16, color: Colors.grey[600]),
               const SizedBox(width: 4),
-              Text('${post.likeCount}', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+              Text('${post.likeCount}',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13)),
               const SizedBox(width: 16),
               Icon(Icons.comment_outlined, size: 16, color: Colors.grey[600]),
               const SizedBox(width: 4),
-              Text('${post.commentCount}', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+              Text('${post.commentCount}',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13)),
             ],
           ),
         ],
@@ -1629,29 +2494,29 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           children: [
             Expanded(
               child: _buildBottomActionButton(
-                isFriend ? 'Message' : 'Add Friend', 
-                isFriend ? Icons.message : Icons.person_add_alt_1, 
-                Colors.greenAccent.shade700, 
-                () async {
-                  var user = await _getUserData();
-                  if (user != null) {
-                    if (isFriend) {
-                      RoutesHelper.toMessages(user: user).then((_) {
-                        Get.back();
-                      });
-                    } else {
-                      await ContactApi.addContact(userId: user.userId, showMsg: true);
-                      setState(() {
-                        isFriend = true;
-                      });
-                    }
+                  isFriend ? 'Message' : 'Add Friend',
+                  isFriend ? Icons.message : Icons.person_add_alt_1,
+                  Colors.greenAccent.shade700, () async {
+                var user = await _getUserData();
+                if (user != null) {
+                  if (isFriend) {
+                    RoutesHelper.toMessages(user: user).then((_) {
+                      Get.back();
+                    });
+                  } else {
+                    await ContactApi.sendFriendRequest(
+                        targetUserId: user.userId, showMsg: true);
                   }
                 }
-              ),
+              }),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: _buildBottomActionButton(isFollowing ? 'Following' : 'Follow', Icons.favorite, Colors.greenAccent.shade700, _toggleFollow),
+              child: _buildBottomActionButton(
+                  isFollowing ? 'Following' : 'Follow',
+                  Icons.favorite,
+                  Colors.greenAccent.shade700,
+                  _toggleFollow),
             ),
           ],
         ),
@@ -1659,7 +2524,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     );
   }
 
-  Widget _buildBottomActionButton(String label, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildBottomActionButton(
+      String label, IconData icon, Color color, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(24),
@@ -1674,7 +2540,11 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           children: [
             Icon(icon, color: Colors.white, size: 16),
             const SizedBox(width: 6),
-            Text(label, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            Text(label,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -1699,7 +2569,9 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                       color: Colors.black87)),
               if (count != null) ...[
                 const SizedBox(width: 6),
-                Text('($count)', style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+                Text('($count)',
+                    style:
+                        TextStyle(fontSize: 14, color: Colors.grey.shade500)),
               ],
             ],
           ),
@@ -1712,7 +2584,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
             GestureDetector(
               onTap: onTapTrailing,
               child: Text(trailing,
-                  style: TextStyle(fontSize: 18, color: Colors.grey.shade400, fontWeight: FontWeight.w500)),
+                  style: TextStyle(
+                      fontSize: 18,
+                      color: Colors.grey.shade400,
+                      fontWeight: FontWeight.w500)),
             ),
         ],
       ),
@@ -1727,7 +2602,9 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         color: Colors.grey.shade50,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(text, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
+      child: Text(text,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
     );
   }
 
@@ -1738,11 +2615,13 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
 
     final currentUser = AuthController.instance.currentUser;
     final bool isMember = currentUser.familyId == _viewedUser!.familyId;
-    
+
     // Fallback data if real-time not loaded yet
     final String logoUrl = _familyData?['logoUrl'] ?? '';
-    final String familyName = _familyData?['familyName'] ?? _viewedUser!.familyName ?? '';
-    final String familyIdStr = _familyData?['familyId'] ?? _viewedUser!.familyId ?? '';
+    final String familyName =
+        _familyData?['familyName'] ?? _viewedUser!.familyName ?? '';
+    final String familyIdStr =
+        _familyData?['familyId'] ?? _viewedUser!.familyId ?? '';
     final List memberIds = _familyData?['memberIds'] ?? [];
     final int memberCount = memberIds.isNotEmpty ? memberIds.length : 1;
     final int maxLimit = 1400; // Hardcoded or from DB if available
@@ -1851,11 +2730,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                       ),
                       const SizedBox(width: 8),
                       const Text('|',
-                          style: TextStyle(
-                              color: Colors.white70, fontSize: 12)),
+                          style:
+                              TextStyle(color: Colors.white70, fontSize: 12)),
                       const SizedBox(width: 8),
-                      const Icon(Icons.people,
-                          color: Colors.white70, size: 16),
+                      const Icon(Icons.people, color: Colors.white70, size: 16),
                       const SizedBox(width: 4),
                       Text('$memberCount/$maxLimit',
                           style: const TextStyle(
@@ -1868,8 +2746,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
             if (!isMember)
               Container(
                 margin: const EdgeInsets.only(left: 8),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(20),
@@ -1877,8 +2755,7 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                 child: const Text(
                   'Join',
                   style: TextStyle(
-                      color: Color(0xFF8B5CF6),
-                      fontWeight: FontWeight.bold),
+                      color: Color(0xFF8B5CF6), fontWeight: FontWeight.bold),
                 ),
               ),
           ],
@@ -1924,7 +2801,11 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
               color: Colors.amber,
               shape: BoxShape.circle,
             ),
-            child: Text('$rank', style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
+            child: Text('$rank',
+                style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold)),
           ),
         ),
       ],
@@ -1945,7 +2826,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         itemCount: userRooms.length,
         itemBuilder: (context, index) {
           final room = userRooms[index];
-          final String imageUrl = room['imageUrl'] ?? room['creatorImageUrl'] ?? '';
+          final String imageUrl =
+              room['imageUrl'] ?? room['creatorImageUrl'] ?? '';
           final String name = room['name'] ?? 'Room';
           // Count participants from array length if exists
           final List participants = room['participants'] ?? [];
@@ -1984,9 +2866,13 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                             shape: BoxShape.circle,
                           ),
                           child: Icon(
-                            role == 0 ? Icons.workspace_premium : (role == 1 ? Icons.shield : Icons.person),
+                            role == 0
+                                ? Icons.workspace_premium
+                                : (role == 1 ? Icons.shield : Icons.person),
                             size: 12,
-                            color: role == 0 ? Colors.orangeAccent : (role == 1 ? Colors.blueAccent : Colors.grey),
+                            color: role == 0
+                                ? Colors.orangeAccent
+                                : (role == 1 ? Colors.blueAccent : Colors.grey),
                           ),
                         ),
                       ),
@@ -2045,10 +2931,500 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     );
   }
 
+  Widget _buildEmptyIntimacyCard(
+      {required String title,
+      required bool isPink,
+      required VoidCallback onTap}) {
+    final themeColor =
+        isPink ? const Color(0xFFF48FB1) : const Color(0xFF90CAF9);
 
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F6F8),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Center(
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: themeColor.withValues(alpha: 0.8),
+                    width: 1.5,
+                  ),
+                ),
+                child: Center(
+                  child: Icon(
+                    Icons.add,
+                    color: themeColor,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.black87,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildRelationshipsPlaceholder() {
-    return _buildEmptyPlaceholder('No relationship yet\nGo to Props store to invite friends');
+  Widget _buildActiveIntimacyCard({
+    required String title,
+    required String name,
+    required String photoUrl,
+    required int level,
+    required bool showOrnament,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap ??
+          () {
+            Get.to(() => IntimacyListPage(
+                  userID: widget.userID,
+                  userName: widget.userName,
+                  userImage: widget.userImage,
+                  relationships: relationshipsList,
+                ))?.then((_) => _loadRelationships());
+          },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F6F8),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Center(
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(26),
+                      child: photoUrl.startsWith('http')
+                          ? Image.network(
+                              photoUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Center(
+                                child: Icon(Icons.person,
+                                    color: Colors.grey, size: 24),
+                              ),
+                            )
+                          : Image.asset(
+                              photoUrl.isNotEmpty
+                                  ? photoUrl
+                                  : 'assets/images/app_logo.png',
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Center(
+                                child: Icon(Icons.person,
+                                    color: Colors.grey, size: 24),
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+                if (showOrnament)
+                  Positioned(
+                    right: 10,
+                    bottom: 10,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black12,
+                            blurRadius: 2,
+                            spreadRadius: 0.5,
+                          ),
+                        ],
+                      ),
+                      child: RelationshipBadgeWidget(
+                        level: level,
+                        relationshipType: title,
+                        size: 14,
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  bottom: 4,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF90CAF9), Color(0xFF42A5F5)],
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.white, width: 0.75),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black12,
+                            blurRadius: 2,
+                            spreadRadius: 0.5,
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.workspace_premium,
+                            size: 7,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 1),
+                          Text(
+                            'Lv.$level',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 7,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.black87,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRelationshipsList() {
+    Map<String, dynamic>? coupleRel;
+    for (var r in relationshipsList) {
+      if (r['relationshipType']?.toString().toLowerCase() == 'couple') {
+        coupleRel = r;
+        break;
+      }
+    }
+
+    final friendRels = relationshipsList
+        .where(
+            (r) => r['relationshipType']?.toString().toLowerCase() != 'couple')
+        .toList();
+
+    List<Widget> cards = [];
+
+    // If no relationships exist at all, show exactly 1 empty Couple card and 1 empty Friend card
+    if (relationshipsList.isEmpty) {
+      cards.add(_buildEmptyIntimacyCard(
+        title: 'Couple',
+        isPink: true,
+        onTap: () => _sendRelationshipInvitation('couple'),
+      ));
+      cards.add(_buildEmptyIntimacyCard(
+        title: 'Friend',
+        isPink: false,
+        onTap: () => _sendRelationshipInvitation('friend'),
+      ));
+    } else {
+      // 1. Couple slot (active or empty)
+      if (coupleRel != null) {
+        cards.add(_buildActiveIntimacyCard(
+          title: 'Couple',
+          name: coupleRel['otherUserFullname'] ?? 'Couple',
+          photoUrl: coupleRel['otherUserPhotoUrl'] ?? '',
+          level: coupleRel['currentLevel'] ?? 1,
+          showOrnament: true,
+        ));
+      } else {
+        cards.add(_buildEmptyIntimacyCard(
+          title: 'Couple',
+          isPink: true,
+          onTap: () => _sendRelationshipInvitation('couple'),
+        ));
+      }
+
+      // 2. Active Friend slots
+      for (int i = 0; i < friendRels.length; i++) {
+        final rel = friendRels[i];
+        cards.add(_buildActiveIntimacyCard(
+          title: 'Friend',
+          name: rel['otherUserFullname'] ?? 'Friend',
+          photoUrl: rel['otherUserPhotoUrl'] ?? '',
+          level: rel['currentLevel'] ?? 1,
+          showOrnament: i == 0,
+        ));
+      }
+
+      // 3. Exactly 1 empty Friend slot at the end (if not at maximum capacity, e.g. max 5 friends)
+      if (friendRels.length < 5) {
+        cards.add(_buildEmptyIntimacyCard(
+          title: 'Friend',
+          isPink: false,
+          onTap: () => _sendRelationshipInvitation('friend'),
+        ));
+      }
+    }
+
+    return Container(
+      height: 110,
+      margin: const EdgeInsets.only(top: 12),
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: cards.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: cards[index],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _loadRelationships() async {
+    if (!mounted) return;
+    setState(() {
+      isLoadingRelationships = true;
+    });
+
+    try {
+      final userRef = _firestore.collection('Users').doc(widget.userID);
+
+      final q1 = await _firestore
+          .collection('relationships')
+          .where('user1Ref', isEqualTo: userRef)
+          .where('status', isEqualTo: 'accepted')
+          .get();
+
+      final q2 = await _firestore
+          .collection('relationships')
+          .where('user2Ref', isEqualTo: userRef)
+          .where('status', isEqualTo: 'accepted')
+          .get();
+
+      final List<Map<String, dynamic>> loadedList = [];
+      final Set<String> loadedIds = {};
+
+      for (var doc in [...q1.docs, ...q2.docs]) {
+        if (loadedIds.contains(doc.id)) continue;
+        loadedIds.add(doc.id);
+
+        final data = doc.data();
+        data['id'] = doc.id;
+
+        final u1Ref = data['user1Ref'];
+        final u2Ref = data['user2Ref'];
+
+        String? otherUserId;
+        if (u1Ref is DocumentReference) {
+          otherUserId = (u1Ref.id == widget.userID)
+              ? (u2Ref is DocumentReference ? u2Ref.id : u2Ref?.toString())
+              : u1Ref.id;
+        } else if (u1Ref is String) {
+          otherUserId = (u1Ref == widget.userID) ? u2Ref?.toString() : u1Ref;
+        }
+
+        if (otherUserId != null) {
+          data['otherUserId'] = otherUserId;
+
+          final otherUserDoc =
+              await _firestore.collection('Users').doc(otherUserId).get();
+          if (otherUserDoc.exists) {
+            final otherUserData = otherUserDoc.data();
+            data['otherUserFullname'] = otherUserData?['fullname'] ??
+                otherUserData?['displayName'] ??
+                'User';
+            data['otherUserPhotoUrl'] = otherUserData?['photoUrl'] ?? '';
+            data['otherUserSearchId'] = otherUserData?['searchId'] ?? '';
+          } else {
+            data['otherUserFullname'] = 'User';
+            data['otherUserPhotoUrl'] = '';
+            data['otherUserSearchId'] = '';
+          }
+        }
+
+        loadedList.add(data);
+      }
+
+      if (mounted) {
+        setState(() {
+          relationshipsList = loadedList;
+          isLoadingRelationships = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading relationships: $e');
+      if (mounted) {
+        setState(() {
+          isLoadingRelationships = false;
+        });
+      }
+    }
+  }
+
+  void _sendRelationshipInvitation(String type) async {
+    final currentUser = AuthController.instance.currentUser;
+    if (widget.userID == currentUser.userId ||
+        (_viewedUser != null && _viewedUser!.userId == currentUser.userId)) {
+      _showSnack('আপনি নিজেকে ফ্রেন্ডশিপ বা কাপল ইনভিটেশন পাঠাতে পারবেন না।');
+      return;
+    }
+
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Invite ${widget.userName}'),
+        content: Text(
+            'Would you like to send a $type relationship invitation to ${widget.userName}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: type == 'couple'
+                  ? const Color(0xFFF48FB1)
+                  : const Color(0xFF42A5F5),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () async {
+              Navigator.of(context).pop();
+
+              // Play sound feedback non-blockingly
+              try {
+                AudioPlayer()
+                    .play(AssetSource('sounds/sent_msg.mp3'))
+                    .catchError((_) {});
+              } catch (_) {}
+
+              _showSnack('Sending invitation to ${widget.userName}...');
+
+              try {
+                // Check if an invitation already exists to prevent duplicate
+                final existing = await _firestore
+                    .collection('relationshipInvitations')
+                    .where('senderRef',
+                        isEqualTo: _firestore
+                            .collection('Users')
+                            .doc(currentUser.userId))
+                    .where('receiverRef',
+                        isEqualTo:
+                            _firestore.collection('Users').doc(widget.userID))
+                    .where('relationshipType', isEqualTo: type)
+                    .where('status', isEqualTo: 'pending')
+                    .get();
+
+                if (existing.docs.isNotEmpty) {
+                  _showSnack('An invitation of this type is already pending.');
+                  return;
+                }
+
+                // Create relationship invitation document
+                final invitationDoc =
+                    await _firestore.collection('relationshipInvitations').add({
+                  'senderRef':
+                      _firestore.collection('Users').doc(currentUser.userId),
+                  'receiverRef':
+                      _firestore.collection('Users').doc(widget.userID),
+                  'relationshipType': type,
+                  'status': 'pending',
+                  'createdAt': FieldValue.serverTimestamp(),
+                  'expiresAt': Timestamp.fromDate(
+                      DateTime.now().add(const Duration(hours: 48))),
+                });
+
+                final receiverUser = _viewedUser ??
+                    User(
+                      userId: widget.userID,
+                      fullname: widget.userName,
+                      photoUrl: widget.userImage,
+                    );
+
+                final msgId = AppHelper.generateID;
+                final message = Message(
+                  msgId: msgId,
+                  senderId: currentUser.userId,
+                  type: MessageType.relationshipInvitation,
+                  textMsg: '❤️ $type request sent',
+                  invitationId: invitationDoc.id,
+                  invitationAgencyName: currentUser.fullname.isNotEmpty
+                      ? currentUser.fullname
+                      : 'User',
+                  invitationAgencyId: type,
+                  sentAt: DateTime.now(),
+                );
+
+                // Run message sending and official notification in background non-blockingly
+                MessageApi.sendMessage(
+                  message: message,
+                  receiver: receiverUser,
+                ).catchError((err) {
+                  debugPrint('Error sending 1-on-1 invitation message: $err');
+                });
+
+                OfficialTeamApi.sendRelationshipInvitationMessage(
+                  receiverId: widget.userID,
+                  receiverDeviceToken: _viewedUser?.deviceToken ?? '',
+                  senderName: currentUser.fullname.isNotEmpty
+                      ? currentUser.fullname
+                      : 'User',
+                  invitationId: invitationDoc.id,
+                  relationshipType: type,
+                ).catchError((err) {
+                  debugPrint(
+                      'Error sending official invitation notification: $err');
+                });
+
+                _showSnack('Invitation sent successfully!');
+              } catch (e) {
+                debugPrint('Error sending invitation: $e');
+                _showSnack('Failed to send invitation: $e');
+              }
+            },
+            child: const Text('Send', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   // ===== Widgets =====
@@ -2163,159 +3539,14 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     );
   }
 
-  String _formatExpiryDate(dynamic expiresAt) {
-    if (expiresAt == null) return 'Permanent';
-    DateTime? date;
-    if (expiresAt is Timestamp) {
-      date = expiresAt.toDate();
-    } else if (expiresAt is DateTime) {
-      date = expiresAt;
-    }
-    if (date == null) return 'Permanent';
-    final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
-  }
-
   void _showBadgeDetails(Map<String, dynamic> badge) {
     final isOwner = widget.userID == AuthController.instance.currentUser.userId;
-    final name = badge['storeItemName'] as String? ?? 'Badge';
-    final imageUrl = badge['imageUrl'] as String?;
-    final description = badge['description'] as String? ?? 'A prestigious badge representing user achievements.';
-    final expiresAt = badge['expiresAt'];
-
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E1E2E).withValues(alpha: 0.95),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.purple.shade300.withValues(alpha: 0.2), width: 1.5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.purple.shade800.withValues(alpha: 0.3),
-                blurRadius: 20,
-                spreadRadius: 2,
-              )
-            ]
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Badge Image Container with radial glowing backdrop
-              Container(
-                height: 120,
-                width: 120,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [
-                      Colors.purple.withValues(alpha: 0.3),
-                      Colors.purple.withValues(alpha: 0.0),
-                    ],
-                  ),
-                ),
-                child: imageUrl != null && imageUrl.isNotEmpty
-                    ? Image.network(
-                        imageUrl,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.shield,
-                          size: 64,
-                          color: Colors.amber,
-                        ),
-                      )
-                    : const Icon(
-                        Icons.shield,
-                        size: 64,
-                        color: Colors.amber,
-                      ),
-              ),
-              const SizedBox(height: 16),
-              // Badge Name
-              Text(
-                name,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  fontFamily: 'Outfit',
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              // Description
-              Text(
-                description,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.white.withValues(alpha: 0.7),
-                  height: 1.4,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              // Expiry Section if Owner
-              if (isOwner) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.calendar_today_rounded,
-                        size: 16,
-                        color: Colors.purple.shade300,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Expires: ${_formatExpiryDate(expiresAt)}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.purple.shade200,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-              ],
-              // Action button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: const Text(
-                    'Close',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    final isUnlocked = badge['isUnlocked'] == true;
+    BadgeDetailDialog.show(
+      context,
+      badge: badge,
+      isOwner: isOwner,
+      isUnlocked: isUnlocked,
     );
   }
 
@@ -2324,7 +3555,7 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       return SizedBox(
         height: 80,
         child: Center(
-          child: Text('No badges yet',
+          child: Text('No medals yet',
               style: TextStyle(color: Colors.grey.shade500)),
         ),
       );
@@ -2368,12 +3599,11 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                           child: imageUrl != null && imageUrl.isNotEmpty
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(14),
-                                  child: Image.network(imageUrl,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => const Icon(
-                                          Icons.shield_outlined,
-                                          color: Colors.purple,
-                                          size: 24)),
+                                  child: UniversalAssetWidget(
+                                    url: imageUrl,
+                                    fit: BoxFit.contain,
+                                    looping: true,
+                                  ),
                                 )
                               : const Icon(Icons.shield_outlined,
                                   color: Colors.purple, size: 24),
@@ -2437,7 +3667,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       );
     }
 
-    final int displayCount = decorationItems.length > 5 ? 5 : decorationItems.length;
+    final int displayCount =
+        decorationItems.length > 5 ? 5 : decorationItems.length;
     final bool hasMore = decorationItems.length > 5;
     final int itemCount = displayCount + (hasMore ? 1 : 0);
 
@@ -2468,7 +3699,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                       decoration: BoxDecoration(
                         color: Colors.blue.shade100.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: Colors.blue.shade300.withValues(alpha: 0.5)),
+                        border: Border.all(
+                            color: Colors.blue.shade300.withValues(alpha: 0.5)),
                       ),
                       child: const Icon(
                         Icons.arrow_forward_ios_rounded,
@@ -2479,7 +3711,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                     const SizedBox(height: 4),
                     const Text(
                       'More',
-                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue),
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -2534,6 +3769,7 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       ),
     );
   }
+
   void _showPostOptions(NewsFeedPost post) {
     showModalBottomSheet(
       context: context,
@@ -2588,7 +3824,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
       builder: (context) {
         return AlertDialog(
           title: const Text('Delete Post'),
-          content: const Text('Are you sure you want to permanently delete this post?'),
+          content: const Text(
+              'Are you sure you want to permanently delete this post?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),

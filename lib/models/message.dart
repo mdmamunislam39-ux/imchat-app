@@ -7,7 +7,7 @@ import 'location.dart';
 import 'room_share.dart';
 
 // Message types
-enum MessageType { text, image, gif, audio, video, doc, location, groupUpdate, roomShare, hostInvitation }
+enum MessageType { text, image, gif, audio, video, doc, location, groupUpdate, roomShare, hostInvitation, relationshipInvitation }
 
 class Message {
   String msgId;
@@ -19,6 +19,7 @@ class Message {
   Location? location;
   String videoThumbnail;
   bool isRead;
+  bool isDelivered;
   bool isRecAudio;
   bool isDeleted;
   bool isForwarded;
@@ -46,6 +47,7 @@ class Message {
     this.location,
     this.videoThumbnail = '',
     this.isRead = false,
+    this.isDelivered = false,
     this.isRecAudio = false,
     this.isDeleted = false,
     this.isForwarded = false,
@@ -63,12 +65,24 @@ class Message {
 
   @override
   String toString() {
-    return 'Message(msgId: $msgId, senderId: $senderId, type: $type, textMsg: $textMsg, fileUrl: $fileUrl, gifUrl: $gifUrl, videoThumbnail: $videoThumbnail, isRead: $isRead, isRecAudio: $isRecAudio, sentAt: $sentAt, groupUpdate: $groupUpdate)';
+    return 'Message(msgId: $msgId, senderId: $senderId, type: $type, textMsg: $textMsg, fileUrl: $fileUrl, gifUrl: $gifUrl, videoThumbnail: $videoThumbnail, isRead: $isRead, isDelivered: $isDelivered, isRecAudio: $isRecAudio, sentAt: $sentAt, groupUpdate: $groupUpdate)';
   }
 
   // Get message type
   static MessageType getMsgType(String type) {
-    return MessageType.values.firstWhere((el) => el.name == type);
+    return MessageType.values.firstWhere(
+      (el) => el.name == type,
+      orElse: () => MessageType.text,
+    );
+  }
+
+  static DateTime? _parseDate(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) return DateTime.tryParse(value);
+    return null;
   }
 
   factory Message.fromMap({
@@ -79,13 +93,21 @@ class Message {
     final String messageId = data['msgId'] ?? '';
     final String textMessage = data['textMsg'] ?? '';
 
+    String decryptedText = textMessage;
+    if (!isGroup && textMessage.isNotEmpty && messageId.isNotEmpty) {
+      try {
+        decryptedText = EncryptHelper.decrypt(textMessage, messageId);
+      } catch (_) {
+        decryptedText = textMessage;
+      }
+    }
+
     return Message(
       docRef: docRef,
       msgId: messageId,
       senderId: data['senderId'] ?? '',
       type: getMsgType(data['type']),
-      textMsg:
-          isGroup ? textMessage : EncryptHelper.decrypt(textMessage, messageId),
+      textMsg: isGroup ? textMessage : decryptedText,
       fileUrl: data['fileUrl'] ?? '',
       gifUrl: data['gifUrl'] ?? '',
       location: Location.fromMap(data['location'] ?? {}),
@@ -97,11 +119,12 @@ class Message {
       invitationAgencyId: data['invitationAgencyId'],
       videoThumbnail: data['videoThumbnail'] ?? '',
       isRead: data['isRead'] ?? false,
+      isDelivered: data['isDelivered'] ?? false,
       isRecAudio: data['isRecAudio'] ?? false,
       isDeleted: data['isDeleted'] ?? false,
       isForwarded: data['isForwarded'] ?? false,
-      sentAt: data['sentAt']?.toDate() as DateTime?,
-      updatedAt: data['updatedAt']?.toDate() as DateTime?,
+      sentAt: _parseDate(data['sentAt']),
+      updatedAt: _parseDate(data['updatedAt']),
       replyMessage: data['replyMessage'] != null
           ? Message.fromMap(
               data: Map<String, dynamic>.from(data['replyMessage']),
@@ -127,6 +150,7 @@ class Message {
       'invitationAgencyId': invitationAgencyId,
       'videoThumbnail': videoThumbnail,
       'isRead': isRead,
+      'isDelivered': isDelivered,
       'isRecAudio': isRecAudio,
       'isForwarded': isForwarded,
       'sentAt': FieldValue.serverTimestamp(),

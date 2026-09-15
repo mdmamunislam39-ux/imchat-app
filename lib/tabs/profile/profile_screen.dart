@@ -18,6 +18,9 @@ import 'package:chat_messenger/theme/app_theme.dart';
 import 'package:get/get.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
+import 'package:chat_messenger/api/user_api.dart';
+import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
+import 'package:chat_messenger/components/dynamic_bean_icon.dart';
 
 import 'components/basic_info.dart';
 
@@ -34,6 +37,13 @@ class ProfileScreen extends StatelessWidget {
     final themeService = Get.find<AppThemeService>();
 
     return Obx(() {
+      final Color? profileTextColor =
+          themeService.getScreenTextColor('profile');
+      final Color? profileSecondaryTextColor =
+          themeService.getScreenSecondaryTextColor('profile');
+      final Color? effectiveIconColor =
+          profileTextColor ?? (isDarkMode ? primaryColor : null);
+
       return Container(
         decoration: themeService.getScreenBgUrl('profile') != null
             ? BoxDecoration(
@@ -43,51 +53,120 @@ class ProfileScreen extends StatelessWidget {
                 ),
               )
             : null,
-        child: Scaffold(
-          backgroundColor: themeService.getScreenColor('profile') ?? (isDarkMode ? Colors.black : Colors.white),
-          body: SafeArea(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(
-            vertical: defaultPadding,
-            horizontal: defaultPadding / 2,
+        child: Theme(
+          data: Theme.of(context).copyWith(
+            textTheme: profileTextColor != null
+                ? Theme.of(context).textTheme.apply(
+                    bodyColor: profileTextColor,
+                    displayColor: profileTextColor,
+                  )
+                : null,
+            listTileTheme: ListTileThemeData(
+              textColor: profileTextColor,
+              iconColor: effectiveIconColor,
+            ),
+            iconTheme: IconThemeData(
+              color: effectiveIconColor,
+            ),
           ),
-          child: Column(
-            children: [
-              Align(alignment: Alignment.topLeft,
-                child: IconButton(onPressed: (){
-                  Get.back();
-                }, icon: Icon(Icons.close)),
-              ),
-              Column(
-                children: [
-                  // <-- Basic account info -->
-                  const BasicInfo(),
-                  const Divider(thickness: 1.0, height: 30),
-        
-                  // Dark theme
-                  Obx(
-                    () => ListTile(tileColor: Colors.transparent,
-                      title: Text('dark_theme'.tr),
-                      leading: Icon(Icons.brightness_6_outlined, color: iconColor),
-                      trailing: CupertinoSwitch(
-                        activeTrackColor: primaryColor,
-                        value: prefController.isDarkMode.value,
-                        onChanged: (value) =>
-                            prefController.isDarkMode.value = value,
+          child: Scaffold(
+            backgroundColor: themeService.getScreenColor('profile') ?? (isDarkMode ? Colors.black : Colors.white),
+            body: SafeArea(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(
+              vertical: defaultPadding,
+              horizontal: defaultPadding / 2,
+            ),
+            child: Column(
+              children: [
+                Align(alignment: Alignment.topLeft,
+                  child: IconButton(onPressed: (){
+                    Get.back();
+                  }, icon: Icon(Icons.close, color: effectiveIconColor)),
+                ),
+                Column(
+                  children: [
+                    // <-- Basic account info -->
+                    const BasicInfo(),
+                    const Divider(thickness: 1.0, height: 30),
+          
+                    // Dark theme
+                    Obx(
+                      () => ListTile(tileColor: Colors.transparent,
+                        title: Text('dark_theme'.tr),
+                        leading: Icon(Icons.brightness_6_outlined, color: effectiveIconColor),
+                        trailing: CupertinoSwitch(
+                          activeTrackColor: primaryColor,
+                          value: prefController.isDarkMode.value,
+                          onChanged: (value) =>
+                              prefController.isDarkMode.value = value,
+                        ),
                       ),
                     ),
-                  ),
-                  
-                  // Terms of Service
-                  ListTile(tileColor: Colors.transparent,
-                    title: Text('Voice room Wallet'),
-                    leading: Icon(Icons.record_voice_over_outlined, color: iconColor),
-                    trailing: const Icon(IconlyLight.arrowRight2),
-                    onTap: () {
-                      Get.to(()=> UserWalletScreen(currentUser: currentUser,));
-                    },
-                  ),
+                    
+                    // Voice room Wallet
+                    ListTile(tileColor: Colors.transparent,
+                      title: Text('imChat Wallet'),
+                      leading: Icon(Icons.record_voice_over_outlined, color: effectiveIconColor),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StreamBuilder<User>(
+                            stream: UserApi.getUserUpdates(currentUser.userId),
+                            initialData: currentUser,
+                            builder: (context, snapshot) {
+                              final updatedUser = snapshot.data ?? currentUser;
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Diamonds
+                                  const DynamicDiamondIcon(
+                                    width: 20,
+                                    height: 20,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _formatNumber(updatedUser.diamonds),
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: profileSecondaryTextColor ??
+                                          (isDarkMode ? Colors.white70 : Colors.black54),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  // Beans
+                                  const DynamicBeanIcon(
+                                    width: 20,
+                                    height: 20,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _formatNumber(updatedUser.beans),
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: profileSecondaryTextColor ??
+                                          (isDarkMode ? Colors.white70 : Colors.black54),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(
+                            IconlyLight.arrowRight2,
+                            color: profileSecondaryTextColor ??
+                                (isDarkMode ? Colors.white54 : Colors.black45),
+                          ),
+                        ],
+                      ),
+                      onTap: () {
+                        Get.to(()=> UserWalletScreen(currentUser: currentUser,));
+                      },
+                    ),
 
                   // Change Language
                   Obx(() {
@@ -166,7 +245,22 @@ class ProfileScreen extends StatelessWidget {
         ),
         ),
         ),
+        ),
       );
     });
+  }
+
+  String _formatNumber(num number) {
+    if (number >= 1000000000) {
+      double value = number / 1000000000;
+      return '${value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 1)}B';
+    } else if (number >= 1000000) {
+      double value = number / 1000000;
+      return '${value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 1)}M';
+    } else if (number >= 1000) {
+      double value = number / 1000;
+      return '${value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 1)}K';
+    }
+    return number.toString();
   }
 }

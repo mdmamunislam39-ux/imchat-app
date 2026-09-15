@@ -1,317 +1,560 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:http/http.dart' as http;
 import 'package:get/get.dart';
-import 'local_agora_token.dart';
 import '../models/agora_models.dart';
 import 'global_settings_service.dart';
 
-/// Service for managing Agora tokens dynamically and securely
+/// Agora role enumeration for strong typing while preserving String compatibility.
+enum AgoraRole {
+  publisher('publisher'),
+  audience('audience');
+
+  final String value;
+  const AgoraRole(this.value);
+
+  /// Parse role from string with default fallback to publisher.
+  static AgoraRole fromString(String? role) {
+    if (role == null) return AgoraRole.publisher;
+    final normalized = role.trim().toLowerCase();
+    if (normalized == 'audience' || normalized == 'subscriber') {
+      return AgoraRole.audience;
+    }
+    return AgoraRole.publisher;
+  }
+}
+
+/// Immutable cache key for Agora token storage.
+class TokenCacheKey {
+  final String channelName;
+  final int uid;
+  final String role;
+
+  const TokenCacheKey({
+    required this.channelName,
+    required this.uid,
+    required this.role,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TokenCacheKey &&
+          runtimeType == other.runtimeType &&
+          channelName == other.channelName &&
+          uid == other.uid &&
+          role == other.role;
+
+  @override
+  int get hashCode => Object.hash(channelName, uid, role);
+
+  @override
+  String toString() => '${channelName}_${uid}_$role';
+}
+
+/// Enterprise-grade service for fetching, validating, caching, and managing Agora RTC tokens securely.
+///
+/// Security Architecture:
+/// - Tokens are strictly generated on trusted server backends (Firebase Cloud Functions / Railway endpoint).
+/// - No Agora App Certificate is stored or used within the Flutter client.
+/// - Hardcoded credential fallbacks are completely removed.
+/// - Uses an LRU (Least Recently Used) cache with bounded size and automated TTL expiration.
 class AgoraTokenService {
+  // ---------------------------------------------------------------------------
+  // Singleton
+  // ---------------------------------------------------------------------------
   static AgoraTokenService? _instance;
   static AgoraTokenService get instance => _instance ??= AgoraTokenService._();
   AgoraTokenService._();
 
-  // Cache for tokens to avoid unnecessary requests
-  final Map<String, TokenResponse> _tokenCache = {};
+  // ---------------------------------------------------------------------------
+  // Constants
+  // ---------------------------------------------------------------------------
+  static const String railwayFunctionUrl =
+      'https://steadfast-vibrancy-production.up.railway.app/token';
 
-  static const String railwayFunctionUrl = 'https://steadfast-vibrancy-production.up.railway.app/token';
+  static const Duration _defaultRequestTimeout = Duration(seconds: 15);
+  static const int _maxCacheSize = 100;
+  static const int _defaultExpirationSeconds = 86400;
 
-  /// Get the current App ID and Certificate from GlobalSettingsService dynamically
-  String get dynamicAppId {
-    try {
-      final settingsService = Get.find<GlobalSettingsService>();
-      final val = settingsService.agoraAppId.value;
-      return val.isNotEmpty ? val : 'c74eafbb98784225bae6be9b7e7f6225';
-    } catch (e) {
-      debugPrint('🎫 [TokenService] GlobalSettingsService not found, using default AppID');
-      return 'c74eafbb98784225bae6be9b7e7f6225'; // fallback
+  // ---------------------------------------------------------------------------
+  // LRU Token Cache
+  // ---------------------------------------------------------------------------
+  final LinkedHashMap<TokenCacheKey, TokenResponse> _tokenCache =
+      LinkedHashMap<TokenCacheKey, TokenResponse>();
+
+  // ===========================================================================
+  // Centralized Logging
+  // ===========================================================================
+  void _logDebug(String message) {
+    debugPrint('🎫 [TokenService] $message');
+  }
+
+  void _logWarning(String message) {
+    debugPrint('🎫 [TokenService] ⚠️ $message');
+  }
+
+  void _logError(String message, [dynamic error]) {
+    if (error != null) {
+      debugPrint('🎫 [TokenService] ❌ $message: $error');
+    } else {
+      debugPrint('🎫 [TokenService] ❌ $message');
     }
   }
 
-  String get dynamicAppCertificate {
-    try {
-      final settingsService = Get.find<GlobalSettingsService>();
-      final val = settingsService.agoraCertificate.value;
-      return val.isNotEmpty ? val : 'eb4c5875fba74804b9d348882d7365f0';
-    } catch (e) {
-      debugPrint('🎫 [TokenService] GlobalSettingsService not found, using default AppCertificate');
-      return 'eb4c5875fba74804b9d348882d7365f0'; // fallback
-    }
-  }
+  // ===========================================================================
+  // Configuration Layer
+  // ===========================================================================
 
-  /// Generate Agora token for a channel
-  Future<TokenResponse?> generateToken({
-    required String channelName,
-    required int uid,
-    String role = 'publisher',
-    int expirationTimeInSeconds = 3600,
-  }) async {
+  /// Resolves the current Agora App ID from [GlobalSettingsService].
+  /// Never returns a hardcoded default credential.
+  String? _cachedAppId;
+  String? _getAppId() {
     try {
-      debugPrint('🎫 [TokenService] Generating token for channel: $channelName, uid: $uid, role: $role');
-      
-      final cacheKey = '${channelName}_${uid}_$role';
-      
-      // Check cache first
-      if (_tokenCache.containsKey(cacheKey)) {
-        final cachedToken = _tokenCache[cacheKey]!;
-        if (!cachedToken.willExpireSoon) {
-          debugPrint('🎫 [TokenService] Using cached token');
-          return cachedToken;
-        } else {
-          debugPrint('🎫 [TokenService] Cached token will expire soon, generating new one');
-          _tokenCache.remove(cacheKey);
+      if (Get.isRegistered<GlobalSettingsService>()) {
+        final settingsService = Get.find<GlobalSettingsService>();
+        final val = settingsService.agoraAppId.value.trim();
+        if (val.isNotEmpty) {
+          if (_cachedAppId != null && _cachedAppId != val) {
+            _tokenCache.clear();
+            _logDebug('Agora App ID changed dynamically from $_cachedAppId to $val, cleared token cache.');
+          }
+          _cachedAppId = val;
+          return val;
         }
       }
+    } catch (e) {
+      _logWarning('GlobalSettingsService lookup notice: $e');
+    }
+    return null;
+  }
 
-      String? token;
+  /// Checks if dynamic App ID configuration is available.
+  bool _isConfigured() {
+    final appId = _getAppId();
+    return appId != null && appId.isNotEmpty;
+  }
 
-      // 1. Try Firebase Cloud Function first (most secure, generates official v006 token)
+  /// Backwards-compatible public getter for App ID.
+  /// Returns dynamic App ID from settings, or empty string if not configured.
+  String get dynamicAppId => _getAppId() ?? '';
+
+  /// App Certificate is strictly kept on the backend; the client never stores or accesses it.
+  String get dynamicAppCertificate => '';
+
+  // ===========================================================================
+  // Cache Helpers (LRU + Expiration)
+  // ===========================================================================
+
+  TokenCacheKey _createCacheKey(String channelName, int uid, String role) {
+    return TokenCacheKey(
+      channelName: channelName.trim(),
+      uid: uid,
+      role: role.trim().toLowerCase(),
+    );
+  }
+
+  /// Checks if token is valid, non-empty, and not expiring soon.
+  bool _isTokenValid(TokenResponse? token) {
+    if (token == null || token.token.isEmpty) return false;
+    return !token.willExpireSoon && !token.isExpired;
+  }
+
+  /// Removes expired tokens from the cache.
+  void _removeExpiredTokens() {
+    final expiredKeys = <TokenCacheKey>[];
+    for (final entry in _tokenCache.entries) {
+      if (entry.value.isExpired || entry.value.willExpireSoon) {
+        expiredKeys.add(entry.key);
+      }
+    }
+    for (final key in expiredKeys) {
+      _tokenCache.remove(key);
+    }
+    if (expiredKeys.isNotEmpty) {
+      _logDebug('Evicted ${expiredKeys.length} expired/stale tokens from cache');
+    }
+  }
+
+  /// Caches a token with LRU eviction when exceeding [_maxCacheSize].
+  void _cacheToken(TokenCacheKey key, TokenResponse response) {
+    _tokenCache.remove(key);
+
+    if (_tokenCache.length >= _maxCacheSize) {
+      final oldestKey = _tokenCache.keys.first;
+      _tokenCache.remove(oldestKey);
+      _logDebug('Evicted oldest LRU token: $oldestKey');
+    }
+
+    _tokenCache[key] = response;
+  }
+
+  // ===========================================================================
+  // Server Request Layer
+  // ===========================================================================
+
+  /// Requests token from Firebase Cloud Function (`generateAgoraToken`).
+  Future<String?> _requestTokenFromFirebase({
+    required String channelName,
+    required int uid,
+    required String role,
+    required int expirationTimeInSeconds,
+    Duration timeout = _defaultRequestTimeout,
+  }) async {
+    for (int attempt = 1; attempt <= 2; attempt++) {
       try {
-        debugPrint('🎫 [TokenService] Attempting Firebase Cloud Function token generation...');
-        final HttpsCallable callable = FirebaseFunctions.instance.httpsCallable('generateAgoraToken');
+        _logDebug(
+            'Attempting Firebase Cloud Function token generation for $channelName (uid: $uid, attempt: $attempt)...');
+        final HttpsCallable callable =
+            FirebaseFunctions.instance.httpsCallable('generateAgoraToken');
+
         final response = await callable.call({
           'channelName': channelName,
           'uid': uid,
           'role': role,
           'expirationTimeInSeconds': expirationTimeInSeconds,
-        }).timeout(const Duration(seconds: 3));
+          'appId': dynamicAppId,
+        }).timeout(timeout);
 
         if (response.data != null && response.data['success'] == true) {
-          token = response.data['token'];
-          debugPrint('🎫 [TokenService] Token generated via Firebase Function successfully');
-        } else {
-          debugPrint('🎫 [TokenService] Firebase Function returned success: false or null data');
+          final token = response.data['token'] as String?;
+          if (token != null && token.isNotEmpty) {
+            _logDebug('Token successfully generated via Firebase Function ✅');
+            return token;
+          }
         }
+      } on FirebaseFunctionsException catch (e) {
+        _logError(
+            'FirebaseFunctionsException [${e.code}]: ${e.message} (details: ${e.details})');
+        if (e.code == 'not-found' || e.code == 'unimplemented') {
+          break;
+        }
+      } on TimeoutException catch (_) {
+        _logWarning(
+            'Firebase Cloud Function token request timed out (${timeout.inSeconds}s, attempt: $attempt)');
+      } on SocketException catch (e) {
+        _logWarning(
+            'Network socket exception during Firebase token request: $e (attempt: $attempt)');
+      } on PlatformException catch (e) {
+        _logError(
+            'PlatformException during Firebase token request: ${e.message}');
       } catch (e) {
-        debugPrint('🎫 [TokenService] Firebase Function failed/timed out: $e');
+        _logWarning('Unexpected error calling Firebase token function: $e');
       }
 
-      // 2. Try Railway API endpoint as fallback
-      if (token == null || token.isEmpty) {
-        try {
-          debugPrint('🎫 [TokenService] Attempting Railway URL fallback...');
-          final requestBody = {
-            'channelName': channelName,
-            'uid': uid,
-            'role': role,
-            'expireTime': expirationTimeInSeconds,
-          };
-          final response = await http.post(
-            Uri.parse(railwayFunctionUrl),
+      if (attempt < 2) {
+        await Future.delayed(const Duration(milliseconds: 750));
+      }
+    }
+    return null;
+  }
+
+  /// Requests token from HTTP server endpoint fallback (e.g. Railway / Node.js helper).
+  Future<String?> _requestTokenFromHttp({
+    required String channelName,
+    required int uid,
+    required String role,
+    required int expirationTimeInSeconds,
+    Duration timeout = _defaultRequestTimeout,
+  }) async {
+    try {
+      _logDebug('Attempting HTTP server token generation fallback ($railwayFunctionUrl)...');
+      final uri = Uri.parse(railwayFunctionUrl);
+      final response = await http
+          .post(
+            uri,
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(requestBody),
-          ).timeout(const Duration(seconds: 3));
-          if (response.statusCode == 200) {
-            final data = jsonDecode(response.body) as Map<String, dynamic>;
-            token = data['token'] as String?;
-            debugPrint('🎫 [TokenService] Token generated via Railway API successfully');
-          } else {
-            debugPrint('🎫 [TokenService] HTTP Error ${response.statusCode} from Railway API');
-          }
-        } catch (e) {
-          debugPrint('🎫 [TokenService] Railway API request failed/timed out: $e');
-        }
-      }
+            body: jsonEncode({
+              'channelName': channelName,
+              'uid': uid,
+              'role': role,
+              'expirationTimeInSeconds': expirationTimeInSeconds,
+              'appId': dynamicAppId,
+            }),
+          )
+          .timeout(timeout);
 
-      // 3. Client-side local generation using dynamic settings as final safety net fallback
-      if (token == null || token.isEmpty) {
-        try {
-          debugPrint('🎫 [TokenService] Attempting client-side local token generation fallback...');
-          final appId = dynamicAppId;
-          final appCert = dynamicAppCertificate;
-          
-          if (appId.isNotEmpty && appCert.isNotEmpty) {
-            token = RtcTokenBuilder.buildTokenWithUid(
-              appId: appId,
-              appCertificate: appCert,
-              channelName: channelName,
-              uid: uid,
-              tokenExpireSeconds: expirationTimeInSeconds,
-            );
-            debugPrint('🎫 [TokenService] Token generated locally via RtcTokenBuilder successfully');
-          } else {
-            debugPrint('🎫 [TokenService] Local generation skipped due to empty appId/appCertificate');
+      if (response.statusCode == 200 && response.body.isNotEmpty) {
+        final data = jsonDecode(response.body);
+        if (data is Map<String, dynamic>) {
+          final token = (data['token'] ?? data['data']) as String?;
+          if (token != null && token.isNotEmpty) {
+            _logDebug('Token successfully generated via HTTP backend ✅');
+            return token;
           }
-        } catch (e) {
-          debugPrint('🎫 [TokenService] Local token generation failed: $e');
         }
-      }
-
-      // Process and cache the token if successfully obtained
-      if (token != null && token.isNotEmpty) {
-        final expiresAt = DateTime.now().add(Duration(seconds: expirationTimeInSeconds));
-        final tokenResponse = TokenResponse(
-          token: token,
-          uid: uid,
-          channelName: channelName,
-          expiresAt: expiresAt,
-        );
-        
-        // Cache the token
-        _tokenCache[cacheKey] = tokenResponse;
-        
-        debugPrint('🎫 [TokenService] Token generated successfully ✅ (length: ${token.length})');
-        return tokenResponse;
       } else {
-        debugPrint('🎫 [TokenService] All token generation methods failed! ❌');
+        _logWarning('HTTP backend returned status code ${response.statusCode}');
+      }
+    } on TimeoutException catch (_) {
+      _logWarning('HTTP token request timed out');
+    } on SocketException catch (e) {
+      _logWarning('HTTP token request network error: $e');
+    } on FormatException catch (e) {
+      _logWarning('HTTP token response format error: $e');
+    } catch (e) {
+      _logWarning('HTTP token generation error: $e');
+    }
+    return null;
+  }
+
+  /// Centralized server token request pipeline.
+  Future<String?> _requestTokenFromServer({
+    required String channelName,
+    required int uid,
+    required String role,
+    required int expirationTimeInSeconds,
+    Duration timeout = _defaultRequestTimeout,
+  }) async {
+    // 1. Primary: Firebase Cloud Functions (`generateAgoraToken`)
+    final tokenFromFirebase = await _requestTokenFromFirebase(
+      channelName: channelName,
+      uid: uid,
+      role: role,
+      expirationTimeInSeconds: expirationTimeInSeconds,
+      timeout: timeout,
+    );
+    if (tokenFromFirebase != null && tokenFromFirebase.isNotEmpty) {
+      return tokenFromFirebase;
+    }
+
+    // 2. Secondary fallback: HTTP server if available (e.g. Railway / Node.js backend)
+    final tokenFromHttp = await _requestTokenFromHttp(
+      channelName: channelName,
+      uid: uid,
+      role: role,
+      expirationTimeInSeconds: expirationTimeInSeconds,
+      timeout: timeout,
+    );
+    if (tokenFromHttp != null && tokenFromHttp.isNotEmpty) {
+      return tokenFromHttp;
+    }
+
+    _logError(
+        'All token generation attempts failed for channel: $channelName, uid: $uid');
+    return null;
+  }
+
+  // ===========================================================================
+  // Public Token API
+  // ===========================================================================
+
+  /// Generates or retrieves a cached Agora RTC token for a channel session.
+  ///
+  /// Flow:
+  /// 1. Checks LRU cache for unexpired valid token.
+  /// 2. Requests new token from secure backend server.
+  /// 3. Validates and caches response in LRU cache.
+  Future<TokenResponse?> generateToken({
+    required String channelName,
+    required int uid,
+    String role = 'publisher',
+    int expirationTimeInSeconds = _defaultExpirationSeconds,
+  }) async {
+    try {
+      final cleanChannel = channelName.trim();
+      if (cleanChannel.isEmpty) {
+        _logError('Invalid argument: channelName cannot be empty');
         return null;
       }
+
+      final normalizedRole = AgoraRole.fromString(role).value;
+      final cacheKey = _createCacheKey(cleanChannel, uid, normalizedRole);
+
+      // 1. Check LRU Cache
+      _removeExpiredTokens();
+      if (_tokenCache.containsKey(cacheKey)) {
+        final cached = _tokenCache[cacheKey]!;
+        if (_isTokenValid(cached)) {
+          _logDebug('Returning valid cached token for $cacheKey');
+          // Promote to most recently used
+          _cacheToken(cacheKey, cached);
+          return cached;
+        } else {
+          _tokenCache.remove(cacheKey);
+        }
+      }
+
+      // 2. Request Token from Trusted Server
+      final tokenString = await _requestTokenFromServer(
+        channelName: cleanChannel,
+        uid: uid,
+        role: normalizedRole,
+        expirationTimeInSeconds: expirationTimeInSeconds,
+      );
+
+      if (tokenString == null || tokenString.isEmpty) {
+        return null;
+      }
+
+      // 3. Create, Cache, and Return TokenResponse
+      final expiresAt =
+          DateTime.now().add(Duration(seconds: expirationTimeInSeconds));
+      final response = TokenResponse(
+        token: tokenString,
+        uid: uid,
+        channelName: cleanChannel,
+        expiresAt: expiresAt,
+      );
+
+      _cacheToken(cacheKey, response);
+      _logDebug('Token successfully acquired and cached for $cleanChannel (uid: $uid)');
+      return response;
     } catch (e) {
-      debugPrint('🎫 [TokenService] Exception in generateToken: $e');
+      _logError('Exception in generateToken', e);
       return null;
     }
   }
 
-  /// Generate tokens for multiple users (batch operation)
+  /// Generates tokens for multiple users concurrently in parallel.
   Future<List<TokenResponse>?> generateBatchTokens({
     required String channelName,
     required List<TokenRequest> users,
     int expirationTimeInSeconds = 3600,
   }) async {
     try {
-      debugPrint('🎫 [TokenService] Generating batch tokens for ${users.length} users');
-      final tokens = <TokenResponse>[];
-      
-      for (final user in users) {
-        final token = await generateToken(
-          channelName: channelName,
-          uid: user.uid,
-          role: user.role,
-          expirationTimeInSeconds: expirationTimeInSeconds,
-        );
-        
-        if (token != null) {
-          tokens.add(token);
-        } else {
-          debugPrint('🎫 [TokenService] Failed to generate token for uid: ${user.uid}');
-        }
-      }
-      
-      debugPrint('🎫 [TokenService] Batch tokens generated: ${tokens.length}/${users.length}');
-      return tokens.isNotEmpty ? tokens : null;
+      _logDebug(
+          'Generating batch tokens in parallel for ${users.length} users in $channelName');
+      if (users.isEmpty) return [];
+
+      final futures = users.map((user) => generateToken(
+            channelName: channelName,
+            uid: user.uid,
+            role: user.role,
+            expirationTimeInSeconds: expirationTimeInSeconds,
+          ));
+
+      final results = await Future.wait(futures);
+      final validTokens = results.whereType<TokenResponse>().toList();
+
+      _logDebug(
+          'Batch token generation completed: ${validTokens.length}/${users.length} succeeded');
+      return validTokens.isNotEmpty ? validTokens : null;
     } catch (e) {
-      debugPrint('🎫 [TokenService] Error generating batch tokens: $e');
+      _logError('Error generating batch tokens', e);
       return null;
     }
   }
 
-  /// Refresh an existing token
+  /// Refreshes an existing token by invalidating any cached matching token
+  /// and requesting a fresh token from the server.
   Future<TokenResponse?> refreshToken({
     required String channelName,
     required int uid,
     required String currentToken,
     String role = 'publisher',
-    int expirationTimeInSeconds = 3600,
+    int expirationTimeInSeconds = _defaultExpirationSeconds,
   }) async {
     try {
-      debugPrint('🎫 [TokenService] Refreshing token for channel: $channelName, uid: $uid');
-      
-      // Clear the cached token first
-      final cacheKey = '${channelName}_${uid}_$role';
-      _tokenCache.remove(cacheKey);
-      
-      // Generate a new token
+      _logDebug('Refreshing token for channel: $channelName, uid: $uid');
+      final normalizedRole = AgoraRole.fromString(role).value;
+      final cacheKey = _createCacheKey(channelName, uid, normalizedRole);
+
+      // Invalidate existing cache if it matches the current expiring token
+      final existing = _tokenCache[cacheKey];
+      if (existing != null &&
+          (existing.token == currentToken || existing.willExpireSoon)) {
+        _tokenCache.remove(cacheKey);
+      }
+
       return await generateToken(
         channelName: channelName,
         uid: uid,
-        role: role,
+        role: normalizedRole,
         expirationTimeInSeconds: expirationTimeInSeconds,
       );
     } catch (e) {
-      debugPrint('🎫 [TokenService] Error refreshing token: $e');
+      _logError('Error refreshing token', e);
       return null;
     }
   }
 
-  /// Get token info (for debugging)
+  /// Returns diagnostic metadata regarding token cache and endpoint status.
   Future<Map<String, dynamic>?> getTokenInfo() async {
     try {
+      final appId = _getAppId() ?? '';
+      final maskedAppId =
+          appId.length >= 5 ? '${appId.substring(0, 5)}...' : (appId.isNotEmpty ? '***' : 'not_configured');
+
       return {
         'success': true,
-        'service': 'Dynamic Agora Token Service',
+        'service': 'Dynamic Server-Backed Agora Token Service',
         'endpoint': railwayFunctionUrl,
         'currentTimestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
         'serverTime': DateTime.now().toIso8601String(),
         'cacheSize': _tokenCache.length,
-        'appId': '${dynamicAppId.substring(0, 5)}...',
+        'appId': maskedAppId,
+        'isConfigured': _isConfigured(),
       };
     } catch (e) {
-      debugPrint('🎫 [TokenService] Error getting token info: $e');
+      _logError('Error getting token info', e);
       return null;
     }
   }
 
-  /// Check if token needs renewal
+  /// Checks whether a given [TokenResponse] will expire soon or has expired.
   bool shouldRenewToken(TokenResponse token) {
     return token.willExpireSoon || token.isExpired;
   }
 
-  /// Get cached token if available and valid
+  /// Retrieves a valid cached token if present, otherwise returns `null`.
   TokenResponse? getCachedToken(String channelName, int uid, String role) {
-    final cacheKey = '${channelName}_${uid}_$role';
-    final cachedToken = _tokenCache[cacheKey];
-    
-    if (cachedToken != null && !cachedToken.willExpireSoon) {
-      return cachedToken;
+    final key = _createCacheKey(channelName, uid, role);
+    final cached = _tokenCache[key];
+
+    if (_isTokenValid(cached)) {
+      _cacheToken(key, cached!); // Promote to MRU
+      return cached;
     }
-    
-    // Remove expired/expiring token from cache
-    if (cachedToken != null) {
-      _tokenCache.remove(cacheKey);
+
+    if (cached != null) {
+      _tokenCache.remove(key);
     }
-    
     return null;
   }
 
-  /// Clear token cache
+  /// Clears the entire token cache.
   void clearCache() {
     _tokenCache.clear();
-    debugPrint('🎫 [TokenService] Token cache cleared');
+    _logDebug('Token cache cleared');
   }
 
-  /// Clear specific token from cache
+  /// Clears a specific token from the cache.
   void clearTokenFromCache(String channelName, int uid, String role) {
-    final cacheKey = '${channelName}_${uid}_$role';
-    _tokenCache.remove(cacheKey);
-    debugPrint('🎫 [TokenService] Token removed from cache: $cacheKey');
+    final key = _createCacheKey(channelName, uid, role);
+    _tokenCache.remove(key);
+    _logDebug('Token removed from cache: $key');
   }
 
-  /// Get cache statistics
+  /// Returns runtime statistics for cached tokens.
   Map<String, dynamic> getCacheStats() {
     final validTokens = _tokenCache.values.where((t) => !t.isExpired).length;
     final expiredTokens = _tokenCache.values.where((t) => t.isExpired).length;
-    final expiringSoon = _tokenCache.values.where((t) => t.willExpireSoon && !t.isExpired).length;
-    
+    final expiringSoon =
+        _tokenCache.values.where((t) => t.willExpireSoon && !t.isExpired).length;
+
     return {
       'totalTokens': _tokenCache.length,
       'validTokens': validTokens,
       'expiredTokens': expiredTokens,
       'expiringSoon': expiringSoon,
-      'cacheKeys': _tokenCache.keys.toList(),
+      'cacheKeys': _tokenCache.keys.map((k) => k.toString()).toList(),
     };
   }
 
-  /// Cleanup expired tokens from cache
+  /// Manually cleans up expired tokens from the cache.
   void cleanupExpiredTokens() {
-    final expiredKeys = _tokenCache.entries
-        .where((entry) => entry.value.isExpired)
-        .map((entry) => entry.key)
-        .toList();
-    
-    for (final key in expiredKeys) {
-      _tokenCache.remove(key);
-    }
-    
-    if (expiredKeys.isNotEmpty) {
-      debugPrint('🎫 [TokenService] Cleaned up ${expiredKeys.length} expired tokens');
-    }
+    _removeExpiredTokens();
   }
 
-  /// Dispose and cleanup
+  /// Releases resources and resets singleton state.
   void dispose() {
     _tokenCache.clear();
-    debugPrint('🎫 [TokenService] Token service disposed');
+    _logDebug('Token service disposed and cache reset');
   }
 }

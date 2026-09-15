@@ -107,12 +107,26 @@ class Group {
   static User get _currentUser => AuthController.instance.currentUser;
 
   /// Get active participants
-  List<User> get participants =>
-      members.where((m) => !removedMembers.contains(m.userId)).toList();
+  List<User> get participants {
+    final Map<String, User> uniqueMap = {};
+    for (final m in members) {
+      if (m.userId.isNotEmpty && !removedMembers.contains(m.userId)) {
+        uniqueMap[m.userId] = m;
+      }
+    }
+    return uniqueMap.values.toList();
+  }
 
   /// Get recipients
-  List<User> get recipients =>
-      members.where((m) => m.userId != _currentUser.userId).toList();
+  List<User> get recipients {
+    final Map<String, User> uniqueMap = {};
+    for (final m in members) {
+      if (m.userId.isNotEmpty && m.userId != _currentUser.userId && !removedMembers.contains(m.userId)) {
+        uniqueMap[m.userId] = m;
+      }
+    }
+    return uniqueMap.values.toList();
+  }
 
   bool isRemoved(String memberId) {
     return removedMembers.contains(memberId);
@@ -120,6 +134,10 @@ class Group {
 
   bool isAdmin(String memberId) {
     return adminMembers.contains(memberId);
+  }
+
+  bool isOwner(String memberId) {
+    return createdBy.isNotEmpty && createdBy == memberId;
   }
 
   bool get isMuted => _currentUser.mutedGroups.contains(groupId);

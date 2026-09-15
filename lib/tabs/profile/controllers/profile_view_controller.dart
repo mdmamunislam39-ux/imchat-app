@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/api/block_api.dart';
-import 'package:chat_messenger/api/user_api.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/models/user.dart';
-import 'package:chat_messenger/services/store_service.dart';
+import 'package:chat_messenger/helpers/frame_helper.dart';
 import 'package:get/get.dart';
 
 class ProfileViewController extends GetxController {
@@ -30,22 +29,19 @@ class ProfileViewController extends GetxController {
   }
 
   final RxnString currentFrameUrl = RxnString();
-  final StoreService _storeService = StoreService();
 
   Future<void> _loadFrame() async {
     try {
-      // Fetch latest user data to get customization
-      final user = await UserApi.getUser(userId);
-      if (user != null && user.customization?.selectedFrameId != null) {
-        final frameDetails = await _storeService
-            .getStoreItemDetails(user.customization!.selectedFrameId!);
+      // 1. Check synchronous cache first for instant UI response
+      final cachedUrl = FrameHelper.getCachedUserFrameUrl(userId);
+      if (cachedUrl != null && cachedUrl.isNotEmpty) {
+        currentFrameUrl.value = cachedUrl;
+        return;
+      }
 
-        if (frameDetails != null) {
-          currentFrameUrl.value = frameDetails['fileUrl'] ??
-              frameDetails['thumbnailUrl'] ??
-              frameDetails['imageUrl'] ??
-              frameDetails['image'];
-        }
+      final resolvedUrl = await FrameHelper.getFrameUrlFromUserId(userId);
+      if (resolvedUrl != null && resolvedUrl.isNotEmpty) {
+        currentFrameUrl.value = resolvedUrl;
       }
     } catch (e) {
       debugPrint('❌ Error loading frame: $e');

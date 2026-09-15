@@ -157,13 +157,12 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                 ],
               ),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: Colors.purpleAccent.withValues(alpha: 0.3)),
+              border:
+                  Border.all(color: Colors.purpleAccent.withValues(alpha: 0.3)),
             ),
             child: Row(
               children: [
-                Icon(Icons.support_agent,
-                    color: Colors.purpleAccent, size: 40),
+                Icon(Icons.support_agent, color: Colors.purpleAccent, size: 40),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -197,9 +196,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
           const Text(
             'Category',
             style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600),
+                color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Container(
@@ -207,8 +204,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
             decoration: BoxDecoration(
               color: const Color(0xFF1F203C),
               borderRadius: BorderRadius.circular(10),
-              border:
-                  Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+              border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
@@ -236,9 +232,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
           const Text(
             'Subject',
             style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600),
+                color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           TextField(
@@ -271,9 +265,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
           const Text(
             'Message',
             style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600),
+                color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           TextField(
@@ -386,8 +378,10 @@ class _FeedbackScreenState extends State<FeedbackScreen>
         // Sort client-side by createdAt descending (avoids composite index requirement)
         final sortedDocs = List<QueryDocumentSnapshot>.from(docs);
         sortedDocs.sort((a, b) {
-          final aTime = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-          final bTime = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
+          final aTime =
+              (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
+          final bTime =
+              (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
           if (aTime == null && bTime == null) return 0;
           if (aTime == null) return 1;
           if (bTime == null) return -1;
@@ -408,8 +402,8 @@ class _FeedbackScreenState extends State<FeedbackScreen>
 
   Widget _buildFeedbackCard(Map<String, dynamic> data) {
     final status = data['status'] ?? 'pending';
-    final hasReply = data['adminReply'] != null &&
-        (data['adminReply'] as String).isNotEmpty;
+    final hasReply =
+        data['adminReply'] != null && (data['adminReply'] as String).isNotEmpty;
 
     Color statusColor;
     IconData statusIcon;
@@ -572,8 +566,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                     const SizedBox(height: 6),
                     Text(
                       data['adminReply'] ?? '',
-                      style:
-                          TextStyle(color: Colors.grey[300], fontSize: 13),
+                      style: TextStyle(color: Colors.grey[300], fontSize: 13),
                     ),
                   ],
                 ),

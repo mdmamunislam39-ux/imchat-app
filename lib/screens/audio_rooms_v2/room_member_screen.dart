@@ -11,6 +11,8 @@ import 'package:chat_messenger/services/premium_room_service.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/repository/audio_rooms_repository.dart';
 import 'dart:async';
+import 'dart:io';
+import 'package:chat_messenger/helpers/dialog_helper.dart';
 
 
 
@@ -332,6 +334,8 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                                   joinedUserIds: joinedUserIds,
                                   totalRevenue: totalRevenue,
                                   nextRequirement: nextReq,
+                                  isOwner: creatorId == widget.currentUserId,
+                                  onEditTap: () => _showRoomSettingsBottomSheet(roomData),
                                 ),
                                 const SizedBox(height: 24),
                                 // Realtime Active Member List Section Title
@@ -354,7 +358,7 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                                         ),
                                         const SizedBox(height: 4),
                                         Obx(() {
-                                          final displayId = Get.find<PremiumRoomService>().getDisplayId(widget.roomId);
+                                          final displayId = PremiumRoomService.instance.getDisplayId(widget.roomId);
                                           return Text(
                                           'Room ID: $displayId',
                                           style: TextStyle(
@@ -476,7 +480,7 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                 ),
                 const SizedBox(height: 2),
                 Obx(() {
-                  final displayId = Get.find<PremiumRoomService>().getDisplayId(widget.roomId);
+                  final displayId = PremiumRoomService.instance.getDisplayId(widget.roomId);
                   return Text(
                   'Room ID: $displayId',
                   style: const TextStyle(
@@ -509,6 +513,8 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
     required List<dynamic> joinedUserIds,
     required int totalRevenue,
     required int nextRequirement,
+    bool isOwner = false,
+    VoidCallback? onEditTap,
   }) {
 
     return Container(
@@ -543,39 +549,74 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Room Image Container
-              Hero(
-                tag: 'room_image_${widget.roomId}',
-                child: Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: const Color(0xFFD4AF37),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        blurRadius: 8,
-                        offset: const Offset(0, 4),
+              // Room Image Container with Edit Badge
+              GestureDetector(
+                onTap: isOwner ? onEditTap : null,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Hero(
+                      tag: 'room_image_${widget.roomId}',
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: const Color(0xFFD4AF37),
+                            width: 1.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                          image: roomImageUrl != null
+                              ? DecorationImage(
+                                  image: NetworkImage(roomImageUrl),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
+                        ),
+                        child: roomImageUrl == null
+                            ? const Icon(
+                                Icons.meeting_room,
+                                color: Color(0xFFD4AF37),
+                                size: 36,
+                              )
+                            : null,
                       ),
-                    ],
-                    image: roomImageUrl != null
-                        ? DecorationImage(
-                            image: NetworkImage(roomImageUrl),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
-                  ),
-                  child: roomImageUrl == null
-                      ? const Icon(
-                          Icons.meeting_room,
-                          color: Color(0xFFD4AF37),
-                          size: 36,
-                        )
-                      : null,
+                    ),
+                    if (isOwner)
+                      Positioned(
+                        right: -4,
+                        bottom: -4,
+                        child: Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD4AF37),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF14141F),
+                              width: 1.5,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.4),
+                                blurRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt_rounded,
+                            color: Colors.black,
+                            size: 13,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 16),
@@ -645,7 +686,7 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                               ),
                             ),
                             Obx(() {
-                              final displayId = Get.find<PremiumRoomService>().getDisplayId(widget.roomId);
+                              final displayId = PremiumRoomService.instance.getDisplayId(widget.roomId);
                               return Text(
                               displayId,
                               style: const TextStyle(
@@ -908,6 +949,15 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
 
         final int activeSvipLevel = uData?['activeSvipLevel'] as int? ?? 0;
         final String svipValidUntilMonth = uData?['svipValidUntilMonth'] as String? ?? '';
+        final int activeVipLevel = uData?['activeVipLevel'] as int? ?? 0;
+        final String vipValidUntilMonth = uData?['vipValidUntilMonth'] as String? ?? '';
+        final dynamic vipValidUntilRaw = uData?['vipValidUntil'];
+        DateTime? vipValidUntil;
+        if (vipValidUntilRaw is Timestamp) {
+          vipValidUntil = vipValidUntilRaw.toDate();
+        } else if (vipValidUntilRaw is String) {
+          vipValidUntil = DateTime.tryParse(vipValidUntilRaw);
+        }
 
         // Fallback to user's global lastActive field
         if (lastActiveTime == null && uData?['lastActive'] != null) {
@@ -983,6 +1033,9 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                                 name: fullname,
                                 activeSvipLevel: activeSvipLevel,
                                 svipValidUntilMonth: svipValidUntilMonth,
+                                activeVipLevel: activeVipLevel,
+                                vipValidUntilMonth: vipValidUntilMonth,
+                                vipValidUntil: vipValidUntil,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 15,
@@ -1772,8 +1825,8 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                   ),
                   tabs: [
                     Tab(
-                      icon: Icon(Icons.campaign_rounded, size: 20),
-                      text: 'Announcement',
+                      icon: Icon(Icons.info_outline_rounded, size: 20),
+                      text: 'Room Info',
                     ),
                     Tab(
                       icon: Icon(Icons.people_alt_rounded, size: 20),
@@ -1814,7 +1867,6 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                       
                       final currentRoomData = snapshot.data!.data() as Map<String, dynamic>;
                       final Map<String, dynamic> settings = currentRoomData['settings'] as Map<String, dynamic>? ?? {};
-                      final String? announcement = settings['announcement'];
                       final String roomCategory = currentRoomData['category'] ?? 'Game';
                       final List<dynamic> blockedUsersRaw = settings['blockedUsers'] as List<dynamic>? ?? [];
                       final List<dynamic> removedUsersRaw = currentRoomData['removedUsers'] as List<dynamic>? ?? [];
@@ -1826,8 +1878,8 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                       
                       return TabBarView(
                         children: [
-                          // Announcement Tab
-                          _buildAnnouncementTab(announcement),
+                          // Room Info Tab
+                          _buildRoomInfoTab(currentRoomData),
                           
                           // Settings Members management tab
                           _buildSettingsMembersTab(latestJoinedIds, creatorId, currentRoomData),
@@ -1996,114 +2048,11 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
     );
   }
 
-  Widget _buildAnnouncementTab(String? announcement) {
-    final TextEditingController announcementController = TextEditingController(text: announcement);
-    
-    return Padding(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Room Announcement',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'Inter',
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Set a welcome message or rule list for anyone entering the room. This will be prominently displayed at the top of the room.',
-            style: TextStyle(
-              color: Colors.white54,
-              fontSize: 12,
-              fontFamily: 'Inter',
-            ),
-          ),
-          const SizedBox(height: 20),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.purple.shade900,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.purpleAccent),
-              ),
-              child: TextField(
-                controller: announcementController,
-                maxLines: 8,
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Inter'),
-                decoration: InputDecoration(
-                  hintText: 'Enter announcement here...',
-                  hintStyle: const TextStyle(color: Colors.white54),
-                  border: InputBorder.none,
-                  filled: true,
-                  fillColor: Colors.transparent,
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.clear, color: Colors.white),
-                    onPressed: () => announcementController.clear(),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFD4AF37), Color(0xFF9A7B1C)],
-                ),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.transparent,
-                  shadowColor: Colors.transparent,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                onPressed: () async {
-                  try {
-                    await FirebaseFirestore.instance
-                        .collection('audio_rooms_v2')
-                        .doc(widget.roomId)
-                        .update({
-                      'settings.announcement': announcementController.text.trim(),
-                    });
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Announcement updated successfully!'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Failed to update announcement: $e'), backgroundColor: Colors.red),
-                      );
-                    }
-                  }
-                },
-                child: const Text(
-                  'Update Announcement',
-                  style: TextStyle(
-                    color: Colors.black,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Inter',
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+  Widget _buildRoomInfoTab(Map<String, dynamic> roomData) {
+    return _RoomInfoTabWidget(
+      roomId: widget.roomId,
+      currentUserId: widget.currentUserId,
+      roomData: roomData,
     );
   }
 
@@ -2471,3 +2420,368 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
     return '${dt.day}/${dt.month}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
+
+class _RoomInfoTabWidget extends StatefulWidget {
+  final String roomId;
+  final String currentUserId;
+  final Map<String, dynamic> roomData;
+
+  const _RoomInfoTabWidget({
+    super.key,
+    required this.roomId,
+    required this.currentUserId,
+    required this.roomData,
+  });
+
+  @override
+  State<_RoomInfoTabWidget> createState() => _RoomInfoTabWidgetState();
+}
+
+class _RoomInfoTabWidgetState extends State<_RoomInfoTabWidget> {
+  late TextEditingController _nameController;
+  late TextEditingController _announcementController;
+  File? _selectedImageFile;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.roomData['name'] ?? '');
+    final settings = widget.roomData['settings'] as Map<String, dynamic>? ?? {};
+    _announcementController = TextEditingController(text: settings['announcement'] ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _announcementController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final File? picked = await DialogHelper.showPickImageDialog(isAvatar: true);
+      if (picked != null) {
+        setState(() {
+          _selectedImageFile = picked;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error picking room image: $e');
+    }
+  }
+
+  Future<void> _saveChanges() async {
+    final newName = _nameController.text.trim();
+    if (newName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Room name cannot be empty'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      String? newImageUrl;
+      if (_selectedImageFile != null) {
+        final repo = AudioRoomsRepository();
+        newImageUrl = await repo.uploadRoomImage(widget.roomId, _selectedImageFile!);
+      }
+
+      final Map<String, dynamic> updateData = {
+        'name': newName,
+        'settings.announcement': _announcementController.text.trim(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      if (newImageUrl != null) {
+        updateData['imageUrl'] = newImageUrl;
+      }
+
+      await FirebaseFirestore.instance
+          .collection('audio_rooms_v2')
+          .doc(widget.roomId)
+          .update(updateData);
+
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Room info updated successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update room info: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String? existingImageUrl = widget.roomData['imageUrl'];
+
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Room Profile Picture Picker
+          Center(
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: _pickImage,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E1E2A),
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: const Color(0xFFD4AF37),
+                            width: 2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFD4AF37).withValues(alpha: 0.15),
+                              blurRadius: 16,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: _selectedImageFile != null
+                              ? Image.file(
+                                  _selectedImageFile!,
+                                  width: 96,
+                                  height: 96,
+                                  fit: BoxFit.cover,
+                                )
+                              : (existingImageUrl != null && existingImageUrl.isNotEmpty)
+                                  ? Image.network(
+                                      existingImageUrl,
+                                      width: 96,
+                                      height: 96,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) =>
+                                          const Icon(
+                                        Icons.meeting_room_rounded,
+                                        color: Color(0xFFD4AF37),
+                                        size: 44,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.meeting_room_rounded,
+                                      color: Color(0xFFD4AF37),
+                                      size: 44,
+                                    ),
+                        ),
+                      ),
+                      Positioned(
+                        right: -4,
+                        bottom: -4,
+                        child: Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFD4AF37), Color(0xFF9A7B1C)],
+                            ),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF0F0F15),
+                              width: 2,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.5),
+                                blurRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt_rounded,
+                            color: Colors.black,
+                            size: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                GestureDetector(
+                  onTap: _pickImage,
+                  child: const Text(
+                    'Change Room Picture',
+                    style: TextStyle(
+                      color: Color(0xFFD4AF37),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'Inter',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Room Name
+          const Text(
+            'Room Name',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Inter',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+            ),
+            child: TextField(
+              controller: _nameController,
+              style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Inter'),
+              decoration: InputDecoration(
+                hintText: 'Enter room name...',
+                hintStyle: const TextStyle(color: Colors.white38),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                prefixIcon: const Icon(Icons.meeting_room_outlined, color: Color(0xFFD4AF37), size: 20),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
+                  onPressed: () => _nameController.clear(),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Room Announcement
+          const Text(
+            'Room Announcement',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Inter',
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Set a welcome message or rule list for anyone entering the room.',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 12,
+              fontFamily: 'Inter',
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+            ),
+            child: TextField(
+              controller: _announcementController,
+              maxLines: 4,
+              style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Inter'),
+              decoration: InputDecoration(
+                hintText: 'Enter announcement here...',
+                hintStyle: const TextStyle(color: Colors.white38),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.all(14),
+                prefixIcon: const Padding(
+                  padding: EdgeInsets.only(bottom: 50),
+                  child: Icon(Icons.campaign_outlined, color: Color(0xFFD4AF37), size: 20),
+                ),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
+                  onPressed: () => _announcementController.clear(),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 28),
+
+          // Save Changes Button
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFD4AF37), Color(0xFF9A7B1C)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                onPressed: _isSaving ? null : _saveChanges,
+                child: _isSaving
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.black,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : const Text(
+                        'Save Changes',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+}
+

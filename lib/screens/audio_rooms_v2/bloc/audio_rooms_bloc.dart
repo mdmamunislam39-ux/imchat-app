@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:bloc/bloc.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/models/agora_models.dart';
@@ -15,12 +16,14 @@ import 'package:chat_messenger/api/official_team_api.dart';
 
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/services/ban_service.dart';
+import 'package:chat_messenger/services/background_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// BLoC for managing Audio Rooms v2 with Agora Integration
 class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   final AudioRoomsRepository _repository;
   final AgoraService _agoraService = AgoraService();
-  DateTime? _lastMicToggleTime;
+  AgoraService get agoraService => _agoraService;
 
   StreamSubscription<List<AudioRoomV2>>? _roomsStreamSubscription;
   StreamSubscription<AudioRoomV2>? _singleRoomSubscription;
@@ -44,6 +47,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   Timer? _seatConfigDebounceTimer;
   String? _lastSeatConfigRoomId;
   bool _isLeavingVoluntarily = false;
+  DateTime? _lastLocalMuteChangeTime;
 
   AudioRoomsBloc({
     required AudioRoomsRepository repository,
@@ -82,6 +86,8 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
 
     // Seat Management Events
     on<ToggleAllSeatsLock>(_onToggleAllSeatsLock);
+    on<ToggleAllMicsMute>(_onToggleAllMicsMute);
+    on<ToggleAllCommentsBan>(_onToggleAllCommentsBan);
     on<ToggleSeatLock>(_onToggleSeatLock);
     on<MoveParticipantToSeat>(_onMoveParticipantToSeat);
     on<RemoveParticipantFromSeat>(_onRemoveParticipantFromSeat);
@@ -514,10 +520,12 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
 
       // Leave Agora channel first to stop audio immediately
       if (_agoraInitialized && _currentChannelName != null) {
-        debugPrint('🎤 [AudioRoomsBloc] Leaving Agora channel as part of room leave');
+        final leavingChannel = _currentChannelName;
+        debugPrint(
+            '🎤 [AudioRoomsBloc] Leaving Agora channel as part of room leave: $leavingChannel');
         try {
-          await _agoraService.leaveChannel();
-          _agoraService.clearCallbacks();
+          await _agoraService.leaveChannelAndRelease(channelName: leavingChannel);
+          _agoraService.clearCallbacks(channelName: leavingChannel, owner: this);
           _currentChannelName = null;
           _currentUid = null;
           _agoraUsers.clear();
@@ -525,6 +533,13 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         } catch (e) {
           debugPrint('🎤 [AudioRoomsBloc] ⚠️ Error leaving Agora channel: $e');
         }
+      }
+
+      // Stop background service when leaving room only if no other channel is active
+      if (_agoraService.currentChannelId == null) {
+        try {
+          await BackgroundService().stopService();
+        } catch (_) {}
       }
 
       await _repository
@@ -678,6 +693,12 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     Emitter<AudioRoomsState> emit,
   ) async {
     try {
+      if (_currentRoom != null && _currentRoom!.id == event.roomId) {
+        final locallyUpdatedRoom = _currentRoom!.copyWith(settings: event.settings);
+        _currentRoom = locallyUpdatedRoom;
+        emit(AudioRoomUpdated(room: locallyUpdatedRoom));
+      }
+
       await _repository.updateRoomSettings(
         roomId: event.roomId,
         userId: event.userId,
@@ -780,9 +801,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     RoomUpdatedFromStream event,
     Emitter<AudioRoomsState> emit,
   ) async {
-    debugPrint(
-        '🎯 [AudioRoomsBloc] Emitting room update: ${event.room.name} with ${event.room.participants.length} participants');
-
+    final oldRoom = _currentRoom;
     // Store current room for mute status checks
     _currentRoom = event.room;
 
@@ -865,8 +884,9 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
               if (val == null) return DateTime.now();
               if (val is Timestamp) return val.toDate();
               if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
-              if (val is String)
+              if (val is String) {
                 return DateTime.tryParse(val) ?? DateTime.now();
+              }
               if (val is DateTime) return val;
               return DateTime.now();
             }
@@ -880,13 +900,15 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
           DateTime? removedAt;
           final val = mostRecentKick['removedAt'];
           if (val != null) {
-            if (val is Timestamp)
+            if (val is Timestamp) {
               removedAt = val.toDate();
-            else if (val is int)
+            } else if (val is int) {
               removedAt = DateTime.fromMillisecondsSinceEpoch(val);
-            else if (val is String)
+            } else if (val is String) {
               removedAt = DateTime.tryParse(val);
-            else if (val is DateTime) removedAt = val;
+            } else if (val is DateTime) {
+              removedAt = val;
+            }
           }
 
           if (removedAt != null) {
@@ -926,12 +948,77 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         userImageUrl: participant.userImageUrl,
       );
     }
+
+    // Synchronize Agora role and microphone state for current user only within the active channel
+    if (currentUserId != null && _agoraInitialized && _currentChannelName == event.room.id) {
+      final bool isSameRoom = oldRoom != null && oldRoom.id == event.room.id;
+      if (isSameRoom) {
+        final oldParticipant = oldRoom.participants
+            .where((p) => p.userId == currentUserId)
+            .firstOrNull;
+        final newParticipant = event.room.participants
+            .where((p) => p.userId == currentUserId)
+            .firstOrNull;
+
+        final bool wasSeated =
+            (oldParticipant?.isSeated ?? false) ||
+            (oldParticipant?.isSpeaker ?? false) ||
+            (oldParticipant?.seatNumber != null && oldParticipant!.seatNumber! >= 0);
+        final bool isNowSeated =
+            (newParticipant?.isSeated ?? false) ||
+            (newParticipant?.isSpeaker ?? false) ||
+            (newParticipant?.seatNumber != null && newParticipant!.seatNumber! >= 0);
+
+        if (isNowSeated && !wasSeated) {
+          debugPrint(
+              '🎤 [AudioRoomsBloc] 🪑 User moved to seat via remote update -> Switching Agora role to Broadcaster');
+          // When user moves to a seat, they are UNMUTED by default unless muted by admin
+          bool shouldBeMuted = newParticipant?.isMutedByAdmin == true;
+
+          if (!shouldBeMuted) {
+            try {
+              final micStatus = await Permission.microphone.status;
+              if (!micStatus.isGranted) {
+                final req = await Permission.microphone.request();
+                if (!req.isGranted) {
+                  shouldBeMuted = true;
+                }
+              }
+            } catch (e) {
+              shouldBeMuted = true;
+              debugPrint('🎤 [AudioRoomsBloc] Error requesting mic permission: $e');
+            }
+          }
+
+          await _agoraService.setClientRole(ClientRoleType.clientRoleBroadcaster, isMuted: shouldBeMuted);
+          add(SetMicrophoneMute(muted: shouldBeMuted));
+        } else if (!isNowSeated && wasSeated) {
+          debugPrint(
+              '🎤 [AudioRoomsBloc] 🪑 User removed from seat via remote update -> Switching Agora role to Audience');
+          await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
+          add(const SetMicrophoneMute(muted: true));
+        } else if (isNowSeated && oldParticipant != null && newParticipant != null) {
+          // Already seated, check if mute state was changed remotely
+          final bool isRecentLocalChange = _lastLocalMuteChangeTime != null &&
+              DateTime.now().difference(_lastLocalMuteChangeTime!).inMilliseconds < 2500;
+          final bool isAdminMute = newParticipant.isMutedByAdmin;
+
+          if (oldParticipant.isMuted != newParticipant.isMuted && (!isRecentLocalChange || isAdminMute)) {
+            debugPrint(
+                '🎤 [AudioRoomsBloc] 🪑 Remote mute sync for seated user -> muted: ${newParticipant.isMuted}');
+            await _agoraService.setMuted(newParticipant.isMuted);
+            add(SetMicrophoneMute(muted: newParticipant.isMuted));
+          }
+        }
+      }
+    }
+
     emit(AudioRoomUpdated(room: event.room));
   }
 
   /// Generate consistent UID from user ID
   int _generateUid(String userId) {
-    return userId.hashCode.abs() % 1000000; // Generate UID from user ID hash
+    return generateAgoraUid(userId);
   }
 
   /// Handle rooms list updated from stream
@@ -1405,6 +1492,56 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     }
   }
 
+  /// Handle toggle all mics mute
+  Future<void> _onToggleAllMicsMute(
+    ToggleAllMicsMute event,
+    Emitter<AudioRoomsState> emit,
+  ) async {
+    try {
+      debugPrint(
+          '🎙️ [AudioRoomsBloc] Toggling all mics mute to ${event.muteAll}');
+
+      await _repository.toggleAllMicsMute(
+        event.roomId,
+        event.hostId,
+        event.muteAll,
+      );
+
+      debugPrint('🎙️ [AudioRoomsBloc] All mics mute toggled successfully');
+    } catch (e) {
+      debugPrint('🎙️ [AudioRoomsBloc] Error toggling all mics mute: $e');
+      emit(AudioRoomsError(
+        message: e.toString(),
+        errorCode: 'TOGGLE_ALL_MICS_MUTE_FAILED',
+      ));
+    }
+  }
+
+  /// Handle toggle all comments ban
+  Future<void> _onToggleAllCommentsBan(
+    ToggleAllCommentsBan event,
+    Emitter<AudioRoomsState> emit,
+  ) async {
+    try {
+      debugPrint(
+          '💬 [AudioRoomsBloc] Toggling all comments ban to ${event.banAll}');
+
+      await _repository.toggleAllCommentsBan(
+        event.roomId,
+        event.hostId,
+        event.banAll,
+      );
+
+      debugPrint('💬 [AudioRoomsBloc] All comments ban toggled successfully');
+    } catch (e) {
+      debugPrint('💬 [AudioRoomsBloc] Error toggling all comments ban: $e');
+      emit(AudioRoomsError(
+        message: e.toString(),
+        errorCode: 'TOGGLE_ALL_COMMENTS_BAN_FAILED',
+      ));
+    }
+  }
+
   /// Handle move participant to seat
   Future<void> _onMoveParticipantToSeat(
     MoveParticipantToSeat event,
@@ -1419,7 +1556,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         return;
       }
 
-      if (event.toSeat != 0 && event.userId == _currentUser?.userId) {
+      if (event.toSeat >= 0 && event.userId == _currentUser?.userId) {
         if (BanService.isMicBanned(AuthController.instance.currentUser)) {
           emit(const AudioRoomsError(
             message:
@@ -1442,9 +1579,65 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
 
       // If the current user moved, sync their local microphone state immediately
       if (event.userId == _currentUser?.userId) {
-        if (event.toSeat != 0) {
-          add(const SetMicrophoneMute(muted: false));
+        if (event.toSeat >= 0) {
+          // Check if participant is muted by admin
+          final existingParticipant = _currentRoom?.participants
+              .where((p) => p.userId == event.userId)
+              .firstOrNull;
+          final bool isMutedByAdmin = existingParticipant?.isMutedByAdmin == true;
+          // When user joins a seat, they are UNMUTED by default unless muted by admin
+          bool targetMuted = isMutedByAdmin;
+
+          if (!targetMuted) {
+            try {
+              final micStatus = await Permission.microphone.status;
+              if (!micStatus.isGranted) {
+                final req = await Permission.microphone.request();
+                if (!req.isGranted) {
+                  targetMuted = true;
+                }
+              }
+            } catch (_) {
+              targetMuted = false;
+            }
+          }
+
+          // Update in-memory room participant immediately to prevent race condition with Firestore stream
+          if (_currentRoom != null) {
+            final updatedParticipants = _currentRoom!.participants.map((p) {
+              if (p.userId == event.userId) {
+                return p.copyWith(
+                  seatNumber: event.toSeat,
+                  isSeated: true,
+                  isSpeaker: true,
+                  isMuted: targetMuted,
+                );
+              }
+              return p;
+            }).toList();
+            _currentRoom = _currentRoom!.copyWith(participants: updatedParticipants);
+          }
+
+          await _agoraService.setClientRole(ClientRoleType.clientRoleBroadcaster, isMuted: targetMuted);
+          add(SetMicrophoneMute(muted: targetMuted));
         } else {
+          // Leaving seat: revert to Audience
+          if (_currentRoom != null) {
+            final updatedParticipants = _currentRoom!.participants.map((p) {
+              if (p.userId == event.userId) {
+                return p.copyWith(
+                  clearSeatNumber: true,
+                  isSeated: false,
+                  isSpeaker: false,
+                  isMuted: true,
+                );
+              }
+              return p;
+            }).toList();
+            _currentRoom = _currentRoom!.copyWith(participants: updatedParticipants);
+          }
+
+          await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
           add(const SetMicrophoneMute(muted: true));
         }
       }
@@ -1482,8 +1675,22 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         event.seatNumber,
       );
 
-      // If the current user was removed from seat, mute their microphone
+      // If the current user was removed from seat, mute their microphone and revert to audience role
       if (event.participantId == _currentUser?.userId) {
+        if (_currentRoom != null) {
+          final updatedParticipants = _currentRoom!.participants.map((p) {
+            if (p.userId == event.participantId) {
+              return p.copyWith(
+                clearSeatNumber: true,
+                isSeated: false,
+                isMuted: true,
+              );
+            }
+            return p;
+          }).toList();
+          _currentRoom = _currentRoom!.copyWith(participants: updatedParticipants);
+        }
+        await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
         add(const SetMicrophoneMute(muted: true));
       }
 
@@ -1623,48 +1830,119 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
 
   /// Setup Agora service callbacks
   void _setupAgoraCallbacks() {
-    debugPrint('🎤 [AudioRoomsBloc] 🔗 Setting up Agora callbacks...');
+    debugPrint('🎤 [AudioRoomsBloc] 🔗 Setting up Agora callbacks (owner: $hashCode)...');
+    _agoraService.setOwner(this);
     _agoraService.onUserJoined = (user) {
       debugPrint(
           '🎤 [AudioRoomsBloc] 🔗 onUserJoined callback triggered for user: ${user.uid}');
-      add(AgoraUserJoined(user: user));
+      AgoraUser resolvedUser = user;
+      if (_currentRoom != null) {
+        AudioRoomParticipant? participant;
+        for (final p in _currentRoom!.participants) {
+          if (generateAgoraUid(p.userId) == user.uid) {
+            participant = p;
+            break;
+          }
+        }
+        if (participant != null) {
+          resolvedUser = user.copyWith(
+            userId: participant.userId,
+            userName: participant.userName,
+          );
+        } else if (_currentRoom!.creatorId.isNotEmpty &&
+            generateAgoraUid(_currentRoom!.creatorId) == user.uid) {
+          resolvedUser = user.copyWith(
+            userId: _currentRoom!.creatorId,
+            userName: _currentRoom!.creatorName,
+          );
+        }
+      }
+      if (!isClosed) add(AgoraUserJoined(user: resolvedUser));
     };
     _agoraService.onUserLeft = (user) {
       debugPrint(
           '🎤 [AudioRoomsBloc] 🔗 onUserLeft callback triggered for UID: ${user.uid}');
-      add(AgoraUserLeft(uid: user.uid));
+      if (!isClosed) add(AgoraUserLeft(uid: user.uid));
     };
     _agoraService.onUserMuted = (uid, muted) {
       debugPrint(
           '🎤 [AudioRoomsBloc] 🔗 onUserMuted callback triggered for UID: $uid, muted: $muted');
-      add(AgoraUserMuted(uid: uid, muted: muted));
+      if (!isClosed) add(AgoraUserMuted(uid: uid, muted: muted));
     };
+    bool lastHadSpeaking = false;
+    DateTime lastNetworkQualityTime = DateTime.fromMillisecondsSinceEpoch(0);
+    DateTime lastStatsTime = DateTime.fromMillisecondsSinceEpoch(0);
+
     _agoraService.onAudioVolumeIndication = (speakers, totalVolume) {
+      if (isClosed) return;
+
       final userVolumes = <int, int>{};
+      bool hasAnySpeaking = false;
+
       for (final speaker in speakers) {
-        int uid = speaker.uid ?? 0;
-        // Map local user (0) to actual UID
-        if (uid == 0 && _currentUid != null) {
-          uid = _currentUid!;
+        final int uid = speaker.uid ?? 0;
+        final int volume = speaker.volume ?? 0;
+        userVolumes[uid] = volume;
+        if (volume > 0) {
+          hasAnySpeaking = true;
         }
-        userVolumes[uid] = speaker.volume ?? 0;
+        // Ensure local user (0) is also accessible via their resolved Agora UID
+        if (uid == 0 && _currentUid != null) {
+          userVolumes[_currentUid!] = volume;
+        }
       }
+
+      if (!hasAnySpeaking && totalVolume > 0) {
+        hasAnySpeaking = true;
+      }
+
+      // Continuous silence: do not flood BLoC with duplicate silence events
+      if (!hasAnySpeaking && !lastHadSpeaking) {
+        return;
+      }
+      lastHadSpeaking = hasAnySpeaking;
+
       add(AudioVolumeIndication(
           userVolumes: userVolumes, totalVolume: totalVolume));
     };
     _agoraService.onConnectionStateChanged =
-        (state) => add(AgoraConnectionStateChanged(state: state));
-    _agoraService.onNetworkQuality =
-        (quality) => add(NetworkQualityUpdate(quality: quality));
-    _agoraService.onStats = (stats) => add(AgoraStatsUpdate(stats: stats));
+        (state) {
+      if (!isClosed) add(AgoraConnectionStateChanged(state: state));
+    };
+    _agoraService.onNetworkQuality = (quality) {
+      if (isClosed) return;
+      final now = DateTime.now();
+      if (now.difference(lastNetworkQualityTime).inSeconds >= 4) {
+        lastNetworkQualityTime = now;
+        add(NetworkQualityUpdate(quality: quality));
+      }
+    };
+    _agoraService.onStats = (stats) {
+      if (isClosed) return;
+      final now = DateTime.now();
+      if (now.difference(lastStatsTime).inSeconds >= 5) {
+        lastStatsTime = now;
+        add(AgoraStatsUpdate(stats: stats));
+      }
+    };
     _agoraService.onTokenPrivilegeWillExpire =
-        () => add(const TokenPrivilegeWillExpire());
+        () {
+      if (!isClosed) add(const TokenPrivilegeWillExpire());
+    };
     _agoraService.onAudioMixingFinished =
-        () => add(const AudioMixingFinished());
+        () {
+      if (!isClosed) add(const AudioMixingFinished());
+    };
     _agoraService.onAudioEffectFinished =
-        (soundId) => add(AudioEffectFinished(soundId: soundId));
-    _agoraService.onError = (message, code) =>
-        add(AgoraErrorOccurred(message: message, code: code));
+        (soundId) {
+      if (!isClosed) add(AudioEffectFinished(soundId: soundId));
+    };
+    _agoraService.onRemoteAudioStateChanged = (remoteUid, state, reason) {
+      debugPrint('🎤 [AudioRoomsBloc] 🔊 Remote audio state for UID $remoteUid: $state ($reason)');
+    };
+    _agoraService.onError = (message, code) {
+      if (!isClosed) add(AgoraErrorOccurred(message: message, code: code));
+    };
   }
 
   /// Initialize Agora service
@@ -1679,7 +1957,13 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
 
       // Always call initialize - it safely reuses the engine if already alive
       // and re-registers event handlers for the new BLoC
-      final success = await _agoraService.initialize();
+      bool success = await _agoraService.initialize();
+      if (!success) {
+        debugPrint('🎤 [AudioRoomsBloc] First initialization attempt failed, retrying with fallback AppID...');
+        await Future.delayed(const Duration(milliseconds: 200));
+        success = await _agoraService.initialize('c74eafbb98784225bae6be9b7e7f6225');
+      }
+
       if (!success) {
         emit(const AgoraInitializationFailed(
             error: 'Failed to initialize Agora SDK'));
@@ -1710,11 +1994,30 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     Emitter<AudioRoomsState> emit,
   ) async {
     try {
-      // Prevent duplicate join attempts
-      if (_currentChannelName == event.channelName &&
-          _currentUid == event.uid) {
+      int uidToUse = event.uid;
+      if (uidToUse == 0 && event.userId.isNotEmpty) {
+        uidToUse = generateAgoraUid(event.userId);
+        debugPrint('🎤 [AudioRoomsBloc] 🔧 Auto-assigned non-zero UID: $uidToUse for ${event.userId}');
+      }
+
+      // If currently on a different channel, cleanly release it first before joining the new one
+      if (_currentChannelName != null && _currentChannelName != event.channelName) {
         debugPrint(
-            '🎤 [AudioRoomsBloc] ⚠️ Already joining/joined channel ${event.channelName} with UID ${event.uid}, skipping duplicate');
+            '🎤 [AudioRoomsBloc] 🔄 Switching channels: releasing $_currentChannelName before joining ${event.channelName}');
+        await _agoraService.leaveChannelAndRelease(channelName: _currentChannelName);
+        _agoraService.clearCallbacks(channelName: _currentChannelName, owner: this);
+        _currentChannelName = null;
+        _currentUid = null;
+        _agoraUsers.clear();
+        _networkQualities.clear();
+      }
+
+      // Prevent duplicate join attempts if already connected to the same channel
+      if (_currentChannelName == event.channelName &&
+          _currentUid == uidToUse &&
+          _agoraService.isConnected) {
+        debugPrint(
+            '🎤 [AudioRoomsBloc] ⚠️ Already joined and active on channel ${event.channelName} with UID $uidToUse, skipping duplicate');
         return;
       }
 
@@ -1726,7 +2029,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       }
 
       debugPrint(
-          '🎤 [AudioRoomsBloc] Joining Agora channel: ${event.channelName}');
+          '🎤 [AudioRoomsBloc] Joining Agora channel: ${event.channelName} with UID: $uidToUse');
       emit(AgoraChannelJoining(channelName: event.channelName));
 
       // Generate token if not provided
@@ -1734,16 +2037,33 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       if (token == null) {
         debugPrint(
             '🎫 [AudioRoomsBloc] Generating Firebase token for channel: ${event.channelName}');
-        debugPrint('🎫 [AudioRoomsBloc] UID: ${event.uid}');
+        debugPrint('🎫 [AudioRoomsBloc] UID: $uidToUse');
 
         token = await fetchAgoraToken(
           channelName: event.channelName,
-          uid: event.uid,
+          uid: uidToUse,
         );
 
         if (token == null) {
           debugPrint(
-              '🎫 [AudioRoomsBloc] ❌ Firebase token generation failed after all retry attempts');
+              '🎫 [AudioRoomsBloc] ❌ Firebase token generation failed, attempting fallback join...');
+          _setupAgoraCallbacks();
+          final fallbackSuccess = await _agoraService.joinChannel(
+            channelName: event.channelName,
+            uid: uidToUse,
+            userId: event.userId,
+            userName: event.userName,
+            token: '',
+            isMuted: event.isMuted,
+            isVideo: event.isVideo,
+            isSeated: event.isSeated,
+          );
+
+          if (fallbackSuccess) {
+            debugPrint('🎫 [AudioRoomsBloc] ✅ Channel joined via fallback without token');
+            return;
+          }
+
           emit(AgoraChannelJoinFailed(
             channelName: event.channelName,
             error:
@@ -1757,26 +2077,47 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         }
       }
 
+      // Always ensure callbacks are registered before joining channel
+      _setupAgoraCallbacks();
+
       // Join channel
       debugPrint(
-          '🎤 [AudioRoomsBloc] 🔧 Joining with mute status: ${event.isMuted}');
-      final success = await _agoraService.joinChannel(
+          '🎤 [AudioRoomsBloc] 🔧 Joining with mute status: ${event.isMuted}, isSeated: ${event.isSeated}');
+      bool success = await _agoraService.joinChannel(
         channelName: event.channelName,
-        uid: event.uid,
+        uid: uidToUse,
         userId: event.userId,
         userName: event.userName,
         token: token,
         isMuted: event.isMuted,
         isVideo: event.isVideo,
+        isSeated: event.isSeated,
       );
+
+      if (!success) {
+        debugPrint('🎤 [AudioRoomsBloc] ⚠️ Initial joinChannel failed, retrying with fresh engine init...');
+        await _agoraService.initialize();
+        _setupAgoraCallbacks();
+        final retryToken = await fetchAgoraToken(channelName: event.channelName, uid: uidToUse);
+        success = await _agoraService.joinChannel(
+          channelName: event.channelName,
+          uid: uidToUse,
+          userId: event.userId,
+          userName: event.userName,
+          token: retryToken ?? token,
+          isMuted: event.isMuted,
+          isVideo: event.isVideo,
+          isSeated: event.isSeated,
+        );
+      }
 
       if (success) {
         _currentChannelName = event.channelName;
-        _currentUid = event.uid;
+        _currentUid = uidToUse;
 
         emit(AgoraChannelJoined(
           channelName: event.channelName,
-          uid: event.uid,
+          uid: uidToUse,
           connectionState: _agoraService.connectionState,
           users: _agoraUsers,
           isMuted: _agoraService.isMuted,
@@ -1802,21 +2143,29 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     }
   }
 
+
   /// Leave Agora channel
   Future<void> _onLeaveAgoraChannel(
     LeaveAgoraChannel event,
     Emitter<AudioRoomsState> emit,
   ) async {
+    final leavingChannel = event.channelName ?? _currentChannelName;
     try {
-      debugPrint('🎤 [AudioRoomsBloc] Leaving Agora channel');
+      debugPrint('🎤 [AudioRoomsBloc] Leaving Agora channel: $leavingChannel');
 
-      await _agoraService.leaveChannel();
-      _agoraService.clearCallbacks();
+      await _agoraService.leaveChannelAndRelease(channelName: leavingChannel);
+      _agoraService.clearCallbacks(channelName: leavingChannel, owner: this);
 
       _currentChannelName = null;
       _currentUid = null;
       _agoraUsers.clear();
       _networkQualities.clear();
+
+      if (_agoraService.currentChannelId == null || _agoraService.currentChannelId == leavingChannel) {
+        try {
+          await BackgroundService().stopService();
+        } catch (_) {}
+      }
 
       emit(const AgoraChannelLeft());
       debugPrint('🎤 [AudioRoomsBloc] Left Agora channel successfully');
@@ -1838,13 +2187,19 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             .where((p) => p.userId == _currentUser!.userId)
             .firstOrNull;
 
-        if (currentParticipant != null && !currentParticipant.isSeated) {
+        final bool isUserSeated =
+            (currentParticipant?.isSeated == true) ||
+            (currentParticipant?.isSpeaker == true) ||
+            (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! >= 0);
+
+        if (!isUserSeated) {
           debugPrint(
               '🎤 [AudioRoomsBloc] ❌ Cannot toggle mic - user is not seated');
-          emit(AgoraError(
+          emit(const AgoraError(
             message: 'You must be seated to use the microphone',
             code: 'NOT_SEATED',
           ));
+          emit(const MicrophoneToggled(isMuted: true));
           return;
         }
         if (currentParticipant != null && currentParticipant.isMutedByAdmin) {
@@ -1854,9 +2209,33 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             message: 'You have been muted by an admin',
             code: 'MUTED_BY_ADMIN',
           ));
+          emit(const MicrophoneToggled(isMuted: true));
           return;
         }
       }
+
+      // If user is currently muted and trying to unmute, verify microphone permission
+      if (_agoraService.isMuted) {
+        try {
+          final micStatus = await Permission.microphone.status;
+          if (!micStatus.isGranted) {
+            final req = await Permission.microphone.request();
+            if (!req.isGranted) {
+              debugPrint('🎤 [AudioRoomsBloc] ❌ Microphone permission denied');
+              emit(const AgoraError(
+                message: 'Microphone permission is required to speak',
+                code: 'MIC_PERMISSION_DENIED',
+              ));
+              emit(const MicrophoneToggled(isMuted: true));
+              return;
+            }
+          }
+        } catch (e) {
+          debugPrint('🎤 [AudioRoomsBloc] Error checking mic permission: $e');
+        }
+      }
+
+      _lastLocalMuteChangeTime = DateTime.now();
 
       // Allow users to toggle their microphone freely
       await _agoraService.toggleMute();
@@ -1900,6 +2279,22 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             .where((p) => p.userId == _currentUser!.userId)
             .firstOrNull;
 
+        final bool isUserSeated =
+            (currentParticipant?.isSeated == true) ||
+            (currentParticipant?.isSpeaker == true) ||
+            (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! >= 0);
+
+        if (!event.muted && !isUserSeated) {
+          debugPrint(
+              '🎤 [AudioRoomsBloc] ❌ Cannot unmute mic - user is not seated');
+          emit(const AgoraError(
+            message: 'You must be seated to use the microphone',
+            code: 'NOT_SEATED',
+          ));
+          emit(const MicrophoneToggled(isMuted: true));
+          return;
+        }
+
         // Only block if they are trying to UNMUTE while muted by an admin
         if (currentParticipant != null &&
             currentParticipant.isMutedByAdmin &&
@@ -1910,9 +2305,33 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             message: 'You have been muted by an admin',
             code: 'MUTED_BY_ADMIN',
           ));
+          emit(const MicrophoneToggled(isMuted: true));
           return;
         }
       }
+
+      // If trying to unmute, verify microphone permission
+      if (!event.muted) {
+        try {
+          final micStatus = await Permission.microphone.status;
+          if (!micStatus.isGranted) {
+            final req = await Permission.microphone.request();
+            if (!req.isGranted) {
+              debugPrint('🎤 [AudioRoomsBloc] ❌ Microphone permission denied');
+              emit(const AgoraError(
+                message: 'Microphone permission is required to speak',
+                code: 'MIC_PERMISSION_DENIED',
+              ));
+              emit(const MicrophoneToggled(isMuted: true));
+              return;
+            }
+          }
+        } catch (e) {
+          debugPrint('🎤 [AudioRoomsBloc] Error checking mic permission: $e');
+        }
+      }
+
+      _lastLocalMuteChangeTime = DateTime.now();
 
       // Allow users to set their microphone state freely
       await _agoraService.setMuted(event.muted);
@@ -2235,6 +2654,21 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         user: _agoraUsers[userIndex],
         action: event.muted ? 'muted' : 'unmuted',
       ));
+    } else {
+      final remoteUser = _agoraService.remoteUsers[event.uid] ??
+          AgoraUser(
+            uid: event.uid,
+            userId: event.uid.toString(),
+            userName: 'User ${event.uid}',
+            isMuted: event.muted,
+            lastSpokeAt: DateTime.now(),
+          );
+      final updated = remoteUser.copyWith(isMuted: event.muted);
+      _agoraUsers.add(updated);
+      emit(AgoraUserUpdated(
+        user: updated,
+        action: event.muted ? 'muted' : 'unmuted',
+      ));
     }
   }
 
@@ -2340,6 +2774,13 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   ) async {
     debugPrint(
         '❌ [AudioRoomsBloc] Agora error: ${event.message} (${event.code})');
+    if (event.code.contains('errInvalidToken') ||
+        event.code.contains('errTokenExpired')) {
+      debugPrint(
+          '🎫 [AudioRoomsBloc] Invalid/Expired token detected, triggering auto-renew...');
+      add(const TokenPrivilegeWillExpire());
+      return;
+    }
     emit(AgoraError(message: event.message, code: event.code));
   }
 
@@ -2369,13 +2810,19 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       debugPrint(
           '🚪 [AudioRoomsBloc] Force leaving Agora channel (participant was kicked)');
 
-      if (_agoraInitialized) {
-        await _agoraService.leaveChannel();
-        _agoraInitialized = false;
-        _currentChannelName = null;
-        _currentUid = null;
-        debugPrint('🚪 [AudioRoomsBloc] ✅ Forced to leave Agora channel');
-      }
+      final leavingChannel = _currentChannelName;
+      await _agoraService.leaveChannelAndRelease(channelName: leavingChannel);
+      _agoraService.clearCallbacks(channelName: leavingChannel, owner: this);
+      _agoraInitialized = false;
+      _currentChannelName = null;
+      _currentUid = null;
+      _agoraUsers.clear();
+      _networkQualities.clear();
+      try {
+        await BackgroundService().stopService();
+      } catch (_) {}
+      emit(const AgoraChannelLeft());
+      debugPrint('🚪 [AudioRoomsBloc] ✅ Forced to leave Agora channel');
     } catch (e) {
       debugPrint(
           '🚪 [AudioRoomsBloc] ❌ Failed to force leave Agora channel: $e');
@@ -2418,10 +2865,12 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
           ));
         }
 
-        if (currentParticipant.isMuted != _agoraService.isMuted) {
+        // Only enforce mute if the participant is muted by admin and local mic is unmuted.
+        // We do NOT overwrite voluntary user mic toggles with stale room data to prevent mute toggle loops.
+        if (currentParticipant.isMutedByAdmin && !_agoraService.isMuted) {
           debugPrint(
-              '🎤 [AudioRoomsBloc] 🔄 Syncing local mute status to match room data: ${currentParticipant.isMuted}');
-          add(SetMicrophoneMute(muted: currentParticipant.isMuted));
+              '🎤 [AudioRoomsBloc] 🔒 Admin mute enforced: muting local mic');
+          add(const SetMicrophoneMute(muted: true));
         }
       }
     } catch (e) {
@@ -2505,7 +2954,13 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     if (_agoraInitialized) {
       // The engine is a singleton, we want to keep it alive for faster room switching
       // The actual leave channel is already handled by LeaveAgoraChannel event
-      _agoraService.clearCallbacks();
+      _agoraService.clearCallbacks(channelName: _currentChannelName, owner: this);
+    }
+
+    if (_agoraService.currentChannelId == null || _agoraService.currentChannelId == _currentChannelName) {
+      try {
+        await BackgroundService().stopService();
+      } catch (_) {}
     }
 
     _repository.dispose();

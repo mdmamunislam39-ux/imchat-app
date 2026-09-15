@@ -55,11 +55,11 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (bool didPop) async {
+      onPopInvokedWithResult: (bool didPop, dynamic result) async {
         if (didPop) return;
 
         if (_textController.text.isEmpty) {
-          Navigator.pop(context);
+          Get.back();
           return;
         }
 
@@ -167,7 +167,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                   );
                   if (mounted) {
                     setState(() => isLoading = false);
-                    Navigator.of(context).pop();
                   }
                 },
               ),

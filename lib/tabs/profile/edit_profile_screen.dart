@@ -26,7 +26,7 @@ class EditProfileScreen extends StatelessWidget {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Get.back(),
+          onPressed: () => Navigator.maybePop(context),
         ),
         title: const Text(
           'Personal Data',
@@ -188,16 +188,18 @@ class EditProfileScreen extends StatelessWidget {
         ),
       ),
       bottomNavigationBar: Obx(
-        () => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-          child: DefaultButton(
-            height: 45,
-            isLoading: controller.isLoading.value,
-            width: double.maxFinite,
-            text: 'SAVE CHANGES',
-            onPress: () async {
-              await controller.updateAccount();
-            },
+        () => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            child: DefaultButton(
+              height: 45,
+              isLoading: controller.isLoading.value,
+              width: double.maxFinite,
+              text: 'SAVE CHANGES',
+              onPress: () async {
+                await controller.updateAccount();
+              },
+            ),
           ),
         ),
       ),
@@ -278,7 +280,11 @@ class EditProfileScreen extends StatelessWidget {
                 onSave(tempController.text);
                 Get.back();
               },
-              child: const Text('Save'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Save', style: TextStyle(color: Colors.white)),
             ),
           ],
         );

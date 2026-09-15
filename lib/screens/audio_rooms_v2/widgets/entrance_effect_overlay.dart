@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_svga/flutter_svga.dart';
 import '../../../models/entrance_effect.dart';
@@ -6,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../components/universal_asset_widget.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import '../../../vap/vap_widget.dart';
 
 /// Overlay widget for displaying entrance effect animations using SVGA
 class EntranceEffectOverlay extends StatefulWidget {
@@ -90,19 +92,35 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
 
     try {
       debugPrint(
-          '🎬 [EntranceAnimation] Processing entrance for: ${effect.userName}');
+          '🎬 [EntranceAnimation] Processing entrance of type ${effect.type} for: ${effect.userName}');
 
       final url = effect.effectUrl.toLowerCase();
-      final isMp4 = url.contains('.mp4');
+      final isVap = url.contains('.vap');
+      final isMp4 = url.contains('.mp4') || isVap;
       final isPng = url.contains('.png');
       Duration duration = const Duration(seconds: 4); // Default fallback
 
-      if (isMp4) {
+      if (effect.type == 'roomEntry') {
+        duration = const Duration(milliseconds: 4000);
+        debugPrint('🎬 [EntranceAnimation] Room Entry Banner duration: 4000ms');
+      } else if (isMp4) {
         _videoController?.dispose();
-        
+
         // Cache the file locally to guarantee instant, deadlock-free playback on all devices
-        final cachedFile = await DefaultCacheManager().getSingleFile(effect.effectUrl);
-        
+        File cachedFile =
+            await DefaultCacheManager().getSingleFile(effect.effectUrl);
+
+        // Critical Fix: Android's MediaExtractor fails to decode the video track
+        // if the file doesn't have an .mp4 extension, resulting in audio-only black screens.
+        if (!cachedFile.path.toLowerCase().endsWith('.mp4')) {
+          final newPath = '${cachedFile.path}.mp4';
+          final newFile = File(newPath);
+          if (!await newFile.exists()) {
+            await cachedFile.copy(newPath);
+          }
+          cachedFile = newFile;
+        }
+
         _videoController = VideoPlayerController.file(
           cachedFile,
           videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
@@ -117,14 +135,21 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
         // Instantly trigger a rebuild once the controller is initialized so the player is displayed immediately!
         setState(() {});
 
-        await _videoController!.play();
-        if (!mounted) {
-          _videoController?.dispose();
-          _videoController = null;
-          return;
-        }
         duration = _videoController!.value.duration;
-        debugPrint('🎬 [EntranceAnimation] MP4 duration: ${duration.inMilliseconds}ms');
+
+        if (isVap && Theme.of(context).platform == TargetPlatform.android) {
+          debugPrint(
+              '🎬 [EntranceAnimation] VAP Android native playback duration: ${duration.inMilliseconds}ms');
+        } else {
+          await _videoController!.play();
+          if (!mounted) {
+            _videoController?.dispose();
+            _videoController = null;
+            return;
+          }
+          debugPrint(
+              '🎬 [EntranceAnimation] MP4 duration: ${duration.inMilliseconds}ms');
+        }
       } else if (isPng) {
         duration = const Duration(seconds: 4);
         debugPrint('🎬 [EntranceAnimation] PNG duration: 4000ms');
@@ -193,10 +218,18 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
   }
 
   Widget _buildSVGAAnimation(EntranceEffect effect) {
+    if (effect.type == 'roomEntry') {
+      return RoomEntryBannerWidget(effect: effect);
+    }
     if (effect.effectUrl.isNotEmpty) {
       final url = effect.effectUrl.toLowerCase();
 
-      if (url.contains('.mp4')) {
+      if (url.contains('.vap') && Theme.of(context).platform == TargetPlatform.android) {
+        return VapWidget(
+          url: effect.effectUrl,
+          fit: BoxFit.cover,
+        );
+      } else if (url.contains('.mp4') || url.contains('.vap')) {
         return _videoController != null && _videoController!.value.isInitialized
             ? AlphaVideoPlayer(
                 controller: _videoController!,
@@ -216,7 +249,8 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
         );
       }
 
-      debugPrint('🎬 [EntranceAnimation] Displaying SVGA via SVGAEasyPlayer: ${effect.effectUrl}');
+      debugPrint(
+          '🎬 [EntranceAnimation] Displaying SVGA via SVGAEasyPlayer: ${effect.effectUrl}');
 
       return SizedBox(
         width: double.infinity,
@@ -230,5 +264,226 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
       debugPrint('🎬 [EntranceAnimation] No effect URL provided');
       return const SizedBox.shrink();
     }
+  }
+}
+
+class RoomEntryBannerWidget extends StatefulWidget {
+  final EntranceEffect effect;
+
+  const RoomEntryBannerWidget({super.key, required this.effect});
+
+  @override
+  State<RoomEntryBannerWidget> createState() => _RoomEntryBannerWidgetState();
+}
+
+class _RoomEntryBannerWidgetState extends State<RoomEntryBannerWidget> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Offset> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    // Total duration is 4000ms.
+    // 0ms -> 500ms: slide in from right.
+    // 500ms -> 3500ms: stay in center (3 seconds).
+    // 3500ms -> 4000ms: slide out to left.
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 4000),
+      vsync: this,
+    );
+
+    _slideAnimation = TweenSequence<Offset>([
+      TweenSequenceItem(
+        tween: Tween<Offset>(begin: const Offset(2.0, 0.0), end: Offset.zero)
+            .chain(CurveTween(curve: Curves.easeOutCubic)),
+        weight: 500 / 4000 * 100,
+      ),
+      TweenSequenceItem(
+        tween: ConstantTween<Offset>(Offset.zero),
+        weight: 3000 / 4000 * 100,
+      ),
+      TweenSequenceItem(
+        tween: Tween<Offset>(begin: Offset.zero, end: const Offset(-2.0, 0.0))
+            .chain(CurveTween(curve: Curves.easeInCubic)),
+        weight: 500 / 4000 * 100,
+      ),
+    ]).animate(_controller);
+
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final effect = widget.effect;
+    final userAvatar = effect.userAvatar;
+    final userName = effect.userName;
+    final isSvga = effect.effectUrl.toLowerCase().contains('.svga');
+
+    return Center(
+      child: SlideTransition(
+        position: _slideAnimation,
+        child: Container(
+          height: 48,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              // Background layer
+              Positioned.fill(
+                child: isSvga
+                    ? UniversalAssetWidget(
+                        url: effect.effectUrl,
+                        fit: BoxFit.fill,
+                      )
+                    : (effect.effectUrl.isNotEmpty &&
+                            effect.effectUrl.startsWith('http') &&
+                            !effect.effectUrl.toLowerCase().endsWith('.vap') &&
+                            !effect.effectUrl.toLowerCase().endsWith('.mp4'))
+                        ? CachedNetworkImage(
+                            imageUrl: effect.effectUrl,
+                            fit: BoxFit.fill,
+                            placeholder: (context, url) => const SizedBox.shrink(),
+                            errorWidget: (context, url, error) {
+                              debugPrint('❌ [EntranceAnimation] Error loading decoration background image: $error');
+                              return const SizedBox.shrink();
+                            },
+                          )
+                        : Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  const Color(0xFF1E88E5).withValues(alpha: 0.85), // Premium Royal Blue
+                                  const Color(0xFF00E676).withValues(alpha: 0.65), // Vibrant Emerald Green
+                                  const Color(0xFF00E676).withValues(alpha: 0.1),
+                                ],
+                                begin: Alignment.centerLeft,
+                                end: Alignment.centerRight,
+                              ),
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(
+                                color: const Color(0xFF00E676).withValues(alpha: 0.4),
+                                width: 1,
+                              ),
+                            ),
+                          ),
+              ),
+              // Content layer
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // User Avatar
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: userAvatar != null && userAvatar.isNotEmpty
+                            ? CachedNetworkImage(
+                                imageUrl: userAvatar,
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) => Container(
+                                  color: Colors.grey[800],
+                                  child: const Center(
+                                    child: SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 1.5,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                errorWidget: (context, url, error) => _buildLetterAvatar(userName),
+                              )
+                            : _buildLetterAvatar(userName),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // Username
+                    Text(
+                      userName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        shadows: [
+                          Shadow(
+                            blurRadius: 4.0,
+                            color: Colors.black54,
+                            offset: Offset(1.0, 1.0),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Action Text
+                    Text(
+                      'entered the room ✨',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        shadows: const [
+                          Shadow(
+                            blurRadius: 4.0,
+                            color: Colors.black54,
+                            offset: Offset(1.0, 1.0),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLetterAvatar(String name) {
+    final letter = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    return Container(
+      color: const Color(0xFF00E676),
+      child: Center(
+        child: Text(
+          letter,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
   }
 }

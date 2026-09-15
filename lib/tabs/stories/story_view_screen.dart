@@ -225,8 +225,8 @@ class StoryViewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = Get.put(StoryViewController(story: story));
     final ReportController reportController = Get.find();
-    final User user = story.user!;
     final User currentUser = AuthController.instance.currentUser;
+    final User user = story.user ?? currentUser;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(

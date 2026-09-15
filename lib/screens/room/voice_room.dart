@@ -273,7 +273,7 @@ class _VoiceRoomScreenState extends State<VoiceRoomScreen> {
                 const Icon(Icons.card_giftcard),
                 IconButton(
                   icon: const Icon(Icons.sports_esports),
-                  onPressed: () => GameWallBottomSheet.show(context),
+                  onPressed: () => GameWallBottomSheet.show(context, isInAudioRoom: true),
                 ),
                 const Icon(Icons.favorite),
                 ElevatedButton(
@@ -293,7 +293,7 @@ class PartyRoomScreen extends StatefulWidget {
   const PartyRoomScreen({super.key});
 
   @override
-  _PartyRoomScreenState createState() => _PartyRoomScreenState();
+  State<PartyRoomScreen> createState() => _PartyRoomScreenState();
 }
 
 class _PartyRoomScreenState extends State<PartyRoomScreen> {
@@ -554,7 +554,7 @@ class _PartyRoomScreenState extends State<PartyRoomScreen> {
                     IconButton(
                       icon:
                           Icon(Icons.sports_esports, color: Colors.greenAccent),
-                      onPressed: () => GameWallBottomSheet.show(context),
+                      onPressed: () => GameWallBottomSheet.show(context, isInAudioRoom: true),
                     ),
                     Text("Game",
                         style: TextStyle(color: Colors.white, fontSize: 12))
@@ -610,7 +610,7 @@ class VoiceRoomScreen2 extends StatefulWidget {
       required this.profileImage});
 
   @override
-  _VoiceRoomScreen2State createState() => _VoiceRoomScreen2State();
+  State<VoiceRoomScreen2> createState() => _VoiceRoomScreen2State();
 }
 
 class _VoiceRoomScreen2State extends State<VoiceRoomScreen2> {
@@ -686,6 +686,7 @@ class _VoiceRoomScreen2State extends State<VoiceRoomScreen2> {
         ));
     await onlineUsersRef.child(widget.userId).set(true);
     setState(() => joined = true);
+    if (!mounted) return;
     Navigator.pop(context);
   }
 
@@ -758,8 +759,8 @@ class _VoiceRoomScreen2State extends State<VoiceRoomScreen2> {
     int id = 1;
     if (layout == 1) {
       rows.add(seatRow([id++]));
-      rows.add(seatRow(List.generate(5, (int) => id++)));
-      rows.add(seatRow(List.generate(5, (int) => id++)));
+      rows.add(seatRow(List.generate(5, (_) => id++)));
+      rows.add(seatRow(List.generate(5, (_) => id++)));
     } else {
       for (int i = 0; i < 3; i++) {
         rows.add(seatRow(List.generate(5, (_) => id++)));
@@ -781,7 +782,7 @@ class _VoiceRoomScreen2State extends State<VoiceRoomScreen2> {
   @override
   void dispose() {
     if (joined) leaveGroup();
-    _engine.release();
+    AgoraService().dispose();
     super.dispose();
   }
 

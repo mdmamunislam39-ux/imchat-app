@@ -56,14 +56,16 @@ class ChatController extends GetxController {
     return chat.isMuted;
   }
 
-  // Search chats by user full name
+  // Search chats by user full name or message content
   List<Chat> searchChat() {
-    final String text = searchController.text.trim();
+    final String text = searchController.text.trim().toLowerCase();
 
     isSearching.value = text.isNotEmpty;
+    if (text.isEmpty) return chats;
     return chats
         .where((chat) =>
-            chat.receiver!.fullname.toLowerCase().contains(text.toLowerCase()))
+            (chat.receiver?.fullname.toLowerCase().contains(text) ?? false) ||
+            chat.lastMsg.toLowerCase().contains(text))
         .toList();
   }
 

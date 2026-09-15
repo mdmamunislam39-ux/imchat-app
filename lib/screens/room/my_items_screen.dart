@@ -8,6 +8,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 /// Screen showing all purchased/owned items with equip/unequip functionality.
 class MyItemsScreen extends StatefulWidget {
@@ -53,7 +54,7 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 7,
+      length: 9,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('My Items'),
@@ -76,6 +77,8 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
               Tab(text: 'Mic Refills'),
               Tab(text: 'Nameplates'),
               Tab(text: 'Room Profiles'),
+              Tab(text: 'Short Profiles'),
+              Tab(text: 'Room Entries'),
             ],
           ),
         ),
@@ -121,6 +124,18 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
               ),
               _OwnedItemsTab(
                 type: 'roomProfileBackground',
+                currentUser: user,
+                storeService: widget.storeService,
+                onRefresh: _refreshUserData,
+              ),
+              _OwnedItemsTab(
+                type: 'shortProfileTheme',
+                currentUser: user,
+                storeService: widget.storeService,
+                onRefresh: _refreshUserData,
+              ),
+              _OwnedItemsTab(
+                type: 'roomEntry',
                 currentUser: user,
                 storeService: widget.storeService,
                 onRefresh: _refreshUserData,
@@ -186,6 +201,8 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
             widget.currentUser.customization?.selectedFrameId ||
         oldWidget.currentUser.customization?.selectedEntryEffectId !=
             widget.currentUser.customization?.selectedEntryEffectId ||
+        oldWidget.currentUser.customization?.selectedRoomEntryId !=
+            widget.currentUser.customization?.selectedRoomEntryId ||
         oldWidget.currentUser.customization?.selectedBackgroundThemeId !=
             widget.currentUser.customization?.selectedBackgroundThemeId ||
         oldWidget.currentUser.customization?.selectedRoomThemeId !=
@@ -200,7 +217,7 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
   }
 
   void _showLivePreview(BuildContext context, Map<String, dynamic> item, String type) {
-    final name = item['name'] as String? ?? 'Unknown';
+    final name = item['name'] as String? ?? item['storeItemName'] as String? ?? 'Unknown';
     final description = item['description'] as String? ?? '';
     final fileUrl = (item['fileUrl'] ?? item['thumbnailUrl'] ?? item['imageUrl'] ?? item['image'] ?? '') as String;
 
@@ -319,22 +336,30 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
                             ),
                           ),
                         ),
-                        if (type == 'avatarFrame' || type == 'frame')
+                        if (type == 'avatarFrame' || type == 'frame' || type == 'micRefill')
                           Stack(
                             alignment: Alignment.center,
                             children: [
                               CircleAvatar(
                                 radius: 48,
                                 backgroundColor: Colors.teal.shade800,
-                                child: const Icon(Icons.person, size: 55, color: Colors.white70),
+                                backgroundImage: (widget.currentUser.photoUrl.isNotEmpty &&
+                                        widget.currentUser.photoUrl.startsWith('http'))
+                                    ? CachedNetworkImageProvider(widget.currentUser.photoUrl)
+                                    : null,
+                                child: (widget.currentUser.photoUrl.isEmpty ||
+                                        !widget.currentUser.photoUrl.startsWith('http'))
+                                    ? const Icon(Icons.person, size: 55, color: Colors.white70)
+                                    : null,
                               ),
                               SizedBox(
-                                width: 135,
-                                height: 135,
+                                width: type == 'micRefill' ? 210 : 135,
+                                height: type == 'micRefill' ? 210 : 135,
                                 child: UniversalAssetWidget(
+                                  key: ValueKey(fileUrl),
                                   url: fileUrl,
-                                  fit: BoxFit.cover,
-                                  isAlphaVideo: true,
+                                  fit: BoxFit.contain,
+                                  isAlphaVideo: false,
                                 ),
                               ),
                             ],
@@ -643,6 +668,8 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
         return customization.selectedMicRefillId;
       case 'nameplate':
         return customization.selectedNameplateId;
+      case 'roomEntry':
+        return customization.selectedRoomEntryId;
       default:
         return null;
     }
@@ -726,7 +753,7 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
         details?['name'] as String? ?? ownedItem['storeItemName'] as String? ?? 'Unknown Item';
     final description = details?['description'] as String? ?? '';
 
-    // Get image from market_items details
+    // Get image from market_items details or fallback to user_store_items data
     String? imageUrl;
     if (details != null) {
       imageUrl = (details['thumbnailUrl'] ??
@@ -735,13 +762,20 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
           details['image'] ??
           details['icon']) as String?;
     }
+    imageUrl ??= (ownedItem['thumbnailUrl'] ??
+        ownedItem['fileUrl'] ??
+        ownedItem['imageUrl'] ??
+        ownedItem['image'] ??
+        ownedItem['icon']) as String?;
     if (imageUrl != null && !imageUrl.startsWith('http')) {
       imageUrl = null;
     }
 
     // Check equipped status
-    final equippedId = _getEquippedId();
-    final bool isEquipped = equippedId == storeItemId;
+    final customization = widget.currentUser.customization;
+    final bool isEquipped = widget.type == 'nameplate'
+        ? (customization?.selectedNameplateIds.contains(storeItemId) ?? false)
+        : (_getEquippedId() == storeItemId);
 
     return Card(
       elevation: 4,
@@ -783,11 +817,35 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
                                       child: CircularProgressIndicator(),
                                     ),
                                   )
-                                : UniversalAssetWidget(
-                                    url: imageUrl,
-                                    fit: BoxFit.cover,
-                                    isAlphaVideo: true,
-                                  ),
+                                : (widget.type == 'micRefill'
+                                    ? Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 28,
+                                            backgroundColor: Colors.teal.shade800,
+                                            child: const Icon(Icons.person, size: 30, color: Colors.white70),
+                                          ),
+                                          SizedBox(
+                                            width: 100,
+                                            height: 100,
+                                            child: UniversalAssetWidget(
+                                              key: ValueKey(imageUrl),
+                                              url: imageUrl,
+                                              fit: BoxFit.contain,
+                                              isAlphaVideo: false,
+                                            ),
+                                          ),
+                                        ],
+                                      )
+                                    : UniversalAssetWidget(
+                                        key: ValueKey(imageUrl),
+                                        url: imageUrl,
+                                        fit: (widget.type == 'avatarFrame' || widget.type == 'frame')
+                                            ? BoxFit.contain
+                                            : BoxFit.cover,
+                                        isAlphaVideo: false,
+                                      )),
                           )
                         : const Center(
                             child:

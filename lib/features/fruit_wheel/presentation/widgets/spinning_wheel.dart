@@ -245,7 +245,7 @@ class _SpinningWheelState extends State<SpinningWheel>
                               top: size / 2 + (size / 2 * 0.65) * sin(i * 2 * pi / slices.length - pi / 2 + (2 * pi / slices.length) / 2) - 15,
                               child: Transform.rotate(
                                 angle: i * 2 * pi / slices.length - pi / 2 + (2 * pi / slices.length) / 2 + pi / 2,
-                                child: Image.asset('assets/images/77_icon.png', width: 30, height: 30),
+                                child: Image.asset('assets/images/77_icon.webp', width: 30, height: 30),
                               ),
                             ),
                       ],

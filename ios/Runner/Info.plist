@@ -74,6 +74,8 @@
 			<string>chatmessenger.page.link</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>imchat</string>
+				<string>imchatapp</string>
 				<string>https</string>
 			</array>
 		</dict>

@@ -180,34 +180,63 @@ import 'package:chat_messenger/config/theme_config.dart';
 
 import 'package:chat_messenger/helpers/app_helper.dart';
 
-// ignore: must_be_immutable
-class ChatCard extends StatelessWidget {
-  ChatCard(
-    this.chat, {
-    super.key,
-    required this.onDeleteChat,
-  });
+class ChatCard extends StatefulWidget {
+  const ChatCard(this.chat, {super.key, required this.onDeleteChat});
 
   final Chat chat;
-  User? updatedUser;
   final Function()? onDeleteChat;
+
+  @override
+  State<ChatCard> createState() => _ChatCardState();
+}
+
+class _ChatCardState extends State<ChatCard> {
+  late Stream<User> _userStream;
+  User? _updatedUser;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStream();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.chat.receiver?.userId != oldWidget.chat.receiver?.userId) {
+      _initStream();
+    }
+  }
+
+  void _initStream() {
+    final user = widget.chat.receiver!;
+    _userStream = user.userType == 'channel' ||
+                  user.userId == 'official_team' ||
+                  user.userId.startsWith('official_channel_')
+              ? Stream.value(user)
+              : UserApi.getUserUpdates(user.userId);
+  }
 
   @override
   Widget build(BuildContext context) {
     // Vars
     final bool isDarkMode = AppTheme.of(context).isDarkMode;
-    final User user = chat.receiver!;
+    final User user = widget.chat.receiver!;
 
     return InkWell(
       onTap: () async {
         // Go to messages page
-        RoutesHelper.toMessages(user: updatedUser ?? user);
+        RoutesHelper.toMessages(user: _updatedUser ?? user);
         // Read chat
-        chat.viewChat();
+        widget.chat.viewChat();
       },
       child: Container(
-        padding:
-            const EdgeInsets.only(top: 14, bottom: 14, left: 16, right: 16),
+        padding: const EdgeInsets.only(
+          top: 14,
+          bottom: 14,
+          left: 16,
+          right: 16,
+        ),
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
@@ -216,17 +245,20 @@ class ChatCard extends StatelessWidget {
           ),
         ),
         child: StreamBuilder<User>(
-          stream: user.userType == 'channel' || user.userId == 'official_team' || user.userId.startsWith('official_channel_') 
-              ? Stream.value(user) 
-              : UserApi.getUserUpdates(user.userId),
+          stream: _userStream,
           builder: (context, snapshot) {
-            updatedUser = snapshot.data;
-            final User receiver = updatedUser ?? user;
-            final bool isOfficial = receiver.userId == 'official_team' || receiver.userId.startsWith('official_channel_') || receiver.userType == 'channel';
-            final String displayName = isOfficial ? receiver.fullname : receiver.fullname.formattedUsername;
+            _updatedUser = snapshot.data;
+            final User receiver = _updatedUser ?? user;
+            final bool isOfficial =
+                receiver.userId == 'official_team' ||
+                receiver.userId.startsWith('official_channel_') ||
+                receiver.userType == 'channel';
+            final String displayName = isOfficial
+                ? receiver.fullname
+                : receiver.fullname.formattedUsername;
 
             return GestureDetector(
-              onLongPress: onDeleteChat,
+              onLongPress: widget.onDeleteChat,
               child: Row(
                 children: [
                   // Profile avatar
@@ -250,8 +282,9 @@ class ChatCard extends StatelessWidget {
                           imageUrl: receiver.photoUrl,
                           radius: 25,
                           isOnline: receiver.isOnline,
-                          borderColor: chat.unread > 0 ? primaryColor : null,
-                          lastActive: receiver.lastActive?.millisecondsSinceEpoch,
+                          borderColor: widget.chat.unread > 0 ? primaryColor : null,
+                          lastActive:
+                              receiver.lastActive?.millisecondsSinceEpoch,
                           showOfflineStatus: true,
                         ),
                   const SizedBox(width: 10),
@@ -265,29 +298,33 @@ class ChatCard extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             // Profile name
-                            RichText(
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              text: TextSpan(
-                                text: displayName,
-                                style: Theme.of(context).textTheme.titleMedium,
-                                children: [
-                                  if (isOfficial || receiver.isVerified == true)
-                                    const WidgetSpan(
-                                      alignment: PlaceholderAlignment.middle,
-                                      child: Icon(
-                                        Icons.verified,
-                                        size: 18,
-                                        color: Colors.blue,
+                            Expanded(
+                              child: RichText(
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                text: TextSpan(
+                                  text: displayName,
+                                  style: Theme.of(context).textTheme.titleMedium,
+                                  children: [
+                                    if (isOfficial || receiver.isVerified == true)
+                                      const WidgetSpan(
+                                        alignment: PlaceholderAlignment.middle,
+                                        child: Icon(
+                                          Icons.verified,
+                                          size: 18,
+                                          color: Colors.blue,
+                                        ),
                                       ),
-                                    )
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
+                            const SizedBox(width: 8),
                             // Sent time
                             SentTime(
-                              time:
-                                  chat.isDeleted ? chat.updatedAt : chat.sentAt,
+                              time: widget.chat.isDeleted
+                                  ? widget.chat.updatedAt
+                                  : widget.chat.sentAt,
                             ),
                           ],
                         ),
@@ -298,16 +335,13 @@ class ChatCard extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             // Last message
-                            LastMessage(chat: chat, user: receiver),
+                            LastMessage(chat: widget.chat, user: receiver),
                             // Show muted icon
-                            if (chat.isMuted)
-                              const Icon(
-                                Icons.volume_off,
-                                color: greyColor,
-                              ),
+                            if (widget.chat.isMuted)
+                              const Icon(Icons.volume_off, color: greyColor),
                             // Total unread messages
                             BadgeCount(
-                              counter: chat.unread,
+                              counter: widget.chat.unread,
                               bgColor: const Color(0xFFfa4e1c),
                             ),
                           ],
@@ -328,11 +362,7 @@ class ChatCard extends StatelessWidget {
 }
 
 class LastMessage extends StatelessWidget {
-  const LastMessage({
-    super.key,
-    required this.chat,
-    required this.user,
-  });
+  const LastMessage({super.key, required this.chat, required this.user});
 
   final Chat chat;
   final User user;
@@ -340,8 +370,9 @@ class LastMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Get text style
-    final TextStyle style =
-        Theme.of(context).textTheme.bodyMedium!.copyWith(color: primaryColor);
+    final TextStyle style = Theme.of(
+      context,
+    ).textTheme.bodyMedium!.copyWith(color: primaryColor);
     // Get current user ID.
     final String currentUserId = AuthController.instance.currentUser.userId;
 
@@ -354,16 +385,27 @@ class LastMessage extends StatelessWidget {
       return Expanded(
         child: Align(
           alignment: Alignment.centerLeft,
-          child: MessageDeleted(
-            iconSize: 22,
-            isSender: chat.isSender,
-          ),
+          child: MessageDeleted(iconSize: 22, isSender: chat.isSender),
         ),
       );
     } else if (isTyping) {
-      return Expanded(child: Text('typing'.tr, style: style, maxLines: 1, overflow: TextOverflow.ellipsis));
+      return Expanded(
+        child: Text(
+          'typing'.tr,
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
     } else if (isRecording) {
-      return Expanded(child: Text('recording_audio'.tr, style: style, maxLines: 1, overflow: TextOverflow.ellipsis));
+      return Expanded(
+        child: Text(
+          'recording_audio'.tr,
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
     }
     return Expanded(
       child: MessageBadge(

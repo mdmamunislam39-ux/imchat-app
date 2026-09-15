@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/helpers/app_helper.dart';
@@ -58,9 +59,15 @@ abstract class StoryApi {
         .where('userId', isEqualTo: user.userId)
         .snapshots()
         .map((event) {
-      return event.docs
-          .map((e) => Story.fromMap(user: user, data: e.data()))
-          .toList();
+      final List<Story> list = [];
+      for (final doc in event.docs) {
+        try {
+          list.add(Story.fromMap(user: user, data: doc.data()));
+        } catch (e) {
+          debugPrint('_getUserStory error for user ${user.userId}: $e');
+        }
+      }
+      return list;
     });
   }
 
@@ -84,19 +91,26 @@ abstract class StoryApi {
 
       // Check result
       if (storyDoc.exists) {
-        final oldTexts = List<Map<String, dynamic>>.from(storyDoc['texts']);
+        final data = storyDoc.data() ?? {};
+        final oldTexts = data['texts'] is List
+            ? List<Map<String, dynamic>>.from(data['texts'])
+            : <Map<String, dynamic>>[];
 
         // Update existing story
-        await storyDoc.reference.update(Story.toUpdateMap(
-          type: StoryType.text,
-          values: [...oldTexts, storyText.toMap()],
-        ));
+        await storyDoc.reference.set({
+          'id': currentUser.userId,
+          'userId': currentUser.userId,
+          'texts': [...oldTexts, storyText.toMap()],
+          'type': StoryType.text.name,
+          'viewers': [],
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       } else {
         // Create new story
         final Story story = Story(
           type: StoryType.text,
           texts: [storyText],
-          updatedAt: null,
+          updatedAt: DateTime.now(),
         );
         await storyDoc.reference.set(story.toMap());
       }
@@ -111,47 +125,52 @@ abstract class StoryApi {
   }
 
   // Create image story
-  static Future<void> uploadImageStory(File imageFile) async {
+  static Future<bool> uploadImageStory(File imageFile, {bool showDialog = true}) async {
     try {
       final User currentUser = AuthController.instance.currentUser;
+      final String userId = currentUser.userId.isNotEmpty
+          ? currentUser.userId
+          : (fb_auth.FirebaseAuth.instance.currentUser?.uid ?? '');
 
-      DialogHelper.showProcessingDialog(
-          title: 'uploading'.tr, barrierDismissible: false);
+      if (userId.isEmpty) {
+        throw Exception('User is not logged in.');
+      }
 
-      // Check story doc
-      final storyDoc = await storiesRef.doc(currentUser.userId).get();
+      if (showDialog) {
+        DialogHelper.showProcessingDialog(
+            title: 'uploading'.tr, barrierDismissible: false);
+      }
 
       final String imageUrl =
-          await AppHelper.uploadFile(file: imageFile, userId: currentUser.userId);
+          await AppHelper.uploadFile(file: imageFile, userId: userId);
 
       // New Story Image
       final StoryImage storyImage =
           StoryImage(imageUrl: imageUrl, createdAt: DateTime.now());
 
-      // Check result
-      if (storyDoc.exists) {
-        final oldImages = List<Map<String, dynamic>>.from(storyDoc['images']);
+      // Save/merge story in Firestore atomically with arrayUnion
+      await storiesRef.doc(userId).set({
+        'id': userId,
+        'userId': userId,
+        'type': StoryType.image.name,
+        'images': FieldValue.arrayUnion([storyImage.toMap()]),
+        'viewers': [],
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
-        // Update existing story
-        await storyDoc.reference.update(Story.toUpdateMap(
-          type: StoryType.image,
-          values: [...oldImages, storyImage.toMap()],
-        ));
-      } else {
-        // Create new story
-        final Story story = Story(
-          type: StoryType.image,
-          images: [storyImage],
-          updatedAt: null,
-        );
-        await storyDoc.reference.set(story.toMap());
+      if (showDialog) {
+        DialogHelper.closeDialog();
       }
-      DialogHelper.closeDialog();
       DialogHelper.showSnackbarMessage(
           SnackMsgType.success, 'story_created_successfully'.tr);
+      return true;
     } catch (e) {
-      DialogHelper.closeDialog();
+      debugPrint('uploadImageStory error: $e');
+      if (showDialog) {
+        DialogHelper.closeDialog();
+      }
       DialogHelper.showSnackbarMessage(SnackMsgType.error, e.toString());
+      return false;
     }
   }
 
@@ -183,19 +202,26 @@ abstract class StoryApi {
 
       // Check result
       if (storyDoc.exists) {
-        final oldVideos = List<Map<String, dynamic>>.from(storyDoc['videos']);
+        final data = storyDoc.data() ?? {};
+        final oldVideos = data['videos'] is List
+            ? List<Map<String, dynamic>>.from(data['videos'])
+            : <Map<String, dynamic>>[];
 
         // Update existing story
-        await storyDoc.reference.update(Story.toUpdateMap(
-          type: StoryType.video,
-          values: [...oldVideos, storyVideo.toMap()],
-        ));
+        await storyDoc.reference.set({
+          'id': currentUser.userId,
+          'userId': currentUser.userId,
+          'videos': [...oldVideos, storyVideo.toMap()],
+          'type': StoryType.video.name,
+          'viewers': [],
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       } else {
         // Create new story
         final Story story = Story(
           type: StoryType.video,
           videos: [storyVideo],
-          updatedAt: null,
+          updatedAt: DateTime.now(),
         );
         await storyDoc.reference.set(story.toMap());
       }

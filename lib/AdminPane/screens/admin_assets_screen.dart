@@ -4,7 +4,6 @@ import '../services/admin_assets_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../components/universal_asset_widget.dart';
 import '../widgets/asset_form_dialog.dart';
-import '../../api/official_team_api.dart';
 import '../../services/store_service.dart';
 
 /// Redesigned premium Admin Dashboard for managing Gifts, Entry Effects, Frames, Badges, and Profile Skins.
@@ -15,7 +14,8 @@ class AdminAssetsScreen extends StatefulWidget {
   State<AdminAssetsScreen> createState() => _AdminAssetsScreenState();
 }
 
-class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTickerProviderStateMixin {
+class _AdminAssetsScreenState extends State<AdminAssetsScreen>
+    with SingleTickerProviderStateMixin {
   final AdminAssetsService _assetsService = AdminAssetsService();
   late TabController _tabController;
 
@@ -24,10 +24,12 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
   String _searchQuery = '';
 
   final List<Map<String, String>> _categories = [
+    {'type': 'badge', 'name': 'Badges', 'icon': '🎖️'},
     {'type': 'entryEffect', 'name': 'Entry Effects', 'icon': '🚀'},
     {'type': 'avatarFrame', 'name': 'Frames', 'icon': '🖼️'},
     {'type': 'roomTheme', 'name': 'Room Themes', 'icon': '🎙️'},
     {'type': 'backgroundTheme', 'name': 'Skins', 'icon': '🎨'},
+    {'type': 'roomEntry', 'name': 'Room Entries', 'icon': '🚪'},
   ];
 
   @override
@@ -119,7 +121,9 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
   Future<void> _assignAsset(Map<String, dynamic> asset) async {
     // Gifts cannot be assigned to customization
     if (asset['type'] == 'gift') {
-      _showSnackBar('Gifts cannot be directly assigned to users from this dashboard.', isError: true);
+      _showSnackBar(
+          'Gifts cannot be directly assigned to users from this dashboard.',
+          isError: true);
       return;
     }
 
@@ -160,7 +164,10 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
       appBar: AppBar(
         title: const Text(
           'Custom Assets Manager',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+          style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5),
         ),
         backgroundColor: const Color(0xFF1C1D24),
         elevation: 0,
@@ -177,7 +184,8 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
           unselectedLabelColor: Colors.white60,
           indicatorWeight: 3,
           isScrollable: true,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          labelStyle:
+              const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
           tabs: _categories.map((cat) {
             return Tab(
               child: Row(
@@ -205,8 +213,10 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
                 : _filteredAssets.isEmpty
                     ? _buildEmptyState()
                     : GridView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 16),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
                           crossAxisSpacing: 18,
                           mainAxisSpacing: 18,
@@ -243,8 +253,10 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
                 style: const TextStyle(color: Colors.white, fontSize: 14),
                 decoration: InputDecoration(
                   hintText: 'Search by name or category...',
-                  hintStyle: TextStyle(color: Colors.white.withAlpha(77), fontSize: 13),
-                  prefixIcon: const Icon(Icons.search, color: Colors.white30, size: 20),
+                  hintStyle: TextStyle(
+                      color: Colors.white.withAlpha(77), fontSize: 13),
+                  prefixIcon:
+                      const Icon(Icons.search, color: Colors.white30, size: 20),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.only(top: 8),
                 ),
@@ -309,22 +321,29 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
                     )
                   else
                     const Center(
-                      child: Icon(Icons.broken_image, color: Colors.white24, size: 36),
+                      child: Icon(Icons.broken_image,
+                          color: Colors.white24, size: 36),
                     ),
-                  
+
                   // Active Badge
                   Positioned(
                     top: 10,
                     left: 10,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: isActive ? Colors.teal.withAlpha(217) : Colors.redAccent.withAlpha(217),
+                        color: isActive
+                            ? Colors.teal.withAlpha(217)
+                            : Colors.redAccent.withAlpha(217),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         isActive ? 'Active' : 'Inactive',
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
@@ -335,14 +354,23 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
                       top: 10,
                       right: 10,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 3),
                         decoration: BoxDecoration(
                           color: Colors.black54,
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          fileUrl.split('?').first.split('.').last.toUpperCase(),
-                          style: const TextStyle(color: Colors.tealAccent, fontSize: 8, fontWeight: FontWeight.bold),
+                          fileUrl
+                              .split('?')
+                              .first
+                              .split('.')
+                              .last
+                              .toUpperCase(),
+                          style: const TextStyle(
+                              color: Colors.tealAccent,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
@@ -365,22 +393,80 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
                     children: [
                       Text(
                         name,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 3),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.teal.withAlpha(38),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: Colors.teal.withAlpha(51)),
-                        ),
-                        child: Text(
-                          category.toUpperCase(),
-                          style: const TextStyle(color: Colors.tealAccent, fontSize: 9, fontWeight: FontWeight.bold),
-                        ),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 2,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.withAlpha(38),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.teal.withAlpha(51)),
+                            ),
+                            child: Text(
+                              category.toUpperCase(),
+                              style: const TextStyle(
+                                  color: Colors.tealAccent,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          if (asset['type'] == 'badge' &&
+                              (asset['verifyLevel'] ?? 0) > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.blueAccent.withAlpha(50),
+                                borderRadius: BorderRadius.circular(4),
+                                border:
+                                    Border.all(color: Colors.blueAccent.withAlpha(80)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.verified,
+                                      size: 10, color: Colors.lightBlueAccent),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    'VL ${asset['verifyLevel']}',
+                                    style: const TextStyle(
+                                        color: Colors.lightBlueAccent,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if ((asset['starRating'] ?? 1) > 1)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.withAlpha(40),
+                                borderRadius: BorderRadius.circular(4),
+                                border:
+                                    Border.all(color: Colors.amber.withAlpha(70)),
+                              ),
+                              child: Text(
+                                '★ ${asset['starRating']}',
+                                style: const TextStyle(
+                                    color: Colors.amber,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),
@@ -389,22 +475,32 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.diamond, color: Colors.tealAccent, size: 14),
+                          const Icon(Icons.diamond,
+                              color: Colors.tealAccent, size: 14),
                           const SizedBox(width: 2),
                           Text(
                             '$price',
-                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
                       ElevatedButton.icon(
-                        onPressed: asset['type'] == 'gift' ? null : () => _assignAsset(asset),
-                        icon: const Icon(Icons.send, size: 14, color: Colors.white),
-                        label: Text(asset['type'] == 'gift' ? 'N/A' : 'Assign', style: const TextStyle(fontSize: 12, color: Colors.white)),
+                        onPressed: asset['type'] == 'gift'
+                            ? null
+                            : () => _assignAsset(asset),
+                        icon: const Icon(Icons.send,
+                            size: 14, color: Colors.white),
+                        label: Text(asset['type'] == 'gift' ? 'N/A' : 'Assign',
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.white)),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.teal.withAlpha(200),
                           disabledBackgroundColor: Colors.grey.withAlpha(100),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 0),
                           minimumSize: const Size(0, 28),
                         ),
                       ),
@@ -423,11 +519,13 @@ class _AdminAssetsScreenState extends State<AdminAssetsScreen> with SingleTicker
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(Icons.layers_clear_outlined, color: Colors.tealAccent.withAlpha(102), size: 56),
+        Icon(Icons.layers_clear_outlined,
+            color: Colors.tealAccent.withAlpha(102), size: 56),
         const SizedBox(height: 16),
         const Text(
           'No Assets Found',
-          style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold),
+          style: TextStyle(
+              color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 6),
         const Text(
@@ -449,7 +547,8 @@ class GridPainter extends CustomPainter {
 
     for (double y = 0; y < size.height; y += squareSize) {
       for (double x = 0; x < size.width; x += squareSize) {
-        final bool isLight = ((x / squareSize).floor() + (y / squareSize).floor()) % 2 == 0;
+        final bool isLight =
+            ((x / squareSize).floor() + (y / squareSize).floor()) % 2 == 0;
         canvas.drawRect(
           Rect.fromLTWH(x, y, squareSize, squareSize),
           isLight ? lightPaint : darkPaint,
@@ -522,7 +621,8 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
 
     try {
       // 1. Direct match by document ID
-      final directDoc = await FirebaseFirestore.instance.collection('Users').doc(input).get();
+      final directDoc =
+          await FirebaseFirestore.instance.collection('Users').doc(input).get();
       if (directDoc.exists && directDoc.data() != null) {
         if (mounted) {
           setState(() {
@@ -649,13 +749,15 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
       return 'Infinity / Permanent (Never expires)';
     }
     final expiryDate = DateTime.now().add(Duration(days: days));
-    final formattedDate = "${expiryDate.year}-${expiryDate.month.toString().padLeft(2, '0')}-${expiryDate.day.toString().padLeft(2, '0')}";
+    final formattedDate =
+        "${expiryDate.year}-${expiryDate.month.toString().padLeft(2, '0')}-${expiryDate.day.toString().padLeft(2, '0')}";
     return 'Valid for $days days (Expires on $formattedDate)';
   }
 
   Future<void> _submitAssignment() async {
     if (_targetDocId == null || _foundUser == null) {
-      widget.onShowSnackBar('Please search and select a valid user first', isError: true);
+      widget.onShowSnackBar('Please search and select a valid user first',
+          isError: true);
       return;
     }
 
@@ -675,8 +777,13 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
 
       if (mounted) {
         Navigator.pop(context, true);
-        final userName = (_foundUser!['fullname'] ?? _foundUser!['name'] ?? _foundUser!['username'] ?? finalDocId).toString();
-        widget.onShowSnackBar('✅ Successfully assigned "${widget.asset['name']}" to $userName!');
+        final userName = (_foundUser!['fullname'] ??
+                _foundUser!['name'] ??
+                _foundUser!['username'] ??
+                finalDocId)
+            .toString();
+        widget.onShowSnackBar(
+            '✅ Successfully assigned "${widget.asset['name']}" to $userName!');
       }
     } catch (e) {
       if (mounted) {
@@ -690,14 +797,28 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
   Widget build(BuildContext context) {
     final assetName = widget.asset['name'] ?? 'Asset';
     final assetType = widget.asset['type'] ?? 'Item';
-    final imageUrl = (widget.asset['thumbnailUrl'] ?? widget.asset['fileUrl'] ?? widget.asset['imageUrl'] ?? widget.asset['image'] ?? '') as String;
+    final imageUrl = (widget.asset['thumbnailUrl'] ??
+        widget.asset['fileUrl'] ??
+        widget.asset['imageUrl'] ??
+        widget.asset['image'] ??
+        '') as String;
 
     final String? userPhotoUrl = _foundUser != null
-        ? (_foundUser!['photoUrl'] ?? _foundUser!['imageUrl'] ?? _foundUser!['profileImageUrl'] ?? _foundUser!['avatarUrl'])?.toString()
+        ? (_foundUser!['photoUrl'] ??
+                _foundUser!['imageUrl'] ??
+                _foundUser!['profileImageUrl'] ??
+                _foundUser!['avatarUrl'])
+            ?.toString()
         : null;
 
     final String userName = _foundUser != null
-        ? (_foundUser!['fullname'] ?? _foundUser!['name'] ?? _foundUser!['username'] ?? _foundUser!['displayName'] ?? _foundUser!['nickname'] ?? 'User').toString()
+        ? (_foundUser!['fullname'] ??
+                _foundUser!['name'] ??
+                _foundUser!['username'] ??
+                _foundUser!['displayName'] ??
+                _foundUser!['nickname'] ??
+                'User')
+            .toString()
         : 'User';
 
     return Dialog(
@@ -747,7 +868,8 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                         ),
                         const SizedBox(height: 2),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
                             color: Colors.pinkAccent.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(6),
@@ -766,7 +888,8 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                    icon: const Icon(Icons.close,
+                        color: Colors.white54, size: 20),
                   ),
                 ],
               ),
@@ -777,7 +900,10 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
               // Search Section Header
               const Text(
                 'Search Target User',
-                style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
 
@@ -788,20 +914,24 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                 style: const TextStyle(color: Colors.white, fontSize: 14),
                 decoration: InputDecoration(
                   hintText: 'Enter User ID or Search ID...',
-                  hintStyle: const TextStyle(color: Colors.white30, fontSize: 13),
-                  prefixIcon: const Icon(Icons.search, color: Colors.pinkAccent, size: 20),
+                  hintStyle:
+                      const TextStyle(color: Colors.white30, fontSize: 13),
+                  prefixIcon: const Icon(Icons.search,
+                      color: Colors.pinkAccent, size: 20),
                   suffixIcon: _isSearching
                       ? const Padding(
                           padding: EdgeInsets.all(12.0),
                           child: SizedBox(
                             width: 16,
                             height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.pinkAccent),
                           ),
                         )
                       : (_userIdController.text.isNotEmpty
                           ? IconButton(
-                              icon: const Icon(Icons.clear, color: Colors.white30, size: 18),
+                              icon: const Icon(Icons.clear,
+                                  color: Colors.white30, size: 18),
                               onPressed: () {
                                 _userIdController.clear();
                                 _performSearch('');
@@ -810,14 +940,16 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                           : null),
                   filled: true,
                   fillColor: Colors.black26,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.pinkAccent, width: 1.5),
+                    borderSide:
+                        const BorderSide(color: Colors.pinkAccent, width: 1.5),
                   ),
                 ),
               ),
@@ -831,18 +963,21 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                   decoration: BoxDecoration(
                     color: Colors.teal.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.teal.withValues(alpha: 0.4)),
+                    border:
+                        Border.all(color: Colors.teal.withValues(alpha: 0.4)),
                   ),
                   child: Row(
                     children: [
                       CircleAvatar(
                         radius: 22,
                         backgroundColor: Colors.teal.shade800,
-                        backgroundImage: (userPhotoUrl != null && userPhotoUrl.isNotEmpty)
-                            ? NetworkImage(userPhotoUrl)
-                            : null,
+                        backgroundImage:
+                            (userPhotoUrl != null && userPhotoUrl.isNotEmpty)
+                                ? NetworkImage(userPhotoUrl)
+                                : null,
                         child: (userPhotoUrl == null || userPhotoUrl.isEmpty)
-                            ? const Icon(Icons.person, color: Colors.white, size: 24)
+                            ? const Icon(Icons.person,
+                                color: Colors.white, size: 24)
                             : null,
                       ),
                       const SizedBox(width: 12),
@@ -865,13 +1000,15 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                                   ),
                                 ),
                                 const SizedBox(width: 4),
-                                const Icon(Icons.check_circle, color: Colors.tealAccent, size: 16),
+                                const Icon(Icons.check_circle,
+                                    color: Colors.tealAccent, size: 16),
                               ],
                             ),
                             const SizedBox(height: 2),
                             Text(
                               'ID: ${_foundUser!['searchId'] ?? _targetDocId}',
-                              style: const TextStyle(color: Colors.white70, fontSize: 11),
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 11),
                             ),
                           ],
                         ),
@@ -882,20 +1019,24 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                 const SizedBox(height: 16),
               ] else if (_searchError != null) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: Colors.redAccent.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+                    border: Border.all(
+                        color: Colors.redAccent.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
+                      const Icon(Icons.error_outline,
+                          color: Colors.redAccent, size: 18),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _searchError!,
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                          style: const TextStyle(
+                              color: Colors.redAccent, fontSize: 12),
                         ),
                       ),
                     ],
@@ -907,7 +1048,10 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
               // Expiration / Duration Section
               const Text(
                 'Assign Expiration Duration',
-                style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
 
@@ -933,10 +1077,12 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                   decoration: InputDecoration(
                     hintText: 'Enter number of days (e.g. 14)',
-                    hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+                    hintStyle:
+                        const TextStyle(color: Colors.white30, fontSize: 12),
                     filled: true,
                     fillColor: Colors.black26,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
                       borderSide: BorderSide.none,
@@ -950,7 +1096,8 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
               // Expiry Preview Text Box
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: Colors.black38,
                   borderRadius: BorderRadius.circular(10),
@@ -959,8 +1106,12 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                 child: Row(
                   children: [
                     Icon(
-                      _finalExpirationDays == null ? Icons.all_inclusive : Icons.event_available,
-                      color: _finalExpirationDays == null ? Colors.amberAccent : Colors.tealAccent,
+                      _finalExpirationDays == null
+                          ? Icons.all_inclusive
+                          : Icons.event_available,
+                      color: _finalExpirationDays == null
+                          ? Colors.amberAccent
+                          : Colors.tealAccent,
                       size: 18,
                     ),
                     const SizedBox(width: 8),
@@ -968,7 +1119,9 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                       child: Text(
                         _expiryPreviewText,
                         style: TextStyle(
-                          color: _finalExpirationDays == null ? Colors.amberAccent : Colors.tealAccent,
+                          color: _finalExpirationDays == null
+                              ? Colors.amberAccent
+                              : Colors.tealAccent,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
@@ -985,27 +1138,36 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: _isAssigning ? null : () => Navigator.pop(context),
-                    child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+                    onPressed:
+                        _isAssigning ? null : () => Navigator.pop(context),
+                    child: const Text('Cancel',
+                        style: TextStyle(color: Colors.white54)),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
-                    onPressed: (_isAssigning || _targetDocId == null) ? null : _submitAssignment,
+                    onPressed: (_isAssigning || _targetDocId == null)
+                        ? null
+                        : _submitAssignment,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.pinkAccent,
                       disabledBackgroundColor: Colors.grey.shade800,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                     child: _isAssigning
                         ? const SizedBox(
                             width: 18,
                             height: 18,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2),
                           )
                         : const Text(
                             'Assign Item',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold),
                           ),
                   ),
                 ],
@@ -1017,8 +1179,10 @@ class _AssignAssetDialogState extends State<_AssignAssetDialog> {
     );
   }
 
-  Widget _buildDurationChip({required String label, int? days, bool isCustom = false}) {
-    final bool isSelected = isCustom ? _isCustomDays : (!_isCustomDays && _selectedDays == days);
+  Widget _buildDurationChip(
+      {required String label, int? days, bool isCustom = false}) {
+    final bool isSelected =
+        isCustom ? _isCustomDays : (!_isCustomDays && _selectedDays == days);
 
     return ChoiceChip(
       label: Text(

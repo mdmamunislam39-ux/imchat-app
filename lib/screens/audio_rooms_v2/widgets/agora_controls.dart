@@ -139,6 +139,7 @@ class _AgoraControlsState extends State<AgoraControls>
         _currentVoiceChanger = state.voiceChanger;
         _users = state.users;
       });
+      WidgetsBinding.instance.scheduleFrame();
     } else if (state is MicrophoneToggled) {
       setState(() {
         _isMuted = state.isMuted;
@@ -148,26 +149,32 @@ class _AgoraControlsState extends State<AgoraControls>
       } else {
         _pulseController.stop();
       }
+      WidgetsBinding.instance.scheduleFrame();
     } else if (state is SpeakerToggled) {
       setState(() {
         _isSpeakerOn = state.isSpeakerOn;
       });
+      WidgetsBinding.instance.scheduleFrame();
     } else if (state is AgoraConnectionUpdated) {
       setState(() {
         _connectionState = state.state;
       });
+      WidgetsBinding.instance.scheduleFrame();
     } else if (state is AudioQualityChanged) {
       setState(() {
         _currentQuality = state.quality;
       });
+      WidgetsBinding.instance.scheduleFrame();
     } else if (state is AudioEffectApplied) {
       setState(() {
         _currentEffect = state.effect;
       });
+      WidgetsBinding.instance.scheduleFrame();
     } else if (state is VoiceChangerApplied) {
       setState(() {
         _currentVoiceChanger = state.changer;
       });
+      WidgetsBinding.instance.scheduleFrame();
     } else if (state is AgoraStatsUpdated) {
       setState(() {
         _currentStats = state.stats;
@@ -235,7 +242,7 @@ class _AgoraControlsState extends State<AgoraControls>
                   onTap: () {
                     context
                         .read<AudioRoomsBloc>()
-                        .add(const ToggleMicrophone());
+                        .add(SetMicrophoneMute(muted: !_isMuted));
                   },
                   color: _isMuted ? Colors.red : Colors.green,
                 ),

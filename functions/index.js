@@ -1,10 +1,12 @@
 
 const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
-admin.initializeApp();
+admin.initializeApp({
+  databaseURL: "https://imchat-84519-default-rtdb.firebaseio.com",
+  storageBucket: "imchat-84519.appspot.com",
+});
 
 
-const storage = admin.storage().bucket();
 const firestore = admin.firestore();
 
 
@@ -24,6 +26,110 @@ exports.onFruitWheelWin = realtimeEvents.onFruitWheelWin;
 // Event reward distribution cron job (every 5 minutes)
 const eventRewards = require('./event_rewards_cron');
 exports.distributeEventRewards = eventRewards.distributeEventRewards;
+
+// Trending scores calculation cron job (every 10 minutes)
+const trendingCron = require('./trending_cron');
+exports.calculateTrendingScores = trendingCron.calculateTrendingScores;
+
+// Lucky Bag Voice Room Cloud Functions
+const luckyBag = require('./lucky_bag');
+exports.createLuckyBag = luckyBag.createLuckyBag;
+exports.claimLuckyBag = luckyBag.claimLuckyBag;
+
+// SVIP Management & Seller Recharge
+const svipManager = require('./svip_manager');
+
+exports.sellerRecharge = functions.https.onCall(async (data, context) => {
+  if (!context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication required.");
+  }
+  const sellerUid = context.auth.uid;
+  const targetUserId = data.targetUserId;
+  const amount = Number(data.amount);
+
+  if (!targetUserId || !amount || isNaN(amount) || amount <= 0) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid target user or recharge amount.");
+  }
+
+  // Verify seller authorization
+  const sellerQuerySnap = await firestore.collection('sellers').where('userId', '==', sellerUid).limit(1).get();
+  if (sellerQuerySnap.empty) {
+    throw new functions.https.HttpsError("permission-denied", "You are not an authorized diamond seller.");
+  }
+
+  const sellerDoc = sellerQuerySnap.docs[0];
+  const sellerRef = sellerDoc.ref;
+  const userRef = firestore.collection('Users').doc(targetUserId);
+
+  const today = new Date();
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+
+  let finalMonthlyRecharge = amount;
+
+  await firestore.runTransaction(async (transaction) => {
+    const sSnap = await transaction.get(sellerRef);
+    const uSnap = await transaction.get(userRef);
+
+    if (!sSnap.exists) {
+      throw new functions.https.HttpsError("not-found", "Seller profile not found.");
+    }
+    if (!uSnap.exists) {
+      throw new functions.https.HttpsError("not-found", "Recipient user not found.");
+    }
+
+    const sData = sSnap.data() || {};
+    const uData = uSnap.data() || {};
+
+    if (sData.isActive === false) {
+      throw new functions.https.HttpsError("permission-denied", "Seller account is inactive.");
+    }
+
+    const currentBalance = Number(sData.accountBalance || 0);
+    if (currentBalance < amount) {
+      throw new functions.https.HttpsError("failed-precondition", "Insufficient seller balance.");
+    }
+
+    const lastMonth = uData.lastRechargeMonth || '';
+    const prevMonthly = lastMonth === currentMonth ? Number(uData.monthlyRechargeAmount || 0) : 0;
+    finalMonthlyRecharge = prevMonthly + amount;
+
+    // 1. Deduct seller balance
+    transaction.update(sellerRef, {
+      accountBalance: admin.firestore.FieldValue.increment(-amount),
+      totalSales: admin.firestore.FieldValue.increment(amount),
+      totalUsersRecharged: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 2. Credit user diamonds & increment eligible seller recharge tracking
+    transaction.update(userRef, {
+      diamonds: admin.firestore.FieldValue.increment(amount),
+      totalDiamonds: admin.firestore.FieldValue.increment(amount),
+      monthlyRechargeAmount: finalMonthlyRecharge,
+      eligibleSellerRechargeAmount: admin.firestore.FieldValue.increment(amount),
+      totalEligibleSellerRechargeAmount: admin.firestore.FieldValue.increment(amount),
+      lastRechargeMonth: currentMonth,
+    });
+
+    // 3. Create seller transaction record
+    const txnRef = firestore.collection('seller_transactions').doc();
+    transaction.set(txnRef, {
+      sellerId: sellerUid,
+      userId: targetUserId,
+      amount: amount,
+      type: 'recharge',
+      source: 'seller_page',
+      alreadyTrackedOnUser: true,
+      description: `Seller recharge: ${amount} diamonds to ${uData.fullname || targetUserId}`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+
+  // 4. Trigger backend SVIP verification and auto-upgrade
+  await svipManager.checkAndApplySvipUpgrade(targetUserId, finalMonthlyRecharge, currentMonth);
+
+  return { success: true, amount: amount, monthlyRecharge: finalMonthlyRecharge };
+});
 
 
 
@@ -57,8 +163,12 @@ exports.sendPushNotification = functions.https.onCall(async (data, context) => {
       },
       android: {
         priority: "high",
+        ttl: isCallNotification ? 60 * 1000 : 86400 * 1000,
       },
       apns: {
+        headers: {
+          "apns-priority": "10",
+        },
         payload: {
           aps: {
             contentAvailable: true,
@@ -249,32 +359,36 @@ exports.onAudioRoomPresenceDelete = functions.database.ref("/audio_room_presence
 
       // Check if user is actually in the room
       const participantIndex = participants.findIndex((p) => p.userId === userId);
-      if (participantIndex === -1) {
-        console.log(`User ${userId} is not in room ${roomId}. No cleanup needed.`);
+      const isParticipant = participantIndex !== -1;
+
+      // Also check and clear any seat occupied by this user
+      const updatedSeats = roomData.settings?.seatConfiguration ? [...roomData.settings.seatConfiguration] : [];
+      let seatModified = false;
+      for (let i = 0; i < updatedSeats.length; i++) {
+        if (updatedSeats[i].occupiedBy === userId) {
+          updatedSeats[i].occupiedBy = null;
+          seatModified = true;
+        }
+      }
+
+      if (!isParticipant && !seatModified) {
+        console.log(`User ${userId} is not in room ${roomId} and not seated. No cleanup needed.`);
         return;
       }
 
       // Remove participant
       const updatedParticipants = participants.filter((p) => p.userId !== userId);
 
-      // Also clear seat if they were sitting
-      const updatedSeats = roomData.settings?.seatConfiguration || [];
-      const leavingParticipant = participants[participantIndex];
-      if (leavingParticipant.seatNumber !== null && leavingParticipant.seatNumber !== undefined) {
-        const seatIndex = updatedSeats.findIndex((s) => s.seatNumber === leavingParticipant.seatNumber);
-        if (seatIndex !== -1) {
-          updatedSeats[seatIndex].occupiedBy = null;
-        }
-      }
-
-      // Handle host transfer if creator leaves and there are other participants
+      // If creator disconnects from a Live room, end the live room
       const isCreator = (roomData.creatorId === userId);
-      if (isCreator && updatedParticipants.length > 0) {
-        updatedParticipants[0].isHost = true;
+      let isActive = roomData.isActive !== false;
+      if (isCreator && roomData.category === "Live") {
+        isActive = false;
       }
 
       const updateData = {
         participants: updatedParticipants,
+        isActive: isActive,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
@@ -283,7 +397,7 @@ exports.onAudioRoomPresenceDelete = functions.database.ref("/audio_room_presence
       }
 
       await roomRef.update(updateData);
-      console.log(`Successfully removed user ${userId} from room ${roomId}`);
+      console.log(`Successfully cleaned up presence for user ${userId} in room ${roomId}`);
     } catch (error) {
       console.error(`Error cleaning up room presence for ${userId} in ${roomId}:`, error);
     }

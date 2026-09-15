@@ -146,7 +146,7 @@ class _BetCardState extends State<BetCard>
 
               // Emoji symbol
               widget.emoji == '7️⃣7️⃣' 
-                 ? Image.asset('assets/images/77_icon.png', width: 34, height: 34) 
+                 ? Image.asset('assets/images/77_icon.webp', width: 34, height: 34) 
                  : Text(widget.emoji, style: const TextStyle(fontSize: 30)),
               const SizedBox(height: 6),
 

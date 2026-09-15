@@ -17,6 +17,7 @@ abstract class AppRoutes {
   static const String videoCall = '/video-call';
   static const String voiceCall = '/voice-call';
   static const String incomingCall = '/incoming-call';
+  static const String groupCall = '/group-call';
   static const String editProfile = '/edit-profile';
   static const String session = '/session';
   static const String about = '/about';
@@ -31,6 +32,8 @@ abstract class AppRoutes {
   static const String profileView = '/profile-view';
   static const String writeStory = '/write-story';
   static const String storyView = '/story-view';
+  static const String addStory = '/add-story';
+  static const String storyEditor = '/story-editor';
   //for phone
   static const String phoneSignIn = '/phoneSignIn';
   static const String settings = '/settings';

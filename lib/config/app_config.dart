@@ -17,7 +17,7 @@ abstract class AppConfig {
 
   // App identifiers used to share the app and rate it on Google Play/App Store.
   static const String iOsAppId = "1:518076067996:ios:922434d04be0323ca3fd59";
-  static const String androidPackageName = "com.imchatappcompany.appname";
+  static const String androidPackageName = "com.imchatapp";
 
   /// Privacy Policy Link:
   static const String privacyPolicyUrl = "https://www.yoursite.com/privacy";

@@ -51,8 +51,9 @@ class MessageController extends GetxController {
   final RxBool isChatMuted = RxBool(false);
   final Rxn<Message> selectedMessage = Rxn();
   final Rxn<Message> replyMessage = Rxn();
-  // Normal vars
-  bool isReceiverOnline = false;
+  // Obx & other vars
+  final RxBool isReceiverOnline = false.obs;
+  StreamSubscription<User>? _receiverPresenceSubscription;
 
   bool get isReplying => replyMessage.value != null;
   Group? get selectedGroup => _groupController.selectedGroup.value;
@@ -70,6 +71,12 @@ class MessageController extends GetxController {
       _scrollControllerListener();
       if (user != null && user!.userType != 'channel' && user!.userId != 'official_team' && !user!.userId.startsWith('official_channel_')) {
         _checkMuteStatus();
+
+        // Listen to receiver updates for real-time presence
+        _receiverPresenceSubscription = UserApi.getUserUpdates(user!.userId).listen((updatedUser) {
+          isReceiverOnline.value = updatedUser.isOnline;
+        });
+
         ever(isTextMsg, (value) {
           UserApi.updateUserTypingStatus(value, user!.userId);
         });
@@ -80,6 +87,7 @@ class MessageController extends GetxController {
 
   @override
   void onClose() {
+    _receiverPresenceSubscription?.cancel();
     // Clear the previous one
     _groupController.clearSelectedGroup();
     chatFocusNode.dispose();
@@ -168,7 +176,7 @@ class MessageController extends GetxController {
           fileUrl: file.path, // Local file path for instant UI
           videoThumbnail: localVideoThumbnail,
           senderId: AuthController.instance.currentUser.userId,
-          isRead: isReceiverOnline,
+          isRead: isReceiverOnline.value,
           isRecAudio: isRecAudio,
           replyMessage: replyMessage.value,
           sentAt: null, // Null sentAt acts as "uploading" pending state
@@ -235,7 +243,7 @@ class MessageController extends GetxController {
         location: location,
         videoThumbnail: '',
         senderId: AuthController.instance.currentUser.userId,
-        isRead: isReceiverOnline,
+        isRead: isReceiverOnline.value,
         isRecAudio: isRecAudio,
         replyMessage: replyMessage.value,
       );
@@ -342,7 +350,7 @@ class MessageController extends GetxController {
 
   // Auto scroll the messages list to bottom
   void scrollToBottom() {
-    if (scrollController.hasClients) {
+    if (scrollController.hasClients && scrollController.positions.length == 1) {
       scrollController.animateTo(
         0.0,
         duration: const Duration(milliseconds: 200),
@@ -354,7 +362,8 @@ class MessageController extends GetxController {
   // Listen scrollController updates
   void _scrollControllerListener() {
     scrollController.addListener(() {
-      if (scrollController.position.pixels == 0.0) {
+      if (!scrollController.hasClients || scrollController.positions.length != 1) return;
+      if (scrollController.offset == 0.0) {
         // Update value
         showScrollButton.value = false;
       } else {
