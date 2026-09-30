@@ -43,6 +43,9 @@ class AppThemeService extends GetxService {
   final RxString searchIconUrl = ''.obs;
   final RxString trophyIconUrl = ''.obs;
 
+  // Dynamic Wallet & Profile Screen Icons
+  final RxMap<String, String> walletMenuIcons = <String, String>{}.obs;
+
   @override
   void onInit() {
     super.onInit();
@@ -185,8 +188,23 @@ class AppThemeService extends GetxService {
               '🎨 [AppThemeService] Updated room control icons: $roomSettingsIcons');
         } else {
           roomSettingsIcons.clear();
-          debugPrint(
-              '🎨 [AppThemeService] No room control icons map found in config');
+        }
+
+        // Dynamic Wallet & Profile Menu Icons
+        final dynamic rawWalletIcons =
+            data['walletMenuIcons'] ?? data['profileMenuIcons'];
+        if (rawWalletIcons is Map) {
+          final Map<dynamic, dynamic> iconsMap = rawWalletIcons;
+          final Map<String, String> parsedWalletIcons = {};
+          iconsMap.forEach((key, value) {
+            if (value != null && value.toString().isNotEmpty) {
+              parsedWalletIcons[key.toString()] = value.toString();
+            }
+          });
+          walletMenuIcons.assignAll(parsedWalletIcons);
+          debugPrint('🎨 [AppThemeService] Updated wallet menu icons: $walletMenuIcons');
+        } else {
+          walletMenuIcons.clear();
         }
       }
     }, onError: (e) {
@@ -242,4 +260,7 @@ class AppThemeService extends GetxService {
         leaderboardFrames['top${rank}FrameUrl'] ??
         leaderboardFrames['${category}_rank${rank}_url'];
   }
+
+  /// Get the dynamic custom icon/logo URL for a wallet/profile item (e.g. 'my_level', 'store', 'vip_badge')
+  String? getWalletIcon(String key) => walletMenuIcons[key];
 }

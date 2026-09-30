@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
 
@@ -69,9 +70,10 @@ class SupportersPage extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        Text(
-          'ID:$id',
-          style: const TextStyle(color: Colors.grey, fontSize: 11),
+        UserIdBadgeWidget(
+          searchId: id,
+          badgeHeight: 13,
+          textStyle: const TextStyle(color: Colors.grey, fontSize: 11),
         ),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -169,7 +171,7 @@ class SupportersPage extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  subtitle: Text('ID:$id', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  subtitle: UserIdBadgeWidget(searchId: id, badgeHeight: 13, textStyle: const TextStyle(fontSize: 12, color: Colors.grey)),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [

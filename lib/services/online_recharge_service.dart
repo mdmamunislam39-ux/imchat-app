@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/recharge_models.dart';
 import 'store_service.dart';
+import 'svip_service.dart';
 
 /// Service managing Online Recharge payment methods, packages, orders, and atomic diamond credit
 class OnlineRechargeService {
@@ -323,6 +324,17 @@ class OnlineRechargeService {
     try {
       final orderRef = _firestore.collection(_rechargeOrdersCol).doc(orderId);
 
+      final svipLevelsSnap = await _firestore
+          .collection('config')
+          .doc('svip_levels')
+          .collection('levels')
+          .get();
+      final List<Map<String, dynamic>> svipLevels = svipLevelsSnap.docs.map((doc) {
+        final d = doc.data();
+        d['id'] = doc.id;
+        return d;
+      }).toList();
+
       return await _firestore.runTransaction<bool>((transaction) async {
         final orderSnap = await transaction.get(orderRef);
         if (!orderSnap.exists) {
@@ -357,6 +369,14 @@ class OnlineRechargeService {
           throw Exception('User account not found.');
         }
 
+        final userData = userSnap.data() ?? {};
+        final lastMonth = userData['lastRechargeMonth'] as String? ?? '';
+        final now = DateTime.now();
+        final currentMonth = "${now.year}-${now.month.toString().padLeft(2, '0')}";
+
+        int previousMonthlyRecharge = (userData['monthlyRechargeAmount'] as num?)?.toInt() ?? 0;
+        int newMonthlyRecharge = totalCreditDiamonds;
+
         // 1. Update Order Status
         transaction.update(orderRef, {
           'status': 'Approved',
@@ -364,15 +384,44 @@ class OnlineRechargeService {
           'verifiedBy': adminId,
         });
 
-        // 2. Increment User Diamond Balance
-        transaction.update(userRef, {
-          'diamonds': FieldValue.increment(totalCreditDiamonds),
-          'totalDiamonds': FieldValue.increment(totalCreditDiamonds),
-          'monthlyRechargeAmount': FieldValue.increment(totalCreditDiamonds),
-          'weeklyRechargeAmount': FieldValue.increment(totalCreditDiamonds),
-          'lastRechargeWeek': getCurrentWeekId(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        // 2. Increment User Diamond Balance & Tracking
+        if (lastMonth != currentMonth) {
+          transaction.update(userRef, {
+            'diamonds': FieldValue.increment(totalCreditDiamonds),
+            'totalDiamonds': FieldValue.increment(totalCreditDiamonds),
+            'monthlyRechargeAmount': totalCreditDiamonds,
+            'eligibleSellerRechargeAmount': FieldValue.increment(totalCreditDiamonds),
+            'totalEligibleSellerRechargeAmount': FieldValue.increment(totalCreditDiamonds),
+            'weeklyRechargeAmount': FieldValue.increment(totalCreditDiamonds),
+            'lastRechargeWeek': getCurrentWeekId(),
+            'lastRechargeMonth': currentMonth,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else {
+          newMonthlyRecharge = previousMonthlyRecharge + totalCreditDiamonds;
+          transaction.update(userRef, {
+            'diamonds': FieldValue.increment(totalCreditDiamonds),
+            'totalDiamonds': FieldValue.increment(totalCreditDiamonds),
+            'monthlyRechargeAmount': FieldValue.increment(totalCreditDiamonds),
+            'eligibleSellerRechargeAmount': FieldValue.increment(totalCreditDiamonds),
+            'totalEligibleSellerRechargeAmount': FieldValue.increment(totalCreditDiamonds),
+            'weeklyRechargeAmount': FieldValue.increment(totalCreditDiamonds),
+            'lastRechargeWeek': getCurrentWeekId(),
+            'lastRechargeMonth': currentMonth,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        // Auto upgrade SVIP on online recharge
+        await SvipService.checkAndAutoUpgradeSvip(
+          userId: userId,
+          newRechargeAmount: newMonthlyRecharge,
+          currentMonth: currentMonth,
+          transaction: transaction,
+          userRef: userRef,
+          userData: userData,
+          svipLevels: svipLevels,
+        );
 
         // 3. Log to wallet_transactions
         final txId = _uuid.v4();

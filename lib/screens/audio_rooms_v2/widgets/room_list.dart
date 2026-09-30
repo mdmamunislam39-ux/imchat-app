@@ -1,12 +1,14 @@
 import 'dart:ui';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/modern_room_card.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/explore_grid_room_card.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
 
-/// Widget for displaying a list of audio rooms
+/// Widget for displaying a list or grid of audio rooms
 class RoomList extends StatelessWidget {
   final List<AudioRoomV2> rooms;
   final String title;
@@ -21,6 +23,7 @@ class RoomList extends StatelessWidget {
   final bool shrinkWrap;
   final ScrollPhysics? physics;
   final bool showTotalCount;
+  final bool isGrid;
 
   const RoomList({
     super.key,
@@ -37,6 +40,7 @@ class RoomList extends StatelessWidget {
     this.shrinkWrap = false,
     this.physics,
     this.showTotalCount = true,
+    this.isGrid = false,
   });
 
   @override
@@ -47,6 +51,43 @@ class RoomList extends StatelessWidget {
 
     if (rooms.isEmpty) {
       return _buildEmptyState();
+    }
+
+    if (isGrid) {
+      return CustomScrollView(
+        controller: scrollController,
+        physics: physics,
+        shrinkWrap: shrinkWrap,
+        slivers: [
+          if (headerWidget != null)
+            SliverToBoxAdapter(child: headerWidget!),
+          if (showTitle)
+            SliverToBoxAdapter(child: _buildTitle()),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 6,
+                childAspectRatio: 0.88,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final room = rooms[index];
+                  return ExploreGridRoomCard(
+                    room: room,
+                    onTap: () => onRoomTap?.call(room),
+                    onJoin: () => onJoinRoom?.call(room),
+                  );
+                },
+                childCount: rooms.length,
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        ],
+      );
     }
 
     return Column(
@@ -123,6 +164,34 @@ class RoomList extends StatelessWidget {
 
   /// Build loading state
   Widget _buildLoadingState() {
+    if (isGrid) {
+      return CustomScrollView(
+        shrinkWrap: shrinkWrap,
+        physics: const NeverScrollableScrollPhysics(),
+        slivers: [
+          if (headerWidget != null)
+            SliverToBoxAdapter(child: headerWidget!),
+          if (showTitle)
+            SliverToBoxAdapter(child: _buildTitle()),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 6,
+                childAspectRatio: 0.88,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildGridSkeletonCard(),
+                childCount: 6,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     return Column(
       children: [
         if (showTitle) _buildTitle(),
@@ -323,17 +392,49 @@ class RoomList extends StatelessWidget {
                 ),
               ),
               Container(
-                width: 60,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: isLightBg ? Colors.grey[300] : Colors.white12,
-                  borderRadius: BorderRadius.circular(16),
-                ),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  /// Build skeleton card for grid loading state
+  Widget _buildGridSkeletonCard() {
+    final themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : null;
+    final screenBgColor = themeService?.getScreenColor('room');
+    final bool isLightBg =
+        screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AspectRatio(
+          aspectRatio: 1.0,
+          child: Container(
+            decoration: BoxDecoration(
+              color: isLightBg
+                  ? Colors.black.withValues(alpha: 0.05)
+                  : Colors.white.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          height: 14,
+          width: 90,
+          decoration: BoxDecoration(
+            color: isLightBg
+                ? Colors.black.withValues(alpha: 0.05)
+                : Colors.white.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -537,14 +638,33 @@ class HorizontalRoomList extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'by ${room.creatorName}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: secondaryTextColor,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    StreamBuilder<DocumentSnapshot>(
+                      stream: room.creatorId.isNotEmpty
+                          ? FirebaseFirestore.instance
+                              .collection('Users')
+                              .doc(room.creatorId)
+                              .snapshots()
+                          : null,
+                      builder: (context, userSnap) {
+                        String creatorDisplayName = room.creatorName;
+                        if (userSnap.hasData && userSnap.data!.exists) {
+                          final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                          if (uData != null &&
+                              uData['fullname'] != null &&
+                              uData['fullname'].toString().trim().isNotEmpty) {
+                            creatorDisplayName = uData['fullname'].toString().trim();
+                          }
+                        }
+                        return Text(
+                          'by $creatorDisplayName',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: secondaryTextColor,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
                     ),
                     const Spacer(),
                     SizedBox(

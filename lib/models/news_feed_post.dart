@@ -119,22 +119,36 @@ class PostComment {
 
   factory PostComment.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
+    return PostComment.fromMap(data, id: doc.id);
+  }
+
+  factory PostComment.fromMap(Map<String, dynamic> data, {String? id}) {
+    DateTime createdAt = DateTime.now();
+    final rawCreated = data['createdAt'] ?? data['created_at'];
+    if (rawCreated is Timestamp) {
+      createdAt = rawCreated.toDate();
+    } else if (rawCreated is String) {
+      createdAt = DateTime.tryParse(rawCreated)?.toLocal() ?? DateTime.now();
+    } else if (rawCreated is DateTime) {
+      createdAt = rawCreated;
+    }
+
     return PostComment(
-      id: doc.id,
-      postId: data['postId'] ?? '',
-      userId: data['userId'] ?? '',
-      userName: data['userName'] ?? 'Unknown',
-      userAvatar: data['userAvatar'],
-      userFrameId: data['userFrameId'],
-      isVerified: data['isVerified'] ?? false,
-      text: data['text'] ?? '',
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      likeCount: data['likeCount'] ?? 0,
-      likedBy: List<String>.from(data['likedBy'] ?? []),
-      replyToId: data['replyToId'],
-      replyToUserName: data['replyToUserName'],
-      imageUrl: data['imageUrl'],
-      isEdited: data['isEdited'] ?? false,
+      id: id ?? data['id']?.toString() ?? '',
+      postId: data['postId']?.toString() ?? data['post_id']?.toString() ?? '',
+      userId: data['userId']?.toString() ?? data['user_id']?.toString() ?? '',
+      userName: data['userName']?.toString() ?? data['user_name']?.toString() ?? data['author_name']?.toString() ?? 'Unknown',
+      userAvatar: data['userAvatar']?.toString() ?? data['user_avatar']?.toString() ?? data['author_avatar']?.toString(),
+      userFrameId: data['userFrameId']?.toString() ?? data['user_frame_id']?.toString(),
+      isVerified: data['isVerified'] == true || data['is_verified'] == true,
+      text: data['text']?.toString() ?? '',
+      createdAt: createdAt,
+      likeCount: (data['likeCount'] is num) ? (data['likeCount'] as num).toInt() : ((data['like_count'] is num) ? (data['like_count'] as num).toInt() : 0),
+      likedBy: List<String>.from(data['likedBy'] ?? data['liked_by'] ?? []),
+      replyToId: data['replyToId']?.toString() ?? data['reply_to_id']?.toString(),
+      replyToUserName: data['replyToUserName']?.toString() ?? data['reply_to_user_name']?.toString(),
+      imageUrl: data['imageUrl']?.toString() ?? data['image_url']?.toString(),
+      isEdited: data['isEdited'] == true || data['is_edited'] == true,
     );
   }
 
@@ -234,35 +248,69 @@ class NewsFeedPost {
 
   factory NewsFeedPost.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
+    return NewsFeedPost.fromMap(data, id: doc.id);
+  }
+
+  factory NewsFeedPost.fromMap(Map<String, dynamic> data, {String? id}) {
+    DateTime createdAt = DateTime.now();
+    final rawCreated = data['createdAt'] ?? data['created_at'];
+    if (rawCreated is Timestamp) {
+      createdAt = rawCreated.toDate();
+    } else if (rawCreated is String) {
+      createdAt = DateTime.tryParse(rawCreated)?.toLocal() ?? DateTime.now();
+    } else if (rawCreated is DateTime) {
+      createdAt = rawCreated;
+    }
+
+    DateTime updatedAt = createdAt;
+    final rawUpdated = data['updatedAt'] ?? data['updated_at'];
+    if (rawUpdated is Timestamp) {
+      updatedAt = rawUpdated.toDate();
+    } else if (rawUpdated is String) {
+      updatedAt = DateTime.tryParse(rawUpdated)?.toLocal() ?? createdAt;
+    } else if (rawUpdated is DateTime) {
+      updatedAt = rawUpdated;
+    }
+
+    List<PostMedia> mediaList = [];
+    if (data['media'] is List) {
+      mediaList = (data['media'] as List)
+          .map((m) => PostMedia.fromJson(Map<String, dynamic>.from(m as Map)))
+          .toList();
+    } else if (data['media_urls'] is List) {
+      final urls = List<String>.from(data['media_urls']);
+      final types = List<String>.from(data['media_types'] ?? []);
+      for (int i = 0; i < urls.length; i++) {
+        mediaList.add(PostMedia(url: urls[i], type: i < types.length ? types[i] : 'image'));
+      }
+    }
+
     return NewsFeedPost(
-      id: doc.id,
-      userId: data['userId'] ?? '',
-      userName: data['userName'] ?? 'Unknown',
-      userAvatar: data['userAvatar'],
-      userFrameId: data['userFrameId'],
-      isVerified: data['isVerified'] ?? false,
-      userLevel: data['userLevel'],
-      userLevelBadgeUrl: data['userLevelBadgeUrl'],
-      content: data['content'] ?? '',
-      media: (data['media'] as List<dynamic>?)
-              ?.map((m) => PostMedia.fromJson(Map<String, dynamic>.from(m as Map)))
-              .toList() ??
-          [],
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      likeCount: data['likeCount'] ?? 0,
-      commentCount: data['commentCount'] ?? 0,
-      shareCount: data['shareCount'] ?? 0,
-      reactions: Map<String, String>.from(data['reactions'] ?? {}),
-      likedBy: List<String>.from(data['likedBy'] ?? []),
-      visibility: data['visibility'] ?? 'public',
-      isPinned: data['isPinned'] ?? false,
-      isDeleted: data['isDeleted'] ?? false,
-      isNotice: data['isNotice'] ?? false,
-      noticeTitle: data['noticeTitle'],
-      reportCount: data['reportCount'] ?? 0,
-      viewCount: data['viewCount'] ?? 0,
-      trendingScore: (data['trendingScore'] as num?)?.toDouble() ?? 0.0,
+      id: id ?? data['id']?.toString() ?? '',
+      userId: data['userId']?.toString() ?? data['user_id']?.toString() ?? '',
+      userName: data['userName']?.toString() ?? data['user_name']?.toString() ?? data['fullname']?.toString() ?? 'Unknown',
+      userAvatar: data['userAvatar']?.toString() ?? data['user_avatar']?.toString() ?? data['photo_url']?.toString(),
+      userFrameId: data['userFrameId']?.toString() ?? data['user_frame_id']?.toString() ?? data['active_frame_id']?.toString(),
+      isVerified: data['isVerified'] == true || data['is_verified'] == true,
+      userLevel: (data['userLevel'] is num) ? (data['userLevel'] as num).toInt() : ((data['user_level'] is num) ? (data['user_level'] as num).toInt() : ((data['level'] is num) ? (data['level'] as num).toInt() : null)),
+      userLevelBadgeUrl: data['userLevelBadgeUrl']?.toString() ?? data['user_level_badge_url']?.toString(),
+      content: data['content']?.toString() ?? '',
+      media: mediaList,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      likeCount: (data['likeCount'] is num) ? (data['likeCount'] as num).toInt() : ((data['like_count'] is num) ? (data['like_count'] as num).toInt() : 0),
+      commentCount: (data['commentCount'] is num) ? (data['commentCount'] as num).toInt() : ((data['comment_count'] is num) ? (data['comment_count'] as num).toInt() : 0),
+      shareCount: (data['shareCount'] is num) ? (data['shareCount'] as num).toInt() : ((data['share_count'] is num) ? (data['share_count'] as num).toInt() : 0),
+      reactions: Map<String, String>.from((data['reactions'] is Map) ? (data['reactions'] as Map) : {}),
+      likedBy: List<String>.from(data['likedBy'] ?? data['liked_by'] ?? []),
+      visibility: data['visibility']?.toString() ?? 'public',
+      isPinned: data['isPinned'] == true || data['is_pinned'] == true,
+      isDeleted: data['isDeleted'] == true || data['is_deleted'] == true,
+      isNotice: data['isNotice'] == true || data['is_notice'] == true,
+      noticeTitle: data['noticeTitle']?.toString() ?? data['notice_title']?.toString(),
+      reportCount: (data['reportCount'] is num) ? (data['reportCount'] as num).toInt() : 0,
+      viewCount: (data['viewCount'] is num) ? (data['viewCount'] as num).toInt() : 0,
+      trendingScore: (data['trendingScore'] is num) ? (data['trendingScore'] as num).toDouble() : 0.0,
     );
   }
 

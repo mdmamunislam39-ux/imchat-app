@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/helpers/mic_refill_helper.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
-import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'dart:async';
 
 /// A widget that shows a vibrant ripple/glow animation when [isSpeaking] is true
@@ -100,7 +99,7 @@ class _SpeakingRippleAnimationState extends State<SpeakingRippleAnimation>
       return;
     }
 
-    if (_loadedUserId == targetId && _micRefillUrl != null) {
+    if (_loadedUserId == targetId && _userSub != null) {
       return;
     }
     _loadedUserId = targetId;
@@ -108,47 +107,25 @@ class _SpeakingRippleAnimationState extends State<SpeakingRippleAnimation>
     _userSub?.cancel();
     _userSub = null;
 
-    // 1. Instant check for local current user without network fetch
-    try {
-      final currentUser = AuthController.instance.currentUser;
-      if (currentUser.userId == targetId) {
-        final refillId = currentUser.customization?.selectedMicRefillId;
-        if (refillId != null && refillId.isNotEmpty) {
-          MicRefillHelper.getMicRefillUrl(refillId).then((url) {
-            if (mounted && url != null && url.isNotEmpty && _micRefillUrl != url) {
-              setState(() => _micRefillUrl = url);
-            }
-          });
-        }
-        _userSub = AuthController.instance.currentUserStream.listen((u) {
-          if (u != null && mounted) {
-            final newRefillId = u.customization?.selectedMicRefillId;
-            if (newRefillId != null && newRefillId.isNotEmpty) {
-              MicRefillHelper.getMicRefillUrl(newRefillId).then((url) {
-                if (mounted && url != null && url.isNotEmpty && _micRefillUrl != url) {
-                  setState(() => _micRefillUrl = url);
-                }
-              });
-            } else if (newRefillId == null || newRefillId.isEmpty) {
-              if (mounted && _micRefillUrl != null) {
-                setState(() => _micRefillUrl = null);
-              }
-            }
-          }
-        });
-        return;
+    // 1. Instant check synchronous in-memory cache for zero UI delay
+    final initialCached = MicRefillHelper.getCachedUserMicRefill(targetId);
+    if (initialCached != null && initialCached.isNotEmpty) {
+      if (_micRefillUrl != initialCached && mounted) {
+        setState(() => _micRefillUrl = initialCached);
       }
-    } catch (_) {}
+    } else if (initialCached == null && _micRefillUrl != null && mounted) {
+      setState(() => _micRefillUrl = null);
+    }
 
-    // 2. Fetch for remote user
-    MicRefillHelper.getMicRefillUrlFromUserId(targetId).then((url) {
-      if (mounted && url != null && url.isNotEmpty && _micRefillUrl != url) {
+    // 2. Real-time stream subscription on user's Firestore customization
+    _userSub = MicRefillHelper.streamUserMicRefill(targetId).listen((newUrl) {
+      if (mounted && _micRefillUrl != newUrl) {
         setState(() {
-          _micRefillUrl = url;
+          _micRefillUrl = newUrl;
         });
       }
-    }).catchError((e) {
-      debugPrint('Error fetching mic refill in SpeakingRippleAnimation: $e');
+    }, onError: (e) {
+      debugPrint('Error in real-time streamUserMicRefill: $e');
     });
   }
 
@@ -272,60 +249,24 @@ class _SpeakingRippleAnimationState extends State<SpeakingRippleAnimation>
   Widget build(BuildContext context) {
     final diameter = widget.minRadius * 2;
     final bool hasMicRefill = _micRefillUrl != null && _micRefillUrl!.isNotEmpty;
-    final double refillSize = (widget.minRadius * 3.6).clamp(100.0, 170.0);
-    // Dynamic scale driven by volume ("কথার ভলিউম অনুযায়ী")
-    final double refillVolumeScale = 1.0 + (_currentVolume * 0.35).clamp(0.0, 0.45);
+    // Sized right around the avatar and frame (up to 100)
+    final double refillSize = (widget.minRadius * 4.0).clamp(88.0, 100.0);
+    // Subtle volume dynamics so it stays clean and contained
+    final double refillVolumeScale = 1.0 + (_currentVolume * 0.10).clamp(0.0, 0.12);
 
     return Stack(
       alignment: Alignment.center,
       clipBehavior: Clip.none,
       children: [
-        // 1. Glow / Ripple animation layer
-        if (_isActive) ...[
-          // Always show the glowing ripple wave rings so voice activity is unmistakable for both speaker and audience!
-          AnimatedBuilder(
-            animation: _glowController,
-            builder: (context, child) {
-              final glowIntensity =
-                  0.18 + (_currentVolume * 0.35) + (_glowController.value * 0.12);
-              return Container(
-                width: diameter + 16,
-                height: diameter + 16,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: widget.rippleColor
-                          .withValues(alpha: glowIntensity.clamp(0.0, 1.0)),
-                      blurRadius: 18 + (_currentVolume * 20),
-                      spreadRadius: 4 + (_currentVolume * 8),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-
-          // Ripple ring 3 (outermost, faintest)
-          _buildRippleRing(_ripple3, diameter, 0.25),
-
-          // Ripple ring 2 (middle)
-          _buildRippleRing(_ripple2, diameter, 0.4),
-
-          // Ripple ring 1 (innermost, brightest)
-          _buildRippleRing(_ripple1, diameter, 0.6),
-        ],
-
-        // 2. Custom Mic Refill SVGA/Alpha Video animation if equipped from store
-        // Kept mounted in the widget tree so players stay warmed up,
-        // fading in and out cleanly and scaling dynamically with voice volume
+        // 1. Custom Mic Refill SVGA/Alpha Video animation if equipped from store
+        // Rendered in the background (behind avatar and frame)
         if (hasMicRefill)
           AnimatedOpacity(
             opacity: _isActive ? 1.0 : 0.0,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeInOut,
             child: AnimatedScale(
-              scale: _isActive ? refillVolumeScale : 0.92,
+              scale: _isActive ? refillVolumeScale : 0.94,
               duration: const Duration(milliseconds: 150),
               curve: Curves.easeOutCubic,
               child: OverflowBox(
@@ -345,7 +286,37 @@ class _SpeakingRippleAnimationState extends State<SpeakingRippleAnimation>
             ),
           ),
 
-        // 3. Main Child (Avatar)
+        // 2. Default Ripple / Glow wave layer (only when user has no custom mic refill)
+        if (_isActive && !hasMicRefill) ...[
+          AnimatedBuilder(
+            animation: _glowController,
+            builder: (context, child) {
+              final glowIntensity =
+                  0.15 + (_currentVolume * 0.25) + (_glowController.value * 0.10);
+              return Container(
+                width: diameter + 6,
+                height: diameter + 6,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: widget.rippleColor
+                          .withValues(alpha: glowIntensity.clamp(0.0, 1.0)),
+                      blurRadius: 8 + (_currentVolume * 8),
+                      spreadRadius: 1 + (_currentVolume * 2),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+
+          // Subtle ripple rings
+          _buildRippleRing(_ripple2, diameter, 0.35),
+          _buildRippleRing(_ripple1, diameter, 0.55),
+        ],
+
+        // 3. Main Child (Avatar with optional Frame on top)
         widget.child,
       ],
     );

@@ -26,7 +26,6 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        configureLockScreenFlags()
         createNotificationChannel()
     }
 
@@ -34,6 +33,8 @@ class MainActivity : FlutterActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
+            val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+            keyguardManager?.requestDismissKeyguard(this, null)
         } else {
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
@@ -42,6 +43,7 @@ class MainActivity : FlutterActivity() {
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     private fun clearLockScreenFlags() {
@@ -52,10 +54,10 @@ class MainActivity : FlutterActivity() {
             window.clearFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -64,9 +66,10 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VISIBILITY_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "bringToForeground" -> {
+                    configureLockScreenFlags()
                     val intent = packageManager.getLaunchIntentForPackage(packageName)
                     if (intent != null) {
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         startActivity(intent)
                         result.success(true)
                     } else {

@@ -4,15 +4,18 @@ import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:get/get.dart';
 
-enum NotificationType { alert, call, cancel_call, message, group }
+import 'package:chat_messenger/services/backend_engine_manager.dart';
+import 'package:chat_messenger/services/vps_api_service.dart';
+
+enum NotificationType { alert, call, cancel_call, message, group, follower_room }
 
 abstract class PushNotificationService {
   //
-  // Firebase Push Notifications Service
+  // Firebase Push Notifications Service & Dual-Engine VPS Routing
   //
   static final _functions = FirebaseFunctions.instance;
 
-  /// Send push notification
+  /// Send push notification (dynamically routes through VPS or Firebase Cloud Functions)
   static Future<void> sendNotification({
     required NotificationType type,
     required String title,
@@ -20,6 +23,46 @@ abstract class PushNotificationService {
     required String deviceToken,
     Map<String, dynamic>? call,
   }) async {
+    if (deviceToken.isEmpty) {
+      debugPrint('[PushNotificationService] deviceToken is empty, skipping push notification');
+      return;
+    }
+
+    final senderId = AuthController.instance.currentUser.userId;
+    final senderAvatar = AuthController.instance.currentUser.photoUrl;
+
+    // 1. Check if VPS Backend Engine is Active
+    if (Get.isRegistered<BackendEngineManager>()) {
+      final backendManager = Get.find<BackendEngineManager>();
+      if (backendManager.isVpsActive && backendManager.vpsBaseUrl.isNotEmpty) {
+        try {
+          final vpsApi = Get.isRegistered<VpsApiService>()
+              ? Get.find<VpsApiService>()
+              : Get.put(VpsApiService());
+
+          final res = await vpsApi.post('/api/notification/send', body: {
+            'type': type.name,
+            'title': title,
+            'body': body,
+            'deviceToken': deviceToken,
+            'call': call ?? {},
+            'senderId': senderId,
+            'senderAvatar': senderAvatar,
+          });
+
+          if (res != null && (res['success'] == true || res['status'] == 'success')) {
+            debugPrint('[PushNotificationService] Sent push notification via VPS Server successfully');
+            return;
+          } else {
+            debugPrint('[PushNotificationService] VPS notification responded: $res. Falling back to Firebase Cloud Functions...');
+          }
+        } catch (e) {
+          debugPrint('[PushNotificationService] VPS Notification failed ($e), falling back to Firebase Functions...');
+        }
+      }
+    }
+
+    // 2. Default / Fallback to Firebase Cloud Functions
     try {
       await _functions.httpsCallable('sendPushNotification').call({
         'type': type.name,
@@ -27,10 +70,10 @@ abstract class PushNotificationService {
         'body': body,
         'deviceToken': deviceToken,
         'call': call ?? {},
-        'senderId': AuthController.instance.currentUser.userId,
-        'senderAvatar': AuthController.instance.currentUser.photoUrl,
+        'senderId': senderId,
+        'senderAvatar': senderAvatar,
       });
-      debugPrint('sendPushNotification() -> success');
+      debugPrint('sendPushNotification() [Firebase Cloud Functions] -> success');
     } catch (e) {
       debugPrint('sendPushNotification() -> error: $e');
     }

@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 // Enhanced wallet screen with Firebase integration
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,8 +36,10 @@ import 'package:chat_messenger/services/role_service.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
 import 'package:chat_messenger/services/online_recharge_service.dart';
 import 'package:chat_messenger/models/recharge_models.dart';
-import 'package:chat_messenger/screens/room/recharge_selection_screen.dart';
+import 'package:chat_messenger/screens/room/online_recharge_screen.dart';
 import 'package:chat_messenger/screens/room/recharge_and_gift_record_screen.dart';
+import 'package:chat_messenger/screens/room/withdraw_screen.dart';
+import 'package:chat_messenger/services/app_theme_service.dart';
 
 // মূল ওয়ালেট স্ক্রিন
 class UserWalletScreen extends StatefulWidget {
@@ -59,6 +62,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
   String? _currentFrameUrl;
   String _userRole = 'user';
   StreamSubscription<DocumentSnapshot>? _roleSubscription;
+  StreamSubscription<DocumentSnapshot>? _configSubscription;
 
   @override
   void initState() {
@@ -66,6 +70,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     // Guarantee global RoleService is listening to the user's role and super admin permissions in real-time
     RoleService.instance.listenToUserRole(widget.currentUser.userId);
     _listenToUserRole();
+    _listenToEconomyConfig();
     _loadUserData();
   }
 
@@ -161,7 +166,22 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
   @override
   void dispose() {
     _roleSubscription?.cancel();
+    _configSubscription?.cancel();
     super.dispose();
+  }
+
+  void _listenToEconomyConfig() {
+    _configSubscription?.cancel();
+    _configSubscription = FirebaseFirestore.instance
+        .collection('platform_config')
+        .doc('gift_conversion')
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        GiftEconomyService.instance.getConfig();
+        setState(() {});
+      }
+    });
   }
 
   void _listenToUserRole() {
@@ -401,7 +421,11 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           break;
         case 'Agency':
         case 'Agency Manager':
-          await _navigateToAgencyScreen();
+          await _navigateToAgencyScreen(isHostCentre: false);
+          break;
+        case 'Host Centre':
+        case 'Host Center':
+          await _navigateToAgencyScreen(isHostCentre: true);
           break;
         case 'Task Earnings':
           await _navigateToEarningsScreen();
@@ -436,6 +460,26 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
               ),
             ),
           );
+          break;
+        case 'Withdraw':
+          if (!GiftEconomyService.instance.isWithdrawalEnabled) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Withdrawal is currently paused for maintenance.'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            break;
+          }
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => WithdrawScreen(
+                currentUser: _currentUser ?? widget.currentUser,
+              ),
+            ),
+          );
+          await _refreshUserData();
           break;
         case 'Invite':
           await Navigator.push(
@@ -550,13 +594,16 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     }
   }
 
-  Future<void> _navigateToAgencyScreen() async {
+  Future<void> _navigateToAgencyScreen({bool isHostCentre = false}) async {
     try {
       final user = _currentUser ?? widget.currentUser;
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => AgencyScreen(currentUser: user),
+          builder: (context) => AgencyScreen(
+            currentUser: user,
+            isHostCentre: isHostCentre,
+          ),
         ),
       );
 
@@ -640,6 +687,29 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
 
       if (userDoc.exists) {
         final user = User.fromMap(userDoc.data()!);
+
+        // Verify active seller status in sellers collection
+        final sellerSnap = await FirebaseFirestore.instance
+            .collection('sellers')
+            .where('userId', isEqualTo: user.userId)
+            .limit(1)
+            .get();
+
+        final isSellerDocActive = sellerSnap.docs.isNotEmpty &&
+            (sellerSnap.docs.first.data()['isActive'] ?? true) == true;
+
+        if (!isSellerDocActive && user.isSeller != true) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('You are not authorized as an active diamond seller.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+
         if (mounted) {
           Navigator.push(
             context,
@@ -917,12 +987,13 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              'ID : ${user.searchId}',
-                              style: TextStyle(
+                            UserIdBadgeWidget(
+                              searchId: user.searchId,
+                              textStyle: TextStyle(
                                 color: isDarkMode ? Colors.white70 : Colors.grey,
                                 fontSize: 14,
                               ),
+                              showCopyIcon: false,
                             ),
                             const SizedBox(width: 4),
                             Icon(
@@ -950,7 +1021,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildRealTimeProfileStat(
-                  label: 'Friends',
+                  label: 'Friends'.tr,
                   stream: FirebaseFirestore.instance
                       .collection('Users/${user.userId}/Contacts')
                       .snapshots(),
@@ -973,7 +1044,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                   color: isDarkMode ? Colors.white24 : Colors.grey.shade300,
                 ),
                 _buildRealTimeProfileStat(
-                  label: 'Following',
+                  label: 'Following'.tr,
                   stream: FirebaseFirestore.instance
                       .collection('Users/${user.userId}/following')
                       .snapshots(),
@@ -994,7 +1065,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                   color: isDarkMode ? Colors.white24 : Colors.grey.shade300,
                 ),
                 _buildRealTimeProfileStat(
-                  label: 'Followers',
+                  label: 'Followers'.tr,
                   stream: FirebaseFirestore.instance
                       .collection('Users/${user.userId}/followers')
                       .snapshots(),
@@ -1015,7 +1086,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                   color: isDarkMode ? Colors.white24 : Colors.grey.shade300,
                 ),
                 _buildRealTimeProfileStat(
-                  label: 'Visitor',
+                  label: 'Visitor'.tr,
                   stream: FirebaseFirestore.instance
                       .collection('Users/${user.userId}/visitors')
                       .snapshots(),
@@ -1032,6 +1103,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                       : null,
                   isDarkMode: isDarkMode,
                 ),
+
               ],
             ),
           ],
@@ -1083,11 +1155,13 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           .doc(configDoc)
           .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData || !snapshot.data!.exists)
+        if (!snapshot.hasData || !snapshot.data!.exists) {
           return const SizedBox(height: 18);
+        }
         final data = snapshot.data!.data() as Map<String, dynamic>?;
-        if (data == null || data['levels'] == null)
+        if (data == null || data['levels'] == null) {
           return const SizedBox(height: 18);
+        }
 
         final levels = List<Map<String, dynamic>>.from(data['levels']);
         String? imageUrl;
@@ -1098,8 +1172,9 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           }
         }
 
-        if (imageUrl == null || imageUrl.isEmpty)
+        if (imageUrl == null || imageUrl.isEmpty) {
           return const SizedBox(height: 18);
+        }
 
         return CachedNetworkImage(
           imageUrl: imageUrl,
@@ -1229,31 +1304,53 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
               ),
             ),
             const SizedBox(width: 4),
-            FutureBuilder<String?>(
-              future: badgeFuture,
-              builder: (context, snapshot) {
-                if (snapshot.hasData &&
-                    snapshot.data != null &&
-                    snapshot.data!.isNotEmpty) {
-                  return SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: Transform.scale(
-                      scale: 2.2,
-                      child: UniversalAssetWidget(
-                        url: snapshot.data!,
-                        fit: BoxFit.contain,
-                      ),
+            Obx(() {
+              String? dynamicVipIcon;
+              if (Get.isRegistered<AppThemeService>()) {
+                final theme = Get.find<AppThemeService>();
+                dynamicVipIcon = isSvip
+                    ? theme.getWalletIcon('svip_badge')
+                    : theme.getWalletIcon('vip_badge');
+              }
+              if (dynamicVipIcon != null && dynamicVipIcon.isNotEmpty) {
+                return SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: Transform.scale(
+                    scale: 2.2,
+                    child: UniversalAssetWidget(
+                      url: dynamicVipIcon,
+                      fit: BoxFit.contain,
                     ),
-                  );
-                }
-                return Icon(
-                  isSvip ? Icons.workspace_premium : Icons.shield,
-                  color: const Color(0xFFFFD700),
-                  size: 24,
+                  ),
                 );
-              },
-            ),
+              }
+              return FutureBuilder<String?>(
+                future: badgeFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.hasData &&
+                      snapshot.data != null &&
+                      snapshot.data!.isNotEmpty) {
+                    return SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: Transform.scale(
+                        scale: 2.2,
+                        child: UniversalAssetWidget(
+                          url: snapshot.data!,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    );
+                  }
+                  return Icon(
+                    isSvip ? Icons.workspace_premium : Icons.shield,
+                    color: const Color(0xFFFFD700),
+                    size: 24,
+                  );
+                },
+              );
+            }),
             const SizedBox(width: 2),
             const Icon(
               Icons.arrow_forward_ios,
@@ -1295,7 +1392,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
               child: DynamicDiamondIcon(width: 35, height: 35),
             ),
             textColor: Colors.pink,
-            label: 'Diamonds',
+            label: 'Diamonds'.tr,
             balance: diamonds,
             onTap: _navigateToDiamondRechargePage,
             isDarkMode: isDarkMode,
@@ -1310,11 +1407,12 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           _buildBalanceItem(
             iconWidget: const DynamicBeanIcon(width: 55, height: 55),
             textColor: Colors.orange,
-            label: 'Beans',
+            label: 'Beans'.tr,
             balance: beans,
             onTap: _navigateToBeanManagementPage,
             isDarkMode: isDarkMode,
           ),
+
         ],
       ),
     );
@@ -1360,17 +1458,73 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     );
   }
 
+  String? _getWalletMenuCustomIcon(String title) {
+    if (!Get.isRegistered<AppThemeService>()) return null;
+    final theme = Get.find<AppThemeService>();
+    switch (title) {
+      case 'My Level':
+        return theme.getWalletIcon('my_level');
+      case 'Store':
+        return theme.getWalletIcon('store');
+      case 'Badge':
+        return theme.getWalletIcon('badge');
+      case 'My Items':
+        return theme.getWalletIcon('my_items');
+      case 'Family':
+        return theme.getWalletIcon('family');
+      case 'Agency Manager':
+        return theme.getWalletIcon('agency_manager');
+      case 'Host Centre':
+      case 'Host Center':
+        return theme.getWalletIcon('host_centre') ??
+            theme.getWalletIcon('host_center') ??
+            theme.getWalletIcon('agency_manager');
+      case 'Task Earnings':
+        return theme.getWalletIcon('task_earnings');
+      case 'Game Wall':
+        return theme.getWalletIcon('game_wall');
+      case 'Admin Dashboard':
+        return theme.getWalletIcon('admin_dashboard');
+      case 'BD Dashboard':
+        return theme.getWalletIcon('bd_dashboard') ??
+            theme.getWalletIcon('admin_dashboard');
+      case 'Diamondseller':
+        return theme.getWalletIcon('diamond_seller');
+      case 'Invite':
+        return theme.getWalletIcon('invite');
+      case 'Offline Seller':
+        return theme.getWalletIcon('offline_seller');
+      case 'Setting':
+        return theme.getWalletIcon('setting');
+      case 'Help':
+        return theme.getWalletIcon('help');
+      case 'About':
+        return theme.getWalletIcon('about');
+      default:
+        return null;
+    }
+  }
+
   // প্রধান মেন্যু
   Widget _buildMainMenu(bool isDarkMode) {
     return Obx(() {
       final roleService = RoleService.instance;
+      // Also register dependency on AppThemeService walletMenuIcons for real-time reactivity
+      if (Get.isRegistered<AppThemeService>()) {
+        Get.find<AppThemeService>().walletMenuIcons.length;
+      }
 
-      final menuItems = [
-        {
-          'icon': Icons.diamond,
-          'title': 'Diamondseller',
-          'color': Colors.amberAccent,
-        },
+      final isSellerActive = roleService.isSellerActive.value;
+      final user = _currentUser ?? widget.currentUser;
+      final isSeller = isSellerActive || (user.isSeller == true && isSellerActive);
+
+      final menuItems = <Map<String, dynamic>>[
+        if (isSeller)
+          {
+            'icon': Icons.diamond,
+            'title': 'Diamondseller',
+            'color': Colors.amberAccent,
+          },
         {'icon': Icons.person_add, 'title': 'Invite', 'color': Colors.yellow},
         {
           'icon': Icons.wifi_off,
@@ -1387,7 +1541,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       ];
 
       debugPrint(
-        '🔍 [WalletScreen] Role: ${roleService.userRole.value}, SuperAdmin: ${roleService.isSuperAdmin.value}, isBD: ${roleService.isBD}',
+        '🔍 [WalletScreen] Role: ${roleService.userRole.value}, SuperAdmin: ${roleService.isSuperAdmin.value}, isBD: ${roleService.isBD}, isSeller: $isSeller',
       );
       if (roleService.userRole.value == AppRoles.admin ||
           roleService.isSuperAdmin.value) {
@@ -1419,24 +1573,35 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 4,
             crossAxisSpacing: 10,
-            // mainAxisSpacing: 20,
           ),
           itemCount: menuItems.length,
           itemBuilder: (context, index) {
             final item = menuItems[index];
+            final customIconUrl =
+                _getWalletMenuCustomIcon(item['title'] as String);
+
             return GestureDetector(
               onTap: () => _handleMenuClick(item['title'] as String),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    item['icon'] as IconData,
-                    color: item['color'] as Color,
-                    size: 30,
-                  ),
+                  customIconUrl != null && customIconUrl.isNotEmpty
+                      ? SizedBox(
+                          height: 32,
+                          width: 32,
+                          child: UniversalAssetWidget(
+                            url: customIconUrl,
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                      : Icon(
+                          item['icon'] as IconData,
+                          color: item['color'] as Color,
+                          size: 30,
+                        ),
                   const SizedBox(height: 8),
                   Text(
-                    item['title'] as String,
+                    (item['title'] as String).tr,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 12,
@@ -1456,10 +1621,25 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
   Widget _buildMainMenu2(bool isDarkMode) {
     return Obx(() {
       final roleService = RoleService.instance;
-      final checkRole = roleService
+      final checkRoleAgency = roleService
           .isAgency; // Evaluated unconditionally to register GetX dependency
+      final checkRoleHost = roleService
+          .isHost; // Evaluated unconditionally to register GetX dependency
       final user = _currentUser ?? widget.currentUser;
-      final isAgency = user.isAgency || checkRole;
+      final isAgency = (user.isAgency == true) ||
+          checkRoleAgency ||
+          user.roles.contains('agency') ||
+          user.userType == 'agency' ||
+          user.userType == 'agency_owner';
+      final isHost = (user.isHost == true) ||
+          checkRoleHost ||
+          user.roles.contains('host') ||
+          user.userType == 'host';
+
+      // Also register dependency on AppThemeService walletMenuIcons for real-time reactivity
+      if (Get.isRegistered<AppThemeService>()) {
+        Get.find<AppThemeService>().walletMenuIcons.length;
+      }
 
       final menuItems = [
         {'icon': 'assets/images/my_level.webp', 'title': 'My Level'},
@@ -1469,7 +1649,8 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
         {'icon': 'assets/images/family.webp', 'title': 'Family'},
         if (isAgency)
           {'icon': 'assets/images/agency.webp', 'title': 'Agency Manager'},
-        {'icon': 'assets/images/diamond_icon.webp', 'title': 'Task Earnings'},
+        if (isHost)
+          {'icon': 'assets/images/agency.webp', 'title': 'Host Centre'},
         {'icon': 'assets/images/game_icon.webp', 'title': 'Game Wall'},
       ];
 
@@ -1492,6 +1673,9 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           itemCount: menuItems.length,
           itemBuilder: (context, index) {
             final item = menuItems[index];
+            final customIconUrl =
+                _getWalletMenuCustomIcon(item['title'] as String);
+
             return GestureDetector(
               onTap: () => _handleMenuClick(item['title'] as String),
               child: Column(
@@ -1499,25 +1683,33 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  item['icon']! == 'assets/images/diamond_icon.webp' ||
-                          item['icon']! == 'assets/images/diamond_icon.png' ||
-                          item['title'] == 'Task Earnings'
-                      ? const DynamicDiamondIcon(height: 48, width: 48)
-                      : Image.asset(
-                          item['icon']!,
-                          fit: BoxFit.contain,
+                  customIconUrl != null && customIconUrl.isNotEmpty
+                      ? SizedBox(
                           height: 48,
                           width: 48,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(
-                                Icons.image_not_supported,
-                                size: 40,
-                                color: Colors.grey,
-                              ),
-                        ),
+                          child: UniversalAssetWidget(
+                            url: customIconUrl,
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                      : (item['icon']! == 'assets/images/diamond_icon.webp' ||
+                              item['icon']! == 'assets/images/diamond_icon.png'
+                          ? const DynamicDiamondIcon(height: 48, width: 48)
+                          : Image.asset(
+                              item['icon']!,
+                              fit: BoxFit.contain,
+                              height: 48,
+                              width: 48,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Icon(
+                                    Icons.image_not_supported,
+                                    size: 40,
+                                    color: Colors.grey,
+                                  ),
+                            )),
                   const SizedBox(height: 4),
                   Text(
-                    item['title'] as String,
+                    (item['title'] as String).tr,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 11,
@@ -1533,6 +1725,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           },
         ),
       );
+
     });
   }
 }
@@ -1719,6 +1912,7 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
   late int _currentDiamondBalance;
   int _selectedDiamondAmount = 0;
   List<RechargePackageModel> _streamedPackages = [];
+  StreamSubscription<DocumentSnapshot>? _diamondSubscription;
 
   final List<Map<String, dynamic>> fallbackPackages = [
     {'diamonds': 5000, 'bdt': 150, 'bonus': 0},
@@ -1731,6 +1925,35 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
   void initState() {
     super.initState();
     _currentDiamondBalance = widget.diamondBalance;
+    _listenToRealtimeBalance();
+  }
+
+  void _listenToRealtimeBalance() {
+    final effectiveUserId = widget.currentUser?.userId.isNotEmpty == true
+        ? widget.currentUser!.userId
+        : widget.userId;
+    if (effectiveUserId.isNotEmpty) {
+      _diamondSubscription = FirebaseFirestore.instance
+          .collection('Users')
+          .doc(effectiveUserId)
+          .snapshots()
+          .listen((doc) {
+        if (doc.exists && mounted) {
+          final dia = (doc.data()?['diamonds'] as num?)?.toInt();
+          if (dia != null) {
+            setState(() {
+              _currentDiamondBalance = dia;
+            });
+          }
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _diamondSubscription?.cancel();
+    super.dispose();
   }
 
   void _handleRecharge(BuildContext context) async {
@@ -1752,6 +1975,8 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
       if (matchedPkg != null) {
         bonusToAdd = matchedPkg.bonusDiamonds;
         bdtPrice = matchedPkg.bdtPrice;
+      } else {
+        bdtPrice = _selectedDiamondAmount * 0.03;
       }
 
       final userToPass =
@@ -1766,16 +1991,16 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => RechargeSelectionScreen(
+          builder: (context) => OnlineRechargeScreen(
             currentUser: userToPass,
-            preselectedDiamonds: _selectedDiamondAmount,
-            preselectedBdt: bdtPrice > 0 ? bdtPrice : null,
-            preselectedBonusDiamonds: bonusToAdd,
+            initialAmount: bdtPrice > 0 ? bdtPrice : null,
+            initialDiamonds: _selectedDiamondAmount > 0 ? _selectedDiamondAmount : null,
+            initialBonusDiamonds: bonusToAdd > 0 ? bonusToAdd : null,
           ),
         ),
       );
     } catch (e) {
-      debugPrint('❌ Error routing to recharge: $e');
+      debugPrint('❌ Error routing to online recharge: $e');
     }
   }
 
@@ -2415,40 +2640,40 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 20),
+            padding: const EdgeInsets.symmetric(vertical: 14),
             color: Colors.white,
             child: Column(
               children: [
-                const DynamicDiamondIcon(height: 60, width: 60),
-                const SizedBox(height: 10),
+                const DynamicDiamondIcon(height: 52, width: 52),
+                const SizedBox(height: 6),
                 const Text(
                   'Balance',
-                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                  style: TextStyle(color: Colors.grey, fontSize: 14),
                 ),
-                const SizedBox(height: 5),
+                const SizedBox(height: 4),
                 Text(
                   _currentDiamondBalance.toString(),
                   style: const TextStyle(
                     color: Colors.black,
-                    fontSize: 36,
+                    fontSize: 32,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 const Text(
                   'Diamonds',
-                  style: TextStyle(color: Colors.black, fontSize: 16),
+                  style: TextStyle(color: Colors.black, fontSize: 14),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 10),
 
           // Interactive Weekly Recharge Benefit Banner
           GestureDetector(
             onTap: () => _showWeeklyRechargeBenefitsModal(context),
             child: Container(
               margin: const EdgeInsets.symmetric(horizontal: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
                 gradient: const LinearGradient(
@@ -2467,7 +2692,7 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
               child: Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.2),
                       shape: BoxShape.circle,
@@ -2475,10 +2700,10 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
                     child: const Icon(
                       Icons.card_giftcard_rounded,
                       color: Colors.white,
-                      size: 24,
+                      size: 22,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2488,26 +2713,26 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
                           style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
-                            fontSize: 14,
+                            fontSize: 13,
                             letterSpacing: 0.5,
                           ),
                         ),
                         SizedBox(height: 2),
                         Text(
                           'Recharge diamonds and claim bonus rewards!',
-                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                          style: TextStyle(color: Colors.white70, fontSize: 10.5),
                         ),
                       ],
                     ),
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
+                      horizontal: 8,
+                      vertical: 4,
                     ),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -2516,7 +2741,7 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
                           'View',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -2524,7 +2749,7 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
                         Icon(
                           Icons.arrow_forward_ios_rounded,
                           color: Colors.white,
-                          size: 10,
+                          size: 9,
                         ),
                       ],
                     ),
@@ -2533,7 +2758,110 @@ class _DiamondRechargePageState extends State<DiamondRechargePage> {
               ),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 10),
+
+          // Offline Seller Recharge Option Card (From Screenshot 2)
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => SellerListScreen(
+                    requestedAmount: _selectedDiamondAmount > 0
+                        ? _selectedDiamondAmount
+                        : 0,
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.grey.shade200, width: 1.2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFF8C00), Color(0xFFE55D00)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.storefront_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF3E0),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'OFFICIAL SELLERS',
+                            style: TextStyle(
+                              color: Color(0xFFE65100),
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        const Text(
+                          'Offline Seller Recharge',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          'Recharge via Seller (Chat & direct diamond transfer)',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
 
           // 3-Column Diamond Package Grid
           Expanded(
@@ -2774,12 +3102,34 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
   late User _userData;
   final bool _isLoading = false;
   List<Map<String, dynamic>> _withdrawals = [];
+  StreamSubscription<DocumentSnapshot>? _beanConfigSub;
 
   @override
   void initState() {
     super.initState();
     _userData = widget.userData;
+    _listenToBeanEconomyConfig();
     _loadConfigAndWithdrawals();
+  }
+
+  @override
+  void dispose() {
+    _beanConfigSub?.cancel();
+    super.dispose();
+  }
+
+  void _listenToBeanEconomyConfig() {
+    _beanConfigSub?.cancel();
+    _beanConfigSub = FirebaseFirestore.instance
+        .collection('platform_config')
+        .doc('gift_conversion')
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        GiftEconomyService.instance.getConfig();
+        setState(() {});
+      }
+    });
   }
 
   Future<void> _loadConfigAndWithdrawals() async {
@@ -2791,209 +3141,6 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
       setState(() {
         _withdrawals = history;
       });
-    }
-  }
-
-  void _showWithdrawBottomSheet() {
-    final amountController = TextEditingController();
-    final accountController = TextEditingController();
-    final noteController = TextEditingController();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Withdraw Beans',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                'Available: ${_userData.beans} beans',
-                style: const TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 15),
-              TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Amount (beans)',
-                  hintText: 'Minimum 10,000',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: accountController,
-                decoration: InputDecoration(
-                  labelText: 'Account Number',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteController,
-                decoration: InputDecoration(
-                  labelText: 'Note (optional)',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: () => _submitWithdrawal(
-                    ctx,
-                    amountController.text,
-                    accountController.text,
-                    noteController.text,
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.pink,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                  ),
-                  child: const Text(
-                    'Submit Withdrawal',
-                    style: TextStyle(fontSize: 16, color: Colors.white),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _submitWithdrawal(
-    BuildContext ctx,
-    String amountStr,
-    String accountNumber,
-    String note,
-  ) async {
-    // Capture navigator before any await to avoid async BuildContext issues
-    final navigator = Navigator.of(ctx);
-    final amount = int.tryParse(amountStr) ?? 0;
-
-    if (amount < 10000) {
-      ScaffoldMessenger.of(context)
-        ..removeCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Minimum withdrawal is 10,000 beans.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      return;
-    }
-
-    if (amount > _userData.beans) {
-      ScaffoldMessenger.of(context)
-        ..removeCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Insufficient beans.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      return;
-    }
-
-    if (accountNumber.trim().isEmpty) {
-      ScaffoldMessenger.of(context)
-        ..removeCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Please enter an account number.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      return;
-    }
-
-    // Check no pending withdrawal
-    final canWithdraw = await GiftEconomyService.instance.canUserWithdraw(
-      _userData.userId,
-    );
-    if (!canWithdraw) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..removeCurrentSnackBar()
-          ..showSnackBar(
-            const SnackBar(
-              content: Text(
-                'You already have a pending withdrawal. Please wait for it to be processed.',
-              ),
-              backgroundColor: Colors.orange,
-            ),
-          );
-      }
-      return;
-    }
-
-    try {
-      await GiftEconomyService.instance.createWithdrawalRequest(
-        userId: _userData.userId,
-        username: _userData.fullname,
-        userType: _userData.userType,
-        amount: amount,
-        accountNumber: accountNumber.trim(),
-        note: note.trim(),
-      );
-
-      // Update local state
-      setState(() {
-        _userData.beans -= amount;
-      });
-
-      if (mounted) {
-        navigator.pop();
-        ScaffoldMessenger.of(context)
-          ..removeCurrentSnackBar()
-          ..showSnackBar(
-            const SnackBar(
-              content: Text('Withdrawal request submitted!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-      }
-
-      // Refresh withdrawal list
-      _loadConfigAndWithdrawals();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..removeCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Withdrawal failed: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-      }
     }
   }
 
@@ -3192,30 +3339,43 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Column(
                   children: [
-                    // Withdraw Button
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: _showWithdrawBottomSheet,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF03A9F4),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(25),
+                    // Withdraw Button (Conditionally shown if enabled in admin panel)
+                    if (GiftEconomyService.instance.isWithdrawalEnabled) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: () async {
+                            await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    WithdrawScreen(currentUser: _userData),
+                              ),
+                            );
+                            if (mounted) {
+                              _loadConfigAndWithdrawals();
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF03A9F4),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(25),
+                            ),
                           ),
-                        ),
-                        child: const Text(
-                          'Withdraw',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                          child: const Text(
+                            'Withdraw',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 15),
+                      const SizedBox(height: 15),
+                    ],
                     // Exchange to Diamonds Button
                     SizedBox(
                       width: double.infinity,
@@ -3377,7 +3537,7 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
   late User _userData;
   bool _isLoading = false;
 
-  final List<Map<String, int>> exchangePackages = [
+  static const List<Map<String, int>> defaultExchangePackages = [
     {'diamonds': 1000, 'beans': 1000},
     {'diamonds': 5000, 'beans': 5000},
     {'diamonds': 15100, 'beans': 15000},
@@ -3567,25 +3727,42 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
               ),
             ),
 
-            // Grid of Packages
+            // Grid of Packages (Real-time synced from Admin Panel)
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : GridView.builder(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 20,
-                      ),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: 0.9,
+                  : StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('bean_exchange_packages')
+                          .orderBy('beans', descending: false)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        List<Map<String, int>> packages = defaultExchangePackages;
+                        if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
+                          packages = snapshot.data!.docs.map((doc) {
+                            final data = doc.data() as Map<String, dynamic>;
+                            return {
+                              'diamonds': (data['diamonds'] as num?)?.toInt() ?? 0,
+                              'beans': (data['beans'] as num?)?.toInt() ?? 0,
+                            };
+                          }).toList();
+                        }
+
+                        return GridView.builder(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 20,
                           ),
-                      itemCount: exchangePackages.length,
-                      itemBuilder: (context, index) {
-                        final pkg = exchangePackages[index];
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                                childAspectRatio: 0.9,
+                              ),
+                          itemCount: packages.length,
+                          itemBuilder: (context, index) {
+                            final pkg = packages[index];
                         final diamonds = pkg['diamonds']!;
                         final beans = pkg['beans']!;
                         return GestureDetector(
@@ -3647,6 +3824,8 @@ class _ExchangeBeansPageState extends State<ExchangeBeansPage> {
                               ],
                             ),
                           ),
+                        );
+                      },
                         );
                       },
                     ),

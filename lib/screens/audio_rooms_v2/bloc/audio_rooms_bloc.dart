@@ -18,12 +18,32 @@ import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/services/ban_service.dart';
 import 'package:chat_messenger/services/background_service.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:get/get.dart';
+import 'package:audioplayers/audioplayers.dart' as ap;
+import 'package:chat_messenger/services/rtc_engine_manager.dart';
+import 'package:chat_messenger/services/livekit_service.dart';
+import 'package:chat_messenger/services/global_settings_service.dart';
+import 'package:chat_messenger/services/live_notification_service.dart';
 
-/// BLoC for managing Audio Rooms v2 with Agora Integration
+/// BLoC for managing Audio Rooms v2 with Agora & LiveKit Integration
 class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   final AudioRoomsRepository _repository;
   final AgoraService _agoraService = AgoraService();
   AgoraService get agoraService => _agoraService;
+
+  final ap.AudioPlayer _audioPlayer = ap.AudioPlayer();
+  ap.AudioPlayer get audioPlayer => _audioPlayer;
+
+  bool get isLiveKit =>
+      Get.isRegistered<RtcEngineManager>() &&
+      Get.find<RtcEngineManager>().isLiveKitActive;
+
+  LiveKitService get _livekitService {
+    if (!Get.isRegistered<LiveKitService>()) {
+      Get.put(LiveKitService(), permanent: true);
+    }
+    return Get.find<LiveKitService>();
+  }
 
   StreamSubscription<List<AudioRoomV2>>? _roomsStreamSubscription;
   StreamSubscription<AudioRoomV2>? _singleRoomSubscription;
@@ -39,6 +59,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   User? _currentUser;
   AudioRoomV2? _currentRoom;
   final Map<int, NetworkQuality> _networkQualities = {};
+  final Map<int, Timer> _offlineUserTimers = {};
 
   // Periodic mute check timer
   Timer? _muteCheckTimer;
@@ -304,8 +325,14 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
 
       emit(AudioRoomCreated(room: room));
 
-      // Trigger follow notification: notify followers that the user has opened a voice room
-      _notifyFollowersRoomOpened(event.creatorId, event.creatorName, room.id);
+      // Trigger follow notification: notify active followers that the user has opened a voice room
+      LiveNotificationService.notifyActiveFollowersOnLive(
+        creatorId: event.creatorId,
+        creatorName: event.creatorName,
+        creatorAvatar: event.creatorImageUrl ?? '',
+        roomId: room.id,
+        roomName: room.name,
+      );
 
       // Refresh rooms list
       debugPrint('🎯 [AudioRoomsBloc] Refreshing rooms list...');
@@ -338,31 +365,6 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     } catch (e) {
       debugPrint('▶️ [AudioRoomsBloc] Error resuming room: $e');
       emit(AudioRoomsError(message: e.toString()));
-    }
-  }
-
-  /// Notify all followers in the background that this user has opened a voice room
-  void _notifyFollowersRoomOpened(
-      String creatorId, String creatorName, String roomId) async {
-    try {
-      final followersSnapshot = await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(creatorId)
-          .collection('followers')
-          .get();
-
-      for (var doc in followersSnapshot.docs) {
-        final followerId = doc.id;
-        if (followerId.isNotEmpty) {
-          final followerUser = await UserApi.getUser(followerId);
-          if (followerUser != null) {
-            await OfficialTeamApi.sendFollowedUserOpenedRoomMessage(
-                followerUser, creatorName, roomId);
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('Error notifying followers of room creation: $e');
     }
   }
 
@@ -434,6 +436,15 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         participant: participant,
       ));
 
+      // Trigger follow notification: notify active followers that this user joined / is live in this room
+      LiveNotificationService.notifyActiveFollowersOnLive(
+        creatorId: event.userId,
+        creatorName: event.userName,
+        creatorAvatar: event.userImageUrl ?? '',
+        roomId: event.roomId,
+        roomName: updatedRoom.name,
+      );
+
       // Start background operations after UI update
       _startBackgroundOperations(event.roomId);
     } catch (e) {
@@ -463,6 +474,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
 
   /// Initialize Agora if not already initialized
   Future<bool> _initializeAgoraIfNeeded() async {
+    if (isLiveKit) return true;
     if (!_agoraInitialized) {
       try {
         final success = await _agoraService.initialize();
@@ -481,6 +493,14 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   void _startBackgroundOperations(String roomId) {
     // Start periodic mute check
     _startMuteCheckTimer();
+
+    // Start background persistent notification for audio room keep-alive & minimize
+    try {
+      BackgroundService().startCallService(
+        title: 'VoiceRoom is running now',
+        content: 'click back to the VoiceRoom',
+      );
+    } catch (_) {}
 
     // Start listening to room updates for real-time participant changes
     add(ListenToRoomUpdates(roomId: roomId));
@@ -518,7 +538,14 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       _isLeavingVoluntarily = true;
       emit(LeavingAudioRoom(roomId: event.roomId));
 
-      // Leave Agora channel first to stop audio immediately
+      // Leave RTC channel first to stop audio immediately
+      if (_livekitService.isConnected.value) {
+        try {
+          await _livekitService.leaveRoom();
+        } catch (e) {
+          debugPrint('🎤 [AudioRoomsBloc] ⚠️ Error leaving LiveKit room: $e');
+        }
+      }
       if (_agoraInitialized && _currentChannelName != null) {
         final leavingChannel = _currentChannelName;
         debugPrint(
@@ -536,7 +563,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       }
 
       // Stop background service when leaving room only if no other channel is active
-      if (_agoraService.currentChannelId == null) {
+      if (_agoraService.currentChannelId == null && !_livekitService.isConnected.value) {
         try {
           await BackgroundService().stopService();
         } catch (_) {}
@@ -873,62 +900,26 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       final isBlocked = event.room.settings.blockedUsers
           .any((b) => b.userId == currentUserId);
 
-      bool wasKickedRecently = false;
-      try {
-        final removedUserList = event.room.removedUsers
-            .where((u) => u['userId'] == currentUserId)
-            .toList();
-        if (removedUserList.isNotEmpty) {
-          removedUserList.sort((a, b) {
-            DateTime parseTime(dynamic val) {
-              if (val == null) return DateTime.now();
-              if (val is Timestamp) return val.toDate();
-              if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
-              if (val is String) {
-                return DateTime.tryParse(val) ?? DateTime.now();
-              }
-              if (val is DateTime) return val;
-              return DateTime.now();
-            }
+      // Only treat as kicked if the user was actively a participant before,
+      // and is now removed from participants list
+      final wasParticipantBefore =
+          oldRoom != null && oldRoom.isParticipant(currentUserId);
+      final isParticipantNow = event.room.isParticipant(currentUserId);
 
-            final aTime = parseTime(a['removedAt']);
-            final bTime = parseTime(b['removedAt']);
-            return bTime.compareTo(aTime);
-          });
-
-          final mostRecentKick = removedUserList.first;
-          DateTime? removedAt;
-          final val = mostRecentKick['removedAt'];
-          if (val != null) {
-            if (val is Timestamp) {
-              removedAt = val.toDate();
-            } else if (val is int) {
-              removedAt = DateTime.fromMillisecondsSinceEpoch(val);
-            } else if (val is String) {
-              removedAt = DateTime.tryParse(val);
-            } else if (val is DateTime) {
-              removedAt = val;
-            }
-          }
-
-          if (removedAt != null) {
-            final now = DateTime.now();
-            if (now.difference(removedAt).inHours < 24) {
-              wasKickedRecently = true;
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('🚪 [AudioRoomsBloc] Error checking removed users: $e');
+      bool wasKickedJustNow = false;
+      if (wasParticipantBefore && !isParticipantNow) {
+        wasKickedJustNow = true;
       }
 
-      if (!_isLeavingVoluntarily && (wasKickedRecently || isBlocked)) {
+      if (!_isLeavingVoluntarily && (wasKickedJustNow || isBlocked)) {
         debugPrint(
             '🚪 [AudioRoomsBloc] ⚠️ Current user was explicitly kicked or blocked from room!');
         debugPrint('🚪 [AudioRoomsBloc] 🔧 Force leaving Agora channel...');
         add(const ForceLeaveAgoraChannel());
-        emit(const AudioRoomsError(
-          message: 'You have been removed from this room by the host.',
+        emit(AudioRoomsError(
+          message: isBlocked
+              ? 'You are blocked from entering this room.'
+              : 'You have been removed from this room by the host.',
           errorCode: 'KICKED',
         ));
         return; // Don't emit room update since user is no longer in room
@@ -990,24 +981,27 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             }
           }
 
-          await _agoraService.setClientRole(ClientRoleType.clientRoleBroadcaster, isMuted: shouldBeMuted);
+          if (!isLiveKit) {
+            await _agoraService.setClientRole(ClientRoleType.clientRoleBroadcaster, isMuted: shouldBeMuted);
+          }
           add(SetMicrophoneMute(muted: shouldBeMuted));
         } else if (!isNowSeated && wasSeated) {
           debugPrint(
-              '🎤 [AudioRoomsBloc] 🪑 User removed from seat via remote update -> Switching Agora role to Audience');
-          await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
+              '🎤 [AudioRoomsBloc] 🪑 User removed from seat via remote update -> Switching role to Audience');
+          if (!isLiveKit) {
+            await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
+          }
           add(const SetMicrophoneMute(muted: true));
         } else if (isNowSeated && oldParticipant != null && newParticipant != null) {
-          // Already seated, check if mute state was changed remotely
-          final bool isRecentLocalChange = _lastLocalMuteChangeTime != null &&
-              DateTime.now().difference(_lastLocalMuteChangeTime!).inMilliseconds < 2500;
-          final bool isAdminMute = newParticipant.isMutedByAdmin;
-
-          if (oldParticipant.isMuted != newParticipant.isMuted && (!isRecentLocalChange || isAdminMute)) {
+          // Already seated: ONLY synchronize if Admin changed the mute status remotely
+          if (oldParticipant.isMutedByAdmin != newParticipant.isMutedByAdmin) {
             debugPrint(
-                '🎤 [AudioRoomsBloc] 🪑 Remote mute sync for seated user -> muted: ${newParticipant.isMuted}');
-            await _agoraService.setMuted(newParticipant.isMuted);
-            add(SetMicrophoneMute(muted: newParticipant.isMuted));
+                '🎤 [AudioRoomsBloc] 🪑 Remote admin mute sync for seated user -> mutedByAdmin: ${newParticipant.isMutedByAdmin}');
+            final bool targetMute = newParticipant.isMutedByAdmin;
+            if (!isLiveKit) {
+              await _agoraService.setMuted(targetMute);
+            }
+            add(SetMicrophoneMute(muted: targetMute));
           }
         }
       }
@@ -1618,7 +1612,9 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             _currentRoom = _currentRoom!.copyWith(participants: updatedParticipants);
           }
 
-          await _agoraService.setClientRole(ClientRoleType.clientRoleBroadcaster, isMuted: targetMuted);
+          if (!isLiveKit) {
+            await _agoraService.setClientRole(ClientRoleType.clientRoleBroadcaster, isMuted: targetMuted);
+          }
           add(SetMicrophoneMute(muted: targetMuted));
         } else {
           // Leaving seat: revert to Audience
@@ -1637,7 +1633,9 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             _currentRoom = _currentRoom!.copyWith(participants: updatedParticipants);
           }
 
-          await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
+          if (!isLiveKit) {
+            await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
+          }
           add(const SetMicrophoneMute(muted: true));
         }
       }
@@ -1690,7 +1688,9 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
           }).toList();
           _currentRoom = _currentRoom!.copyWith(participants: updatedParticipants);
         }
-        await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
+        if (!isLiveKit) {
+          await _agoraService.setClientRole(ClientRoleType.clientRoleAudience, isMuted: true);
+        }
         add(const SetMicrophoneMute(muted: true));
       }
 
@@ -1952,8 +1952,14 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   ) async {
     try {
       debugPrint(
-          '🎤 [AudioRoomsBloc] Initializing Agora for room: ${event.roomId}');
+          '🎤 [AudioRoomsBloc] Initializing RTC (LiveKit/Agora) for room: ${event.roomId}');
       emit(const AgoraInitializing());
+
+      if (isLiveKit) {
+        debugPrint('🎤 [AudioRoomsBloc] LiveKit is active engine for Audio Rooms v2 - bypassing Agora init');
+        emit(const AgoraInitialized());
+        return;
+      }
 
       // Always call initialize - it safely reuses the engine if already alive
       // and re-registers event handlers for the new BLoC
@@ -1981,10 +1987,14 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       }
 
       emit(const AgoraInitialized());
-      debugPrint('🎤 [AudioRoomsBloc] Agora initialized successfully');
+      debugPrint('🎤 [AudioRoomsBloc] RTC initialized successfully');
     } catch (e) {
-      debugPrint('🎤 [AudioRoomsBloc] Agora initialization error: $e');
-      emit(AgoraInitializationFailed(error: e.toString()));
+      debugPrint('🎤 [AudioRoomsBloc] RTC initialization notice: $e');
+      if (isLiveKit) {
+        emit(const AgoraInitialized());
+      } else {
+        emit(AgoraInitializationFailed(error: e.toString()));
+      }
     }
   }
 
@@ -2004,6 +2014,9 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       if (_currentChannelName != null && _currentChannelName != event.channelName) {
         debugPrint(
             '🎤 [AudioRoomsBloc] 🔄 Switching channels: releasing $_currentChannelName before joining ${event.channelName}');
+        if (_livekitService.isConnected.value) {
+          await _livekitService.leaveRoom();
+        }
         await _agoraService.leaveChannelAndRelease(channelName: _currentChannelName);
         _agoraService.clearCallbacks(channelName: _currentChannelName, owner: this);
         _currentChannelName = null;
@@ -2015,7 +2028,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       // Prevent duplicate join attempts if already connected to the same channel
       if (_currentChannelName == event.channelName &&
           _currentUid == uidToUse &&
-          _agoraService.isConnected) {
+          (_agoraService.isConnected || _livekitService.isConnected.value)) {
         debugPrint(
             '🎤 [AudioRoomsBloc] ⚠️ Already joined and active on channel ${event.channelName} with UID $uidToUse, skipping duplicate');
         return;
@@ -2029,9 +2042,110 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       }
 
       debugPrint(
-          '🎤 [AudioRoomsBloc] Joining Agora channel: ${event.channelName} with UID: $uidToUse');
+          '🎤 [AudioRoomsBloc] Joining RTC channel: ${event.channelName} with UID: $uidToUse');
       emit(AgoraChannelJoining(channelName: event.channelName));
 
+      // 1. Dual-Engine Check: Try LiveKit first if enabled in Admin Panel
+      if (isLiveKit) {
+        try {
+          final serverUrl = Get.isRegistered<GlobalSettingsService>()
+              ? Get.find<GlobalSettingsService>().livekitServerUrl.value.trim()
+              : 'https://live.imchat.tech';
+          final identity = event.userId.isNotEmpty ? event.userId : uidToUse.toString();
+          final userName = event.userName.isNotEmpty ? event.userName : 'User';
+
+          debugPrint('🌐 [AudioRoomsBloc] Connecting to Audio Room via LiveKit ($serverUrl)...');
+          final lkToken = await _livekitService.generateToken(
+            roomName: event.channelName,
+            identity: identity,
+            userName: userName,
+          );
+
+          _livekitService.onActiveSpeakersChanged = (speakers) {
+            if (!isClosed) {
+              final Map<int, int> userVolumes = {};
+              int totalVol = 0;
+              for (final speakerIdentity in speakers) {
+                final sUid = generateAgoraUid(speakerIdentity);
+                userVolumes[sUid] = 100;
+                totalVol += 100;
+              }
+              add(AudioVolumeIndication(userVolumes: userVolumes, totalVolume: totalVol));
+            }
+          };
+
+          _livekitService.onParticipantJoined = (participant) {
+            if (!isClosed) {
+              final pUid = generateAgoraUid(participant.identity);
+              final agoraUser = AgoraUser(
+                uid: pUid,
+                userId: participant.identity,
+                userName: participant.name.isNotEmpty ? participant.name : 'User $pUid',
+                isMuted: false,
+                lastSpokeAt: DateTime.now(),
+              );
+              add(AgoraUserJoined(user: agoraUser));
+            }
+          };
+
+          _livekitService.onParticipantLeft = (participant) {
+            if (!isClosed) {
+              final pUid = generateAgoraUid(participant.identity);
+              add(AgoraUserLeft(uid: pUid));
+            }
+          };
+
+          final bool lkSuccess = await _livekitService.connectToRoom(
+            url: serverUrl,
+            token: lkToken,
+            enableAudio: true,
+            enableVideo: event.isVideo,
+            autoPublishMic: event.isSeated && !event.isMuted,
+          );
+
+          if (lkSuccess) {
+            _currentChannelName = event.channelName;
+            _currentUid = uidToUse;
+
+            try {
+              await BackgroundService().startCallService(
+                title: 'VoiceRoom is running now',
+                content: 'click back to the VoiceRoom',
+              );
+            } catch (_) {}
+
+            emit(AgoraChannelJoined(
+              channelName: event.channelName,
+              uid: uidToUse,
+              connectionState: AgoraConnectionState.connected,
+              users: _agoraUsers,
+              isMuted: event.isMuted,
+              isSpeakerOn: true,
+              audioQuality: AudioQuality.high,
+              audioEffect: AudioEffect.none,
+              voiceChanger: VoiceChanger.none,
+            ));
+            debugPrint('🌐 [AudioRoomsBloc] ✅ Successfully joined Audio Room via LiveKit WebRTC');
+            return;
+          } else {
+            debugPrint('🌐 [AudioRoomsBloc] ❌ LiveKit connection failed');
+            emit(AgoraChannelJoinFailed(
+              channelName: event.channelName,
+              error: 'Failed to connect to LiveKit WebRTC server',
+            ));
+            return;
+          }
+        } catch (lkErr) {
+          debugPrint('🌐 [AudioRoomsBloc] ❌ LiveKit error: $lkErr');
+          emit(AgoraChannelJoinFailed(
+            channelName: event.channelName,
+            error: lkErr.toString(),
+          ));
+          return;
+        }
+      }
+
+      // 2. Agora Engine Execution (100% untouched original logic)
       // Generate token if not provided
       String? token = event.token;
       if (token == null) {
@@ -2151,15 +2265,23 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   ) async {
     final leavingChannel = event.channelName ?? _currentChannelName;
     try {
-      debugPrint('🎤 [AudioRoomsBloc] Leaving Agora channel: $leavingChannel');
+      debugPrint('🎤 [AudioRoomsBloc] Leaving RTC channel: $leavingChannel');
 
-      await _agoraService.leaveChannelAndRelease(channelName: leavingChannel);
-      _agoraService.clearCallbacks(channelName: leavingChannel, owner: this);
+      if (_livekitService.isConnected.value || isLiveKit) {
+        await _livekitService.leaveRoom();
+      } else {
+        await _agoraService.leaveChannelAndRelease(channelName: leavingChannel);
+        _agoraService.clearCallbacks(channelName: leavingChannel, owner: this);
+      }
 
       _currentChannelName = null;
       _currentUid = null;
       _agoraUsers.clear();
       _networkQualities.clear();
+      for (final timer in _offlineUserTimers.values) {
+        timer.cancel();
+      }
+      _offlineUserTimers.clear();
 
       if (_agoraService.currentChannelId == null || _agoraService.currentChannelId == leavingChannel) {
         try {
@@ -2168,7 +2290,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       }
 
       emit(const AgoraChannelLeft());
-      debugPrint('🎤 [AudioRoomsBloc] Left Agora channel successfully');
+      debugPrint('🎤 [AudioRoomsBloc] Left RTC channel successfully');
     } catch (e) {
       debugPrint('🎤 [AudioRoomsBloc] Leave channel error: $e');
       emit(AgoraError(message: e.toString(), code: 'LEAVE_CHANNEL_FAILED'));
@@ -2214,8 +2336,12 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         }
       }
 
+      final bool isCurrentMuted = _livekitService.isConnected.value
+          ? _livekitService.isMicMuted.value
+          : _agoraService.isMuted;
+
       // If user is currently muted and trying to unmute, verify microphone permission
-      if (_agoraService.isMuted) {
+      if (isCurrentMuted) {
         try {
           final micStatus = await Permission.microphone.status;
           if (!micStatus.isGranted) {
@@ -2238,8 +2364,15 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       _lastLocalMuteChangeTime = DateTime.now();
 
       // Allow users to toggle their microphone freely
-      await _agoraService.toggleMute();
-      final bool newMutedState = _agoraService.isMuted;
+      if (_livekitService.isConnected.value || isLiveKit) {
+        final newMuted = !_livekitService.isMicMuted.value;
+        await _livekitService.setMicrophoneEnabled(!newMuted);
+      } else {
+        await _agoraService.toggleMute();
+      }
+      final bool newMutedState = (_livekitService.isConnected.value || isLiveKit)
+          ? _livekitService.isMicMuted.value
+          : _agoraService.isMuted;
       emit(MicrophoneToggled(isMuted: newMutedState));
 
       // Sync mute state to Firestore
@@ -2334,7 +2467,11 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       _lastLocalMuteChangeTime = DateTime.now();
 
       // Allow users to set their microphone state freely
-      await _agoraService.setMuted(event.muted);
+      if (_livekitService.isConnected.value || isLiveKit) {
+        await _livekitService.setMicrophoneEnabled(!event.muted);
+      } else {
+        await _agoraService.setMuted(event.muted);
+      }
       emit(MicrophoneToggled(isMuted: event.muted));
 
       // Sync mute state to Firestore
@@ -2358,7 +2495,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
           '🎤 [AudioRoomsBloc] Microphone set to: ${event.muted ? "muted" : "unmuted"}');
     } catch (e) {
       debugPrint('🎤 [AudioRoomsBloc] Set microphone error: $e');
-      emit(AgoraError(message: e.toString(), code: 'SET_MIC_FAILED'));
+      emit(AgoraError(message: e.toString(), code: 'SET_MIC_MUTE_FAILED'));
     }
   }
 
@@ -2448,10 +2585,19 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     Emitter<AudioRoomsState> emit,
   ) async {
     try {
-      await _agoraService.toggleSpeaker();
-      emit(SpeakerToggled(isSpeakerOn: _agoraService.isSpeakerOn));
-      debugPrint(
-          '🔊 [AudioRoomsBloc] Speaker toggled: ${_agoraService.isSpeakerOn ? "on" : "off"}');
+      if (_livekitService.isConnected.value || isLiveKit) {
+        final newSpeakerOn = !_agoraService.isSpeakerOn;
+        await _livekitService.setSpeakerphoneEnabled(newSpeakerOn);
+        _agoraService.setSpeakerOn(newSpeakerOn);
+        emit(SpeakerToggled(isSpeakerOn: newSpeakerOn));
+        debugPrint(
+            '🔊 [AudioRoomsBloc] LiveKit Speaker toggled: ${newSpeakerOn ? "on" : "off"}');
+      } else {
+        await _agoraService.toggleSpeaker();
+        emit(SpeakerToggled(isSpeakerOn: _agoraService.isSpeakerOn));
+        debugPrint(
+            '🔊 [AudioRoomsBloc] Agora Speaker toggled: ${_agoraService.isSpeakerOn ? "on" : "off"}');
+      }
     } catch (e) {
       debugPrint('🔊 [AudioRoomsBloc] Toggle speaker error: $e');
       emit(AgoraError(message: e.toString(), code: 'TOGGLE_SPEAKER_FAILED'));
@@ -2514,6 +2660,24 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     try {
       emit(const BackgroundMusicStarting());
 
+      if (isLiveKit) {
+        try {
+          await _audioPlayer.stop();
+          await _audioPlayer.setReleaseMode(
+            event.config.cycle == -1 ? ap.ReleaseMode.loop : ap.ReleaseMode.release,
+          );
+          await _audioPlayer.setVolume(event.config.playoutVolume / 100.0);
+          await _audioPlayer.play(ap.DeviceFileSource(event.config.filePath));
+          emit(BackgroundMusicStarted(config: event.config));
+          debugPrint('🎵 [AudioRoomsBloc] Background music started via AudioPlayer: ${event.config.filePath}');
+          return;
+        } catch (apErr) {
+          debugPrint('🎵 [AudioRoomsBloc] AudioPlayer error: $apErr');
+          emit(BackgroundMusicFailed(error: apErr.toString()));
+          return;
+        }
+      }
+
       final success = await _agoraService.startAudioMixing(event.config);
 
       if (success) {
@@ -2536,7 +2700,11 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     Emitter<AudioRoomsState> emit,
   ) async {
     try {
-      await _agoraService.stopAudioMixing();
+      if (isLiveKit) {
+        await _audioPlayer.stop();
+      } else {
+        await _agoraService.stopAudioMixing();
+      }
       emit(const BackgroundMusicStopped());
       debugPrint('🎵 [AudioRoomsBloc] Background music stopped');
     } catch (e) {
@@ -2551,7 +2719,11 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     Emitter<AudioRoomsState> emit,
   ) async {
     try {
-      await _agoraService.pauseAudioMixing();
+      if (isLiveKit) {
+        await _audioPlayer.pause();
+      } else {
+        await _agoraService.pauseAudioMixing();
+      }
       emit(const BackgroundMusicPaused());
       debugPrint('🎵 [AudioRoomsBloc] Background music paused');
     } catch (e) {
@@ -2566,7 +2738,11 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     Emitter<AudioRoomsState> emit,
   ) async {
     try {
-      await _agoraService.resumeAudioMixing();
+      if (isLiveKit) {
+        await _audioPlayer.resume();
+      } else {
+        await _agoraService.resumeAudioMixing();
+      }
       emit(const BackgroundMusicResumed());
       debugPrint('🎵 [AudioRoomsBloc] Background music resumed');
     } catch (e) {
@@ -2609,6 +2785,13 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   ) async {
     debugPrint('👤 [AudioRoomsBloc] Agora user joined: ${event.user.uid}');
 
+    // Cancel any pending auto-exit timer if the user reconnected within grace period
+    final pendingTimer = _offlineUserTimers.remove(event.user.uid);
+    if (pendingTimer != null) {
+      debugPrint('⏱️ [AudioRoomsBloc] Cancelled auto-exit grace timer for reconnected user: ${event.user.uid}');
+      pendingTimer.cancel();
+    }
+
     _agoraUsers.removeWhere((u) => u.uid == event.user.uid);
     _agoraUsers.add(event.user);
 
@@ -2636,6 +2819,75 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     _networkQualities.remove(event.uid);
 
     emit(AgoraUserUpdated(user: user, action: 'left'));
+
+    // --- Automatic Auto-Exit with Grace Timer ---
+    // If a user disconnected unexpectedly (network drop, phone power-off/killed),
+    // give them 10 seconds grace period to reconnect. If they do not return,
+    // auto-exit them from the room and clear their seat in Firestore.
+    if (_currentRoom != null) {
+      AudioRoomParticipant? offlineParticipant;
+      for (final p in _currentRoom!.participants) {
+        if (generateAgoraUid(p.userId) == event.uid || p.userId == event.uid.toString()) {
+          offlineParticipant = p;
+          break;
+        }
+      }
+
+      if (offlineParticipant != null) {
+        final targetUserId = offlineParticipant.userId;
+        final targetUserName = offlineParticipant.userName;
+        final targetRoomId = _currentRoom!.id;
+
+        // Cancel any existing timer for this UID
+        _offlineUserTimers.remove(event.uid)?.cancel();
+
+        debugPrint('⏱️ [AudioRoomsBloc] Starting 10-second offline grace timer for $targetUserName ($targetUserId)...');
+
+        _offlineUserTimers[event.uid] = Timer(const Duration(seconds: 10), () async {
+          _offlineUserTimers.remove(event.uid);
+
+          if (isClosed || _currentRoom == null || _currentRoom!.id != targetRoomId) return;
+
+          final myUserId = _currentUser?.userId ?? AuthController.instance.currentUser.userId;
+          if (myUserId.isEmpty || myUserId == targetUserId) return;
+
+          // Check if user is still in participants or occupying a seat
+          final isStillInParticipants = _currentRoom!.participants.any((p) => p.userId == targetUserId);
+          final isStillSeated = _currentRoom!.settings.seatConfiguration.any((s) => s.occupiedBy == targetUserId);
+
+          if (!isStillInParticipants && !isStillSeated) {
+            debugPrint('🚪 [AudioRoomsBloc] User $targetUserName already left room, skipping auto-exit.');
+            return;
+          }
+
+          // Decide which connected client dispatches the leave operation:
+          // Prefer Room Creator, then Room Admins, then lowest UID participant to prevent duplicate writes
+          final isCreator = _currentRoom!.isCreator(myUserId);
+          final isAdmin = _currentRoom!.settings.adminIds.contains(myUserId);
+
+          bool shouldDispatch = isCreator || isAdmin;
+          if (!shouldDispatch) {
+            final activeParticipants = _currentRoom!.participants.where((p) => p.userId != targetUserId).toList();
+            if (activeParticipants.isNotEmpty && activeParticipants.first.userId == myUserId) {
+              shouldDispatch = true;
+            }
+          }
+
+          if (shouldDispatch) {
+            debugPrint('🚪 [AudioRoomsBloc] User $targetUserName ($targetUserId) timed out (10s offline). Executing auto-exit from room $targetRoomId...');
+            try {
+              await _repository.leaveRoom(
+                roomId: targetRoomId,
+                userId: targetUserId,
+              );
+              debugPrint('🚪 [AudioRoomsBloc] Successfully auto-exited offline user $targetUserName.');
+            } catch (e) {
+              debugPrint('🚪 [AudioRoomsBloc] ⚠️ Failed to auto-exit offline user: $e');
+            }
+          }
+        });
+      }
+    }
   }
 
   /// Handle Agora user muted
@@ -2808,9 +3060,12 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
   ) async {
     try {
       debugPrint(
-          '🚪 [AudioRoomsBloc] Force leaving Agora channel (participant was kicked)');
+          '🚪 [AudioRoomsBloc] Force leaving RTC channel (participant was kicked)');
 
       final leavingChannel = _currentChannelName;
+      if (_livekitService.isConnected.value) {
+        await _livekitService.leaveRoom();
+      }
       await _agoraService.leaveChannelAndRelease(channelName: leavingChannel);
       _agoraService.clearCallbacks(channelName: leavingChannel, owner: this);
       _agoraInitialized = false;
@@ -2822,10 +3077,10 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         await BackgroundService().stopService();
       } catch (_) {}
       emit(const AgoraChannelLeft());
-      debugPrint('🚪 [AudioRoomsBloc] ✅ Forced to leave Agora channel');
+      debugPrint('🚪 [AudioRoomsBloc] ✅ Forced to leave RTC channel');
     } catch (e) {
       debugPrint(
-          '🚪 [AudioRoomsBloc] ❌ Failed to force leave Agora channel: $e');
+          '🚪 [AudioRoomsBloc] ❌ Failed to force leave RTC channel: $e');
     }
   }
 
@@ -2865,9 +3120,13 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
           ));
         }
 
+        final bool isCurrentMuted = _livekitService.isConnected.value
+            ? _livekitService.isMicMuted.value
+            : _agoraService.isMuted;
+
         // Only enforce mute if the participant is muted by admin and local mic is unmuted.
         // We do NOT overwrite voluntary user mic toggles with stale room data to prevent mute toggle loops.
-        if (currentParticipant.isMutedByAdmin && !_agoraService.isMuted) {
+        if (currentParticipant.isMutedByAdmin && !isCurrentMuted) {
           debugPrint(
               '🎤 [AudioRoomsBloc] 🔒 Admin mute enforced: muting local mic');
           add(const SetMicrophoneMute(muted: true));
@@ -2949,6 +3208,10 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
     await _singleRoomSubscription?.cancel();
     _muteCheckTimer?.cancel();
     _seatConfigDebounceTimer?.cancel();
+    for (final timer in _offlineUserTimers.values) {
+      timer.cancel();
+    }
+    _offlineUserTimers.clear();
 
     // Cleanup Agora (Do NOT dispose the engine, just leave the channel and clear callbacks)
     if (_agoraInitialized) {
@@ -2962,6 +3225,10 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
         await BackgroundService().stopService();
       } catch (_) {}
     }
+
+    try {
+      await _audioPlayer.dispose();
+    } catch (_) {}
 
     _repository.dispose();
     return super.close();

@@ -23,7 +23,7 @@ class HostInvitationMessage extends StatefulWidget {
 
 class _HostInvitationMessageState extends State<HostInvitationMessage> {
   bool _isProcessing = false;
-  bool _alreadyResponded = false;
+  String _invitationStatus = 'pending';
   StreamSubscription<DocumentSnapshot>? _invitationSub;
 
   final _agencyService = AgencyService();
@@ -53,12 +53,10 @@ class _HostInvitationMessageState extends State<HostInvitationMessage> {
         final data = snapshot.data();
         if (data != null) {
           final status = data['status'] ?? 'pending';
-          if (status != 'pending') {
-            if (mounted) {
-              setState(() {
-                _alreadyResponded = true;
-              });
-            }
+          if (mounted) {
+            setState(() {
+              _invitationStatus = status;
+            });
           }
         }
       }
@@ -76,7 +74,7 @@ class _HostInvitationMessageState extends State<HostInvitationMessage> {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _alreadyResponded = true;
+          _invitationStatus = 'accepted';
         });
       }
       Get.snackbar(
@@ -108,7 +106,7 @@ class _HostInvitationMessageState extends State<HostInvitationMessage> {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _alreadyResponded = true;
+          _invitationStatus = 'rejected';
         });
       }
       Get.snackbar(
@@ -243,21 +241,72 @@ class _HostInvitationMessageState extends State<HostInvitationMessage> {
 
           const SizedBox(height: 14),
 
-          // Action buttons
-          if (_alreadyResponded)
+          // Action buttons / Realtime Status
+          if (_invitationStatus == 'accepted')
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 10),
+              padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 12),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
+                color: Colors.green.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.green.shade400),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 16),
+                  SizedBox(width: 6),
+                  Text(
+                    '✓ Accepted & Joined',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (_invitationStatus == 'rejected')
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.orange.shade400),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.cancel_rounded, color: Colors.orangeAccent, size: 16),
+                  SizedBox(width: 6),
+                  Text(
+                    'Declined',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (_invitationStatus == 'cancelled')
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              decoration: BoxDecoration(
+                color: Colors.grey.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.grey.shade400),
               ),
               child: const Text(
-                'Invitation Responded',
+                'Cancelled by Agency',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white54,
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
               ),

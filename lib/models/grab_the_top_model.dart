@@ -18,7 +18,7 @@ class GrabTheTopRule {
     required this.minGiftCount,
     required this.showingTimeSeconds,
     this.isActive = true,
-    this.bannerTitle = '👑 {sender} sent {count}x {gift} to {receiver} and Grabbed the Top! 🪑',
+    this.bannerTitle = '{sender} sent {count}x {gift} to {receiver} and Grabbed the Top!',
   });
 
   factory GrabTheTopRule.fromFirestore(DocumentSnapshot doc) {
@@ -31,7 +31,7 @@ class GrabTheTopRule {
       minGiftCount: (data['minGiftCount'] ?? data['giftQuantity'] ?? 1) as int,
       showingTimeSeconds: (data['showingTimeSeconds'] ?? data['showingTime'] ?? 10) as int,
       isActive: data['isActive'] ?? true,
-      bannerTitle: data['bannerTitle']?.toString() ?? '👑 {sender} sent {count}x {gift} to {receiver} and Grabbed the Top! 🪑',
+      bannerTitle: data['bannerTitle']?.toString() ?? '{sender} sent {count}x {gift} to {receiver} and Grabbed the Top!',
     );
   }
 }

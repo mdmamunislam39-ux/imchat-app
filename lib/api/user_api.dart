@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -16,7 +17,9 @@ import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/helpers/app_helper.dart';
 import 'package:chat_messenger/helpers/dialog_helper.dart';
 import 'package:chat_messenger/models/user.dart';
+import 'package:chat_messenger/helpers/country_helper.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
+import 'package:chat_messenger/services/backend_engine_manager.dart';
 
 import '../tabs/groups/controllers/group_controller.dart';
 
@@ -59,6 +62,15 @@ abstract class UserApi {
         return (min + random.nextInt(max - min)).toString();
       }
 
+      // Auto-detect user device location / country
+      String userCountry = 'Bangladesh';
+      try {
+        final detected = await CountryHelper.detectDeviceCountry(userPhone: number);
+        userCountry = detected.name;
+      } catch (e) {
+        debugPrint('⚠️ [UserApi] Error detecting country on signup: $e');
+      }
+
       // Set profile info
       final User user = User(
         userId: userId,
@@ -72,6 +84,7 @@ abstract class UserApi {
         lastActive: DateTime.now(),
         isOnline: true,
         number: number,
+        country: userCountry,
         level: '1',
         searchId: generateRandomId(),
       );
@@ -101,59 +114,131 @@ abstract class UserApi {
     required String country,
   }) async {
     try {
-      // Get current user
+      // Get current user ID
       final User currentUser = AuthController.instance.currentUser;
+      final String uid = currentUser.userId.isNotEmpty
+          ? currentUser.userId
+          : (AuthController.instance.firebaseUser?.uid ?? '');
 
-      // Update photo
-      String photoUrl = currentUser.photoUrl;
-
-      // Check file
-      if (photoFile != null) {
-        photoUrl = await AppHelper.uploadFile(
-          file: photoFile,
-          userId: currentUser.userId,
-        );
+      if (uid.isEmpty) {
+        return 'User is not logged in';
       }
 
-      // Update backgrounds
+      // Update photo and backgrounds in parallel
+      String photoUrl = currentUser.photoUrl;
       List<String> backgroundUrls = retainedBackgroundUrls != null
           ? List.from(retainedBackgroundUrls)
           : [];
 
+      final int timestamp = DateTime.now().millisecondsSinceEpoch;
+      Future<String>? photoUploadTask;
+      if (photoFile != null) {
+        photoUploadTask = AppHelper.uploadFile(
+          file: photoFile,
+          userId: uid,
+        );
+      }
+
+      final List<Future<String>> bgUploadTasks = [];
       if (newBackgroundFiles != null && newBackgroundFiles.isNotEmpty) {
         for (int i = 0; i < newBackgroundFiles.length; i++) {
-          String newUrl = await AppHelper.uploadFile(
+          bgUploadTasks.add(AppHelper.uploadFile(
             file: newBackgroundFiles[i],
-            userId:
-                '${currentUser.userId}_bg_${DateTime.now().millisecondsSinceEpoch}_$i',
-          );
-          backgroundUrls.add(newUrl);
+            userId: '${uid}_bg_${timestamp}_$i',
+          ));
+        }
+      }
+
+      if (photoUploadTask != null || bgUploadTasks.isNotEmpty) {
+        final results = await Future.wait([
+          if (photoUploadTask != null) photoUploadTask,
+          ...bgUploadTasks,
+        ]);
+
+        int resultIdx = 0;
+        if (photoUploadTask != null) {
+          photoUrl = results[resultIdx++];
+        }
+        while (resultIdx < results.length) {
+          backgroundUrls.add(results[resultIdx++]);
         }
       }
 
       String firstBackgroundUrl = backgroundUrls.isNotEmpty
           ? backgroundUrls.first
-          : currentUser.homePageBackground;
+          : '';
 
-      // Save data
+      // Save user profile data to Firestore
+      final Map<String, dynamic> updateData = {
+        'fullname': fullname,
+        'bio': bio,
+        'gender': gender,
+        'birthday': birthday,
+        'country': country,
+        'homePageBackground': firstBackgroundUrl,
+        'homePageBackgrounds': backgroundUrls,
+      };
+      if (photoUrl.isNotEmpty) {
+        updateData['photoUrl'] = photoUrl;
+      }
+
       await _firestore
           .collection('Users')
-          .doc(currentUser.userId)
-          .update({
-            'photoUrl': photoUrl,
-            'fullname': fullname,
-            'bio': bio,
-            'gender': gender,
-            'birthday': birthday,
-            'country': country,
-            'homePageBackground': firstBackgroundUrl,
-            'homePageBackgrounds': backgroundUrls,
-          })
-          .timeout(const Duration(seconds: 15));
+          .doc(uid)
+          .set(updateData, SetOptions(merge: true))
+          .timeout(const Duration(seconds: 10));
+
+      // Clear local cache for this user
+      clearUserCache(uid);
+
+      // Perform secondary creator room, agency, and family sync in background without blocking UI
+      unawaited(Future(() async {
+        try {
+          final roomsQuery = await _firestore
+              .collection('audio_rooms_v2')
+              .where('creatorId', isEqualTo: uid)
+              .get()
+              .timeout(const Duration(seconds: 8));
+
+          for (final doc in roomsQuery.docs) {
+            final Map<String, dynamic> roomUpdate = {
+              'creatorName': fullname,
+              if (photoUrl.isNotEmpty) 'creatorImageUrl': photoUrl,
+              if (photoUrl.isNotEmpty) 'creatorPhotoUrl': photoUrl,
+            };
+            await doc.reference.update(roomUpdate).catchError((e) => debugPrint('Room update error: $e'));
+          }
+        } catch (e) {
+          debugPrint('Error syncing creator rooms: $e');
+        }
+
+        try {
+          final agencyQuery = await _firestore
+              .collection('agencies')
+              .where('ownerId', isEqualTo: uid)
+              .get()
+              .timeout(const Duration(seconds: 8));
+          for (final doc in agencyQuery.docs) {
+            await doc.reference.update({'ownerName': fullname}).catchError((_) {});
+          }
+        } catch (_) {}
+
+        try {
+          final familyQuery = await _firestore
+              .collection('families')
+              .where('creatorId', isEqualTo: uid)
+              .get()
+              .timeout(const Duration(seconds: 8));
+          for (final doc in familyQuery.docs) {
+            await doc.reference.update({'creatorName': fullname}).catchError((_) {});
+          }
+        } catch (_) {}
+      }));
 
       return true;
     } catch (e) {
-      return e;
+      debugPrint('UserApi.updateAccount error: $e');
+      return e.toString();
     }
   }
 
@@ -163,6 +248,11 @@ abstract class UserApi {
     if (user.userId.isNotEmpty) {
       _userCache[user.userId] = user;
     }
+  }
+
+  static User? getCachedUser(String userId) {
+    if (userId.isEmpty) return null;
+    return _userCache[userId];
   }
 
   static void clearUserCache([String? userId]) {
@@ -244,6 +334,20 @@ abstract class UserApi {
       );
     }
 
+    if (BackendEngineManager.isVps) {
+      try {
+        final vpsData = await BackendEngineManager.instance.apiService.getUserProfile(userId);
+        if (vpsData != null) {
+          vpsData['userId'] = vpsData['id'] ?? userId;
+          final user = User.fromMap(vpsData);
+          _userCache[userId] = user;
+          return user;
+        }
+      } catch (e) {
+        debugPrint('[UserApi] VPS getUser error: $e');
+      }
+    }
+
     final doc = await _firestore.collection('Users').doc(userId).get();
     if (doc.exists) {
       try {
@@ -251,6 +355,24 @@ abstract class UserApi {
         data['userId'] = doc.id;
         final user = User.fromMap(data);
         _userCache[userId] = user;
+
+        // In VPS mode, auto-sync this user to VPS database in background so future reads hit VPS directly
+        if (BackendEngineManager.isVps) {
+          unawaited(Future(() async {
+            try {
+              await BackendEngineManager.instance.apiService.syncUserProfile(
+                fullname: user.fullname,
+                email: user.email,
+                photoUrl: user.photoUrl,
+                phoneNumber: user.number,
+                gender: user.gender,
+                country: user.country,
+                fcmToken: user.deviceToken,
+              );
+            } catch (_) {}
+          }));
+        }
+
         return user;
       } catch (e) {
         debugPrint('Error parsing user data: $e');
@@ -262,6 +384,36 @@ abstract class UserApi {
           loginProvider: LoginProvider.email,
         );
       }
+    }
+    return null;
+  }
+
+  /// Searches for a user document in Firestore by email or user_email
+  static Future<User?> getUserByEmail(String email) async {
+    if (email.trim().isEmpty) return null;
+    try {
+      final query = await _firestore
+          .collection('Users')
+          .where('email', isEqualTo: email.trim())
+          .limit(1)
+          .get();
+      if (query.docs.isNotEmpty) {
+        final data = query.docs.first.data();
+        data['userId'] = query.docs.first.id;
+        return User.fromMap(data);
+      }
+      final queryOld = await _firestore
+          .collection('Users')
+          .where('user_email', isEqualTo: email.trim())
+          .limit(1)
+          .get();
+      if (queryOld.docs.isNotEmpty) {
+        final data = queryOld.docs.first.data();
+        data['userId'] = queryOld.docs.first.id;
+        return User.fromMap(data);
+      }
+    } catch (e) {
+      debugPrint('[UserApi] getUserByEmail error: $e');
     }
     return null;
   }

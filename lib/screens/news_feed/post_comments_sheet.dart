@@ -16,6 +16,7 @@ import 'package:chat_messenger/components/rich_text_viewer.dart';
 
 import 'package:chat_messenger/screens/news_feed/post_reactions_summary_bar.dart';
 import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
+import 'package:chat_messenger/components/animated_svip_name.dart';
 
 class PostCommentsSheet extends StatefulWidget {
   final NewsFeedPost post;
@@ -368,8 +369,9 @@ class _PostCommentsSheetState extends State<PostCommentsSheet> {
                                         children: [
                                           GestureDetector(
                                             onTap: () => _viewUserProfile(comment.userId, userName: comment.userName, userAvatar: comment.userAvatar),
-                                            child: Text(
-                                              comment.userName,
+                                            child: AnimatedSvipName.fromUserId(
+                                              userId: comment.userId,
+                                              defaultName: comment.userName,
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
                                                 fontSize: 13,

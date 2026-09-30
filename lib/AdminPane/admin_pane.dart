@@ -15,6 +15,10 @@ import 'screens/admin_grab_the_top_screen.dart';
 import 'screens/admin_moment_management_screen.dart';
 import 'screens/admin_payment_management_screen.dart';
 import 'screens/admin_recharge_requests_screen.dart';
+import 'screens/admin_database_settings_screen.dart';
+import 'screens/admin_agency_transfers_screen.dart';
+import 'screens/admin_seller_requests_screen.dart';
+import 'screens/admin_withdrawals_screen.dart';
 
 
 /// Main AdminPane entry point — access gated by RoleService
@@ -199,6 +203,24 @@ class _AdminPaneState extends State<AdminPane> {
         label: 'Recharges',
         icon: Icons.receipt_long,
         screen: const AdminRechargeRequestsScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Agencies',
+        icon: Icons.swap_horiz_rounded,
+        screen: const AdminAgencyTransfersScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Sellers',
+        icon: Icons.storefront_rounded,
+        screen: const AdminSellerRequestsScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Withdrawals',
+        icon: Icons.price_check_rounded,
+        screen: const AdminWithdrawalsScreen(),
       ));
     }
 
@@ -649,6 +671,7 @@ class AdminPaneRoutes {
   static const String notifications = '/admin/notifications';
   static const String roles = '/admin/roles';
   static const String grabTheTop = '/admin/grab_the_top';
+  static const String databaseSettings = '/admin/database_settings';
 
   static Map<String, WidgetBuilder> get routes => {
         assets: (context) => const AdminAssetsScreen(),
@@ -657,5 +680,6 @@ class AdminPaneRoutes {
         notifications: (context) => const AdminNotificationsScreen(),
         roles: (context) => const RoleManagementScreen(),
         grabTheTop: (context) => const AdminGrabTheTopScreen(),
+        databaseSettings: (context) => const AdminDatabaseSettingsScreen(),
       };
 }

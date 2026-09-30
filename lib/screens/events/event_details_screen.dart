@@ -11,6 +11,7 @@ import '../../models/audio_room_v2.dart';
 import '../../theme/app_theme.dart';
 import '../../services/event_service.dart';
 import '../../controllers/follow_controller.dart';
+import '../../controllers/auth_controller.dart';
 import '../../widgets/follow_button.dart';
 import '../audio_rooms_v2/audio_room_screen.dart';
 import '../audio_rooms_v2/bloc/audio_rooms_bloc.dart';
@@ -437,6 +438,25 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
       
       if (roomSnap.exists) {
         final room = AudioRoomV2.fromFirestore(roomSnap);
+        final currentUserId = AuthController.instance.currentUser.userId;
+        if (room.isUserBlocked(currentUserId)) {
+          Get.snackbar(
+            'Access Denied',
+            'You are blocked from entering this room.',
+            backgroundColor: Colors.red,
+            colorText: Colors.white,
+          );
+          return;
+        }
+        if (room.isUserKickedRecently(currentUserId)) {
+          Get.snackbar(
+            'Access Denied',
+            'You have been removed from this room and cannot join for 24 hours.',
+            backgroundColor: Colors.red,
+            colorText: Colors.white,
+          );
+          return;
+        }
         Get.to(() => AudioRoomScreen(
           room: room,
           audioRoomsBloc: AudioRoomsBloc(repository: AudioRoomsRepository()),

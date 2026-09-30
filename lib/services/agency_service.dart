@@ -1,3 +1,4 @@
+import 'user_position_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:chat_messenger/api/user_api.dart';
@@ -44,6 +45,17 @@ class AgencyService {
       };
 
       await _firestore.collection(_agenciesCollection).doc(agencyId).set(agencyData);
+      
+      // Auto-apply Agency position items (Frame, Badge, Nameplate)
+      try {
+        await UserPositionService.applyPositionToUser(
+          userId: owner.userId,
+          positionKey: 'agency',
+          userName: owner.name,
+        );
+      } catch (ex) {
+        debugPrint('⚠️ Error applying agency position items: $ex');
+      }
       
       debugPrint('✅ Agency created successfully: $agencyId');
       return agencyId;
@@ -203,6 +215,17 @@ class AgencyService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
       
+      // Auto-apply Host position items (Frame, Badge, Nameplate)
+      try {
+        await UserPositionService.applyPositionToUser(
+          userId: hostUserId,
+          positionKey: 'host',
+          userName: hostName,
+        );
+      } catch (ex) {
+        debugPrint('⚠️ Error applying host position items: $ex');
+      }
+      
       debugPrint('✅ Host added to agency successfully');
     } catch (e) {
       debugPrint('❌ Error adding host to agency: $e');
@@ -238,12 +261,35 @@ class AgencyService {
 
       // Clear user agency association to allow inviting them again
       if (hostUserId.isNotEmpty) {
+        try {
+          await UserPositionService.removePositionFromUser(
+            userId: hostUserId,
+            positionKey: 'host',
+          );
+        } catch (ex) {
+          debugPrint('⚠️ Error removing host position items: $ex');
+        }
         await _firestore.collection('Users').doc(hostUserId).update({
           'agencyId': null,
           'agencyName': null,
+          'isHost': false,
           'userType': 'regular',
+          'roles': FieldValue.arrayRemove(['host']),
           'updatedAt': FieldValue.serverTimestamp(),
         });
+
+        // Cancel previous pending invitations for this user
+        final pendingInvites = await _firestore
+            .collection(_hostInvitationsCollection)
+            .where('hostUserId', isEqualTo: hostUserId)
+            .where('status', isEqualTo: 'pending')
+            .get();
+        for (var doc in pendingInvites.docs) {
+          await doc.reference.update({
+            'status': 'cancelled',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
       }
       
       // Update agency host count
@@ -494,15 +540,17 @@ class AgencyService {
 
         final agencyId = invData['agencyId'] as String;
 
-        // Check if user is already a host in any agency to prevent multiple memberships
+        // Check if user is already an active host of another agency
         final userRef = _firestore.collection('Users').doc(userId);
         final userSnap = await transaction.get(userRef);
+        bool isOwner = false;
         if (userSnap.exists) {
           final userData = userSnap.data()!;
-          final userType = userData['userType'] as String?;
           final existingAgencyId = userData['agencyId'] as String?;
-          if (userType == 'host' || (existingAgencyId != null && existingAgencyId.isNotEmpty)) {
-            throw Exception('You are already a Host of an agency. You cannot join multiple agencies.');
+          final isAgency = userData['isAgency'] as bool? ?? false;
+          isOwner = isAgency;
+          if (existingAgencyId != null && existingAgencyId.isNotEmpty && existingAgencyId != agencyId) {
+            throw Exception('You are already an active Host of another agency. Please leave that agency before joining a new one.');
           }
         }
 
@@ -511,15 +559,22 @@ class AgencyService {
         if (!agencySnap.exists) throw Exception('Agency not found');
 
         final agencyName = agencySnap.data()!['agencyName'] as String? ?? '';
+        if (agencySnap.data()?['ownerUserId'] == userId) {
+          isOwner = true;
+        }
 
         // Update invitation status
-        transaction.update(invRef, {'status': 'accepted'});
+        transaction.update(invRef, {'status': 'accepted', 'updatedAt': FieldValue.serverTimestamp()});
 
-        // Update user doc
+        // Update user doc - preserve agency ownership while adding host role
         transaction.update(userRef, {
           'agencyId': agencyId,
           'agencyName': agencyName,
-          'userType': 'host',
+          'userType': isOwner ? 'agency' : 'host',
+          'isHost': true,
+          if (isOwner) 'isAgency': true,
+          'roles': FieldValue.arrayUnion(['host', if (isOwner) 'agency']),
+          'updatedAt': FieldValue.serverTimestamp(),
         });
       });
 
@@ -603,6 +658,319 @@ class AgencyService {
     }
   }
 
+  // Search agency by agencyIdNumber, agencyId, or owner's searchId
+  Future<Agency?> findAgencyByIdOrNumber(String query) async {
+    try {
+      final cleanQuery = query.trim();
+      if (cleanQuery.isEmpty) return null;
+
+      // 1. Search by agencyIdNumber
+      final numSnapshot = await _firestore
+          .collection(_agenciesCollection)
+          .where('agencyIdNumber', isEqualTo: cleanQuery)
+          .limit(1)
+          .get();
+
+      if (numSnapshot.docs.isNotEmpty) {
+        return Agency.fromMap(numSnapshot.docs.first.data());
+      }
+
+      // 2. Search by agencyId (document ID)
+      final docSnapshot = await _firestore
+          .collection(_agenciesCollection)
+          .doc(cleanQuery)
+          .get();
+
+      if (docSnapshot.exists && docSnapshot.data() != null) {
+        return Agency.fromMap(docSnapshot.data()!);
+      }
+
+      // 3. Search by owner's searchId in Users collection
+      final userSnapshot = await _firestore
+          .collection('Users')
+          .where('searchId', isEqualTo: cleanQuery)
+          .limit(1)
+          .get();
+
+      if (userSnapshot.docs.isNotEmpty) {
+        final userData = userSnapshot.docs.first.data();
+        final String? ownerAgencyId = userData['agencyId'];
+        if (ownerAgencyId != null && ownerAgencyId.isNotEmpty) {
+          final agency = await getAgency(ownerAgencyId);
+          if (agency != null) return agency;
+        }
+        // Also check if user is agency owner by ownerUserId
+        final agencyByOwner = await getAgencyByOwner(userSnapshot.docs.first.id);
+        if (agencyByOwner != null) return agencyByOwner;
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('❌ Error finding agency by ID/number: $e');
+      return null;
+    }
+  }
+
+  // Get active pending transfer request for a user
+  Future<Map<String, dynamic>?> getPendingTransferRequest(String userId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('agency_transfer_requests')
+          .where('userId', isEqualTo: userId)
+          .where('status', isEqualTo: 'pending')
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        return {
+          'id': snapshot.docs.first.id,
+          ...snapshot.docs.first.data(),
+        };
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ Error fetching pending transfer request: $e');
+      return null;
+    }
+  }
+
+  // Submit agency transfer request
+  Future<String> submitTransferRequest({
+    required String userId,
+    required String userName,
+    required String userSearchId,
+    required String userPhotoUrl,
+    required String currentAgencyId,
+    required String currentAgencyName,
+    required String currentAgencyIdNumber,
+    required Agency targetAgency,
+    String? reason,
+  }) async {
+    try {
+      // Check for existing pending request
+      final existing = await getPendingTransferRequest(userId);
+      if (existing != null) {
+        throw Exception('You already have a pending agency transfer request.');
+      }
+
+      if (currentAgencyId == targetAgency.agencyId) {
+        throw Exception('You are already registered under this agency.');
+      }
+
+      final docRef = _firestore.collection('agency_transfer_requests').doc();
+      final requestData = {
+        'requestId': docRef.id,
+        'userId': userId,
+        'userName': userName,
+        'userSearchId': userSearchId,
+        'userPhotoUrl': userPhotoUrl,
+        'currentAgencyId': currentAgencyId,
+        'currentAgencyName': currentAgencyName,
+        'currentAgencyIdNumber': currentAgencyIdNumber,
+        'targetAgencyId': targetAgency.agencyId,
+        'targetAgencyName': targetAgency.agencyName,
+        'targetAgencyIdNumber': targetAgency.agencyIdNumber,
+        'targetOwnerUserId': targetAgency.owner.userId,
+        'targetOwnerName': targetAgency.owner.name,
+        'targetLogoUrl': targetAgency.logoUrl,
+        'reason': reason ?? '',
+        'status': 'pending', // 'pending', 'approved', 'rejected', 'cancelled'
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      await docRef.set(requestData);
+      debugPrint('✅ Agency transfer request submitted: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      debugPrint('❌ Error submitting agency transfer request: $e');
+      rethrow;
+    }
+  }
+
+  // Cancel an agency transfer request by user
+  Future<void> cancelTransferRequest(String requestId) async {
+    try {
+      await _firestore.collection('agency_transfer_requests').doc(requestId).update({
+        'status': 'cancelled',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      debugPrint('✅ Agency transfer request cancelled: $requestId');
+    } catch (e) {
+      debugPrint('❌ Error cancelling transfer request: $e');
+      rethrow;
+    }
+  }
+
+  // Admin Approve Agency Transfer Request
+  Future<void> approveTransferRequest({
+    required String requestId,
+    required String adminId,
+  }) async {
+    try {
+      final doc = await _firestore.collection('agency_transfer_requests').doc(requestId).get();
+      if (!doc.exists) throw Exception('Request not found');
+      final data = doc.data()!;
+
+      if (data['status'] != 'pending') {
+        throw Exception('This request is already ${data['status']}');
+      }
+
+      final String userId = data['userId'];
+      final String targetAgencyId = data['targetAgencyId'];
+      final String targetAgencyName = data['targetAgencyName'] ?? 'New Agency';
+      final String currentAgencyId = data['currentAgencyId'] ?? '';
+
+      // 1. Update User doc
+      await _firestore.collection('Users').doc(userId).update({
+        'agencyId': targetAgencyId,
+        'agencyName': targetAgencyName,
+        'isHost': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. Update or Create Host doc
+      final hostSnapshot = await _firestore
+          .collection(_hostsCollection)
+          .where('userId', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (hostSnapshot.docs.isNotEmpty) {
+        await hostSnapshot.docs.first.reference.update({
+          'agencyId': targetAgencyId,
+          'isActive': true,
+          'status': 'active',
+          'notes': 'Transferred to $targetAgencyName',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        final newHostRef = _firestore.collection(_hostsCollection).doc();
+        await newHostRef.set({
+          'hostId': newHostRef.id,
+          'userId': userId,
+          'agencyId': targetAgencyId,
+          'hostName': data['userName'] ?? '',
+          'profileImageUrl': data['userPhotoUrl'] ?? '',
+          'phone': '',
+          'email': '',
+          'joinedDate': FieldValue.serverTimestamp(),
+          'lastActiveDate': FieldValue.serverTimestamp(),
+          'isActive': true,
+          'status': 'active',
+          'performance': {
+            'totalEarnings': 0.0,
+            'totalDiamonds': 0,
+            'totalLiveHours': 0.0,
+            'totalGiftsReceived': 0,
+            'averageRating': 0.0,
+            'lastUpdated': FieldValue.serverTimestamp(),
+          },
+          'earnings': [],
+          'notes': 'Transferred to $targetAgencyName',
+        });
+      }
+
+      // 3. Remove host from old agency if valid
+      if (currentAgencyId.isNotEmpty) {
+        try {
+          await _firestore.collection(_agenciesCollection).doc(currentAgencyId).update({
+            'totalHosts': FieldValue.increment(-1),
+            'hostIds': FieldValue.arrayRemove([userId]),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {}
+      }
+
+      // 4. Add host to target agency
+      try {
+        await _firestore.collection(_agenciesCollection).doc(targetAgencyId).update({
+          'totalHosts': FieldValue.increment(1),
+          'hostIds': FieldValue.arrayUnion([userId]),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+
+      // 5. Update transfer request status
+      await _firestore.collection('agency_transfer_requests').doc(requestId).update({
+        'status': 'approved',
+        'reviewedBy': adminId,
+        'reviewedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // 6. Send official notification to the user
+      try {
+        final targetUser = await UserApi.getUser(userId);
+        if (targetUser != null) {
+          await OfficialTeamApi.sendOfficialMessage(
+            receiverId: userId,
+            receiverDeviceToken: targetUser.deviceToken,
+            messageText: '🎉 Congratulations! Your request to change agency to "$targetAgencyName" has been approved by the Admin.',
+          );
+        }
+      } catch (ex) {
+        debugPrint('⚠️ Error sending official notification: $ex');
+      }
+
+      debugPrint('✅ Agency transfer approved for user $userId to agency $targetAgencyId');
+    } catch (e) {
+      debugPrint('❌ Error approving agency transfer: $e');
+      rethrow;
+    }
+  }
+
+  // Admin Reject Agency Transfer Request
+  Future<void> rejectTransferRequest({
+    required String requestId,
+    required String adminId,
+    String? rejectionReason,
+  }) async {
+    try {
+      final doc = await _firestore.collection('agency_transfer_requests').doc(requestId).get();
+      if (!doc.exists) throw Exception('Request not found');
+      final data = doc.data()!;
+
+      if (data['status'] != 'pending') {
+        throw Exception('This request is already ${data['status']}');
+      }
+
+      final String userId = data['userId'];
+      final String targetAgencyName = data['targetAgencyName'] ?? 'the requested agency';
+
+      // Update transfer request doc
+      await _firestore.collection('agency_transfer_requests').doc(requestId).update({
+        'status': 'rejected',
+        'rejectionReason': rejectionReason ?? 'Request was rejected by admin.',
+        'reviewedBy': adminId,
+        'reviewedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Send official notification to user
+      try {
+        final targetUser = await UserApi.getUser(userId);
+        if (targetUser != null) {
+          final reasonText = (rejectionReason != null && rejectionReason.isNotEmpty)
+              ? '\nReason: $rejectionReason'
+              : '';
+          await OfficialTeamApi.sendOfficialMessage(
+            receiverId: userId,
+            receiverDeviceToken: targetUser.deviceToken,
+            messageText: '❌ Your request to change agency to "$targetAgencyName" was rejected.$reasonText',
+          );
+        }
+      } catch (ex) {
+        debugPrint('⚠️ Error sending official rejection notification: $ex');
+      }
+
+      debugPrint('✅ Agency transfer rejected: $requestId');
+    } catch (e) {
+      debugPrint('❌ Error rejecting agency transfer: $e');
+      rethrow;
+    }
+  }
+
   // Search user by searchId
   Future<Map<String, dynamic>?> searchUserBySearchId(String searchId) async {
     try {
@@ -646,22 +1014,295 @@ class AgencyService {
   Future<void> leaveAgency(String userId) async {
     try {
       // Find and deactivate host record
+      try {
+        await UserPositionService.removePositionFromUser(
+          userId: userId,
+          positionKey: 'host',
+        );
+      } catch (ex) {
+        debugPrint('⚠️ Error removing host position items on leave: $ex');
+      }
       final hostRecord = await getUserHostRecord(userId);
       if (hostRecord != null) {
         await removeHostFromAgency(hostRecord.agencyId, hostRecord.hostId);
+      } else {
+        // Clear user agency fields
+        await _firestore.collection('Users').doc(userId).update({
+          'agencyId': null,
+          'agencyName': null,
+          'isHost': false,
+          'userType': 'regular',
+          'roles': FieldValue.arrayRemove(['host']),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       }
-
-      // Clear user agency fields
-      await _firestore.collection('Users').doc(userId).update({
-        'agencyId': null,
-        'agencyName': null,
-        'userType': 'regular',
-      });
 
       debugPrint('✅ User left agency successfully');
     } catch (e) {
       debugPrint('❌ Error leaving agency: $e');
       rethrow;
+    }
+  }
+
+  /// Stream claimed tiers for the given agency and week cycle
+  Stream<DocumentSnapshot<Map<String, dynamic>>> streamTierClaims({
+    required String agencyId,
+    required String cycleSuffix,
+  }) {
+    return _firestore
+        .collection(_agenciesCollection)
+        .doc(agencyId)
+        .collection('tier_claims')
+        .doc(cycleSuffix)
+        .snapshots();
+  }
+
+  /// Claim a single tier reward for an agency owner (incremental milestone payout)
+  Future<int> claimTierReward({
+    required String agencyId,
+    required String ownerUserId,
+    required String cycleSuffix,
+    required int tierIndex,
+    required int milestoneReward,
+    required String tierLabel,
+  }) async {
+    try {
+      final claimDocRef = _firestore
+          .collection(_agenciesCollection)
+          .doc(agencyId)
+          .collection('tier_claims')
+          .doc(cycleSuffix);
+
+      final claimSnapshot = await claimDocRef.get();
+      final claimData = claimSnapshot.data();
+      final claimedTiers = List<int>.from(claimData?['claimedTiers'] ?? []);
+      final int totalClaimedSoFar = (claimData?['totalClaimed'] as num?)?.toInt() ?? 0;
+
+      if (claimedTiers.contains(tierIndex)) {
+        debugPrint('⚠️ Tier $tierIndex is already claimed for cycle $cycleSuffix');
+        return 0;
+      }
+
+      // Calculate net incremental payout = milestoneReward - totalClaimedSoFar
+      final int netPayout = milestoneReward - totalClaimedSoFar;
+      if (netPayout <= 0) {
+        // Already received equivalent or higher amount from previous claims
+        await claimDocRef.set({
+          'claimedTiers': FieldValue.arrayUnion([tierIndex]),
+        }, SetOptions(merge: true));
+        return 0;
+      }
+
+      // Mark this tier and all preceding tiers as claimed
+      final List<int> tiersToMark = [];
+      for (int i = 0; i <= tierIndex; i++) {
+        if (!claimedTiers.contains(i)) {
+          tiersToMark.add(i);
+        }
+      }
+
+      final batch = _firestore.batch();
+
+      // 1. Credit net beans to agency owner wallet
+      final userRef = _firestore.collection('Users').doc(ownerUserId);
+      batch.update(userRef, {
+        'beans': FieldValue.increment(netPayout),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. Record wallet transaction
+      final txRef = _firestore.collection('wallet_transactions').doc();
+      batch.set(txRef, {
+        'id': txRef.id,
+        'userId': ownerUserId,
+        'type': 'agency_tier_reward',
+        'beans': netPayout,
+        'diamonds': 0,
+        'description': 'Agency Weekly Reward: $tierLabel (+${netPayout} beans net, milestone $milestoneReward)',
+        'agencyId': agencyId,
+        'cycle': cycleSuffix,
+        'tierIndex': tierIndex,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 3. Update tier claims document
+      batch.set(claimDocRef, {
+        'agencyId': agencyId,
+        'ownerUserId': ownerUserId,
+        'cycle': cycleSuffix,
+        'claimedTiers': FieldValue.arrayUnion(tiersToMark),
+        'claimedAmounts': {
+          '$tierIndex': netPayout,
+        },
+        'totalClaimed': FieldValue.increment(netPayout),
+        'lastClaimedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // 4. Update total commission on agency
+      final agencyRef = _firestore.collection(_agenciesCollection).doc(agencyId);
+      batch.update(agencyRef, {
+        'totalCommissionEarned': FieldValue.increment(netPayout.toDouble()),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
+      debugPrint('✅ Successfully claimed Tier $tierIndex reward: $netPayout beans (milestone $milestoneReward - already claimed $totalClaimedSoFar)');
+      return netPayout;
+    } catch (e) {
+      debugPrint('❌ Error claiming tier reward: $e');
+      rethrow;
+    }
+  }
+
+  /// Claim all eligible unclaimed tiers at once (incremental payout)
+  Future<int> claimAllEligibleTiers({
+    required String agencyId,
+    required String ownerUserId,
+    required String cycleSuffix,
+    required List<Map<String, dynamic>> eligibleTiers,
+  }) async {
+    try {
+      if (eligibleTiers.isEmpty) return 0;
+
+      final claimDocRef = _firestore
+          .collection(_agenciesCollection)
+          .doc(agencyId)
+          .collection('tier_claims')
+          .doc(cycleSuffix);
+
+      final claimSnapshot = await claimDocRef.get();
+      final claimData = claimSnapshot.data();
+      final claimedTiers = List<int>.from(claimData?['claimedTiers'] ?? []);
+      final int totalClaimedSoFar = (claimData?['totalClaimed'] as num?)?.toInt() ?? 0;
+
+      // Find highest milestone reward among eligible tiers
+      int highestMilestoneReward = 0;
+      final List<int> newClaimedIndices = [];
+
+      for (var t in eligibleTiers) {
+        final int r = (t['reward'] as num).toInt();
+        final int idx = t['index'] as int;
+        if (r > highestMilestoneReward) {
+          highestMilestoneReward = r;
+        }
+        if (!claimedTiers.contains(idx)) {
+          newClaimedIndices.add(idx);
+        }
+      }
+
+      final int netPayout = highestMilestoneReward - totalClaimedSoFar;
+      if (netPayout <= 0 || newClaimedIndices.isEmpty) {
+        if (newClaimedIndices.isNotEmpty) {
+          await claimDocRef.set({
+            'claimedTiers': FieldValue.arrayUnion(newClaimedIndices),
+          }, SetOptions(merge: true));
+        }
+        return 0;
+      }
+
+      final batch = _firestore.batch();
+
+      // 1. Credit beans to owner
+      final userRef = _firestore.collection('Users').doc(ownerUserId);
+      batch.update(userRef, {
+        'beans': FieldValue.increment(netPayout),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. Transaction log
+      final txRef = _firestore.collection('wallet_transactions').doc();
+      batch.set(txRef, {
+        'id': txRef.id,
+        'userId': ownerUserId,
+        'type': 'agency_tier_reward',
+        'beans': netPayout,
+        'diamonds': 0,
+        'description': 'Agency Weekly Reward: Claimed ${newClaimedIndices.length} Tiers (+${netPayout} beans net, milestone $highestMilestoneReward)',
+        'agencyId': agencyId,
+        'cycle': cycleSuffix,
+        'tierIndices': newClaimedIndices,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 3. Claims doc
+      batch.set(claimDocRef, {
+        'agencyId': agencyId,
+        'ownerUserId': ownerUserId,
+        'cycle': cycleSuffix,
+        'claimedTiers': FieldValue.arrayUnion(newClaimedIndices),
+        'totalClaimed': FieldValue.increment(netPayout),
+        'lastClaimedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // 4. Update agency
+      final agencyRef = _firestore.collection(_agenciesCollection).doc(agencyId);
+      batch.update(agencyRef, {
+        'totalCommissionEarned': FieldValue.increment(netPayout.toDouble()),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
+      debugPrint('✅ Successfully claimed all net: $netPayout beans');
+      return netPayout;
+    } catch (e) {
+      debugPrint('❌ Error claiming all tiers: $e');
+      rethrow;
+    }
+  }
+
+  /// Auto-claim previous week's unclaimed rewards (incremental milestone payout)
+  Future<int> autoClaimPreviousWeekRewards({
+    required String agencyId,
+    required String ownerUserId,
+    required int previousWeekPoints,
+    required List<Map<String, dynamic>> tiers,
+  }) async {
+    try {
+      if (previousWeekPoints <= 0 || tiers.isEmpty) return 0;
+
+      final prevCycleSuffix = RankingHelper.previousMondayWeeklySuffix;
+      final claimDocRef = _firestore
+          .collection(_agenciesCollection)
+          .doc(agencyId)
+          .collection('tier_claims')
+          .doc(prevCycleSuffix);
+
+      final claimSnapshot = await claimDocRef.get();
+      final claimData = claimSnapshot.data();
+      final claimedTiers = List<int>.from(claimData?['claimedTiers'] ?? []);
+      final int prevTotalClaimed = (claimData?['totalClaimed'] as num?)?.toInt() ?? 0;
+
+      final eligibleTiers = <Map<String, dynamic>>[];
+      int highestEligibleReward = 0;
+
+      for (int i = 0; i < tiers.length; i++) {
+        final target = (tiers[i]['target'] as num).toInt();
+        final reward = (tiers[i]['reward'] as num).toInt();
+        if (previousWeekPoints >= target) {
+          if (reward > highestEligibleReward) {
+            highestEligibleReward = reward;
+          }
+          if (!claimedTiers.contains(i)) {
+            eligibleTiers.add({
+              'index': i,
+              'reward': reward,
+              'label': tiers[i]['label'] ?? 'Tier ${i + 1}',
+            });
+          }
+        }
+      }
+
+      if (eligibleTiers.isEmpty || highestEligibleReward <= prevTotalClaimed) return 0;
+
+      return await claimAllEligibleTiers(
+        agencyId: agencyId,
+        ownerUserId: ownerUserId,
+        cycleSuffix: prevCycleSuffix,
+        eligibleTiers: eligibleTiers,
+      );
+    } catch (e) {
+      debugPrint('⚠️ Error in auto-claiming previous week: $e');
+      return 0;
     }
   }
 }
@@ -677,6 +1318,7 @@ class Agency {
   final double totalCommissionEarned;
   final int totalHosts;
   final List<String> hostIds;
+  final double? commissionRate;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -690,6 +1332,7 @@ class Agency {
     required this.totalCommissionEarned,
     required this.totalHosts,
     required this.hostIds,
+    this.commissionRate,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -705,6 +1348,7 @@ class Agency {
       totalCommissionEarned: (data['totalCommissionEarned'] ?? 0).toDouble(),
       totalHosts: data['totalHosts'] ?? 0,
       hostIds: List<String>.from(data['hostIds'] ?? []),
+      commissionRate: (data['commissionRate'] as num?)?.toDouble(),
       createdAt: data['createdAt']?.toDate() ?? DateTime.now(),
       updatedAt: data['updatedAt']?.toDate() ?? DateTime.now(),
     );
@@ -721,6 +1365,7 @@ class Agency {
       'totalCommissionEarned': totalCommissionEarned,
       'totalHosts': totalHosts,
       'hostIds': hostIds,
+      if (commissionRate != null) 'commissionRate': commissionRate,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };

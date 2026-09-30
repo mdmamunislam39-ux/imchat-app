@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -13,6 +14,7 @@ import 'package:chat_messenger/services/app_theme_service.dart';
 import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
 import 'package:chat_messenger/screens/room/family_screen.dart';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
+import 'package:chat_messenger/components/animated_svip_name.dart';
 
 // ─── Number Formatter ────────────────────────────────────────────────────────
 String formatRankingScore(int value) {
@@ -822,26 +824,46 @@ class _RoomTopRankingsScreenState extends State<RoomTopRankingsScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Flexible(
-                        child: Text(
-                          entry.title,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 11.5,
-                            shadows: [
-                              Shadow(
-                                color: Colors.black87,
-                                blurRadius: 4,
-                                offset: Offset(0, 1),
+                        child: (_category == RankingCategory.room || _category == RankingCategory.family)
+                            ? Text(
+                                entry.title,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11.5,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black87,
+                                      blurRadius: 4,
+                                      offset: Offset(0, 1),
+                                    ),
+                                  ],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                              )
+                            : AnimatedSvipName.fromUserId(
+                                userId: entry.id,
+                                defaultName: entry.title,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11.5,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black87,
+                                      blurRadius: 4,
+                                      offset: Offset(0, 1),
+                                    ),
+                                  ],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
                               ),
-                            ],
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                        ),
                       ),
-                      if (entry.gender != null) ...[
+                      if (entry.gender != null && entry.gender!.trim().isNotEmpty) ...[
                         const SizedBox(width: 2),
                         _buildGenderIcon(entry.gender!),
                       ],
@@ -870,6 +892,32 @@ class _RoomTopRankingsScreenState extends State<RoomTopRankingsScreen>
                         if (entry.receivingLevel != null)
                           _buildLevelShield('receiving_config', entry.receivingLevel!, const Color(0xFFFFB300)),
                       ],
+                    )
+                  else if (entry.rawData is AudioRoomV2)
+                    StreamBuilder<DocumentSnapshot>(
+                      stream: (entry.rawData as AudioRoomV2).creatorId.isNotEmpty
+                          ? FirebaseFirestore.instance
+                              .collection('Users')
+                              .doc((entry.rawData as AudioRoomV2).creatorId)
+                              .snapshots()
+                          : null,
+                      builder: (context, userSnap) {
+                        String hostName = (entry.rawData as AudioRoomV2).creatorName;
+                        if (userSnap.hasData && userSnap.data!.exists) {
+                          final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                          if (uData != null &&
+                              uData['fullname'] != null &&
+                              uData['fullname'].toString().trim().isNotEmpty) {
+                            hostName = uData['fullname'].toString().trim();
+                          }
+                        }
+                        return Text(
+                          'Host: $hostName',
+                          style: const TextStyle(color: Colors.white70, fontSize: 10),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
                     )
                   else if (entry.subtitle != null)
                     Text(
@@ -1046,18 +1094,30 @@ class _RoomTopRankingsScreenState extends State<RoomTopRankingsScreen>
                   Row(
                     children: [
                       Flexible(
-                        child: Text(
-                          entry.title,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        child: (_category == RankingCategory.room || _category == RankingCategory.family)
+                            ? Text(
+                                entry.title,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : AnimatedSvipName.fromUserId(
+                                userId: entry.id,
+                                defaultName: entry.title,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                       ),
-                      if (entry.gender != null) ...[
+                      if (entry.gender != null && entry.gender!.trim().isNotEmpty) ...[
                         const SizedBox(width: 4),
                         _buildGenderIcon(entry.gender!),
                       ],
@@ -1071,7 +1131,33 @@ class _RoomTopRankingsScreenState extends State<RoomTopRankingsScreen>
                     ],
                   ),
                   const SizedBox(height: 3),
-                  if (entry.subtitle != null)
+                  if (entry.rawData is AudioRoomV2)
+                    StreamBuilder<DocumentSnapshot>(
+                      stream: (entry.rawData as AudioRoomV2).creatorId.isNotEmpty
+                          ? FirebaseFirestore.instance
+                              .collection('Users')
+                              .doc((entry.rawData as AudioRoomV2).creatorId)
+                              .snapshots()
+                          : null,
+                      builder: (context, userSnap) {
+                        String hostName = (entry.rawData as AudioRoomV2).creatorName;
+                        if (userSnap.hasData && userSnap.data!.exists) {
+                          final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                          if (uData != null &&
+                              uData['fullname'] != null &&
+                              uData['fullname'].toString().trim().isNotEmpty) {
+                            hostName = uData['fullname'].toString().trim();
+                          }
+                        }
+                        return Text(
+                          'Host: $hostName',
+                          style: const TextStyle(color: Colors.white54, fontSize: 11),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
+                    )
+                  else if (entry.subtitle != null)
                     Text(
                       entry.subtitle!,
                       style: const TextStyle(color: Colors.white54, fontSize: 11),
@@ -1226,9 +1312,10 @@ class _RoomTopRankingsScreenState extends State<RoomTopRankingsScreen>
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      'ID: $displayId',
-                      style: const TextStyle(
+                    UserIdBadgeWidget(
+                      searchId: displayId,
+                      badgeHeight: 14,
+                      textStyle: const TextStyle(
                         color: Colors.white54,
                         fontSize: 11,
                         letterSpacing: 0.5,
@@ -1285,7 +1372,8 @@ class _RoomTopRankingsScreenState extends State<RoomTopRankingsScreen>
   }
 
   Widget _buildGenderIcon(String gender) {
-    final isMale = gender.toLowerCase() == 'male';
+    final g = gender.trim().toLowerCase();
+    final isMale = g == 'male' || g == 'boy' || g == 'man';
     return Container(
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
@@ -1384,6 +1472,25 @@ class _RoomTopRankingsScreenState extends State<RoomTopRankingsScreen>
 
   void _enterRoom(AudioRoomV2 room) {
     final currentUser = AuthController.instance.currentUser;
+    if (room.isUserBlocked(currentUser.userId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You are blocked from entering this room.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    if (room.isUserKickedRecently(currentUser.userId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'You have been removed from this room and cannot join for 24 hours.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     MinimizedRoomController.checkAndProceed(
       context: context,
       targetRoom: room,
@@ -1628,6 +1735,25 @@ class ActiveRoomIndicator extends StatelessWidget {
         return GestureDetector(
           onTap: () {
             final currentUser = AuthController.instance.currentUser;
+            if (room.isUserBlocked(currentUser.userId)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('You are blocked from entering this room.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+            if (room.isUserKickedRecently(currentUser.userId)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                      'You have been removed from this room and cannot join for 24 hours.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
             MinimizedRoomController.checkAndProceed(
               context: context,
               targetRoom: room,

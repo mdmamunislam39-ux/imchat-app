@@ -1,9 +1,8 @@
 import 'package:chat_messenger/screens/settings/controller/update_phone_controller.dart';
-import 'package:chat_messenger/components/custom_appbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:chat_messenger/config/theme_config.dart';
+import 'package:lottie/lottie.dart';
 
 class VerifyUpdatePhoneScreen extends StatelessWidget {
   final String verificationId;
@@ -20,6 +19,8 @@ class VerifyUpdatePhoneScreen extends StatelessWidget {
     final UpdatePhoneController controller = Get.find<UpdatePhoneController>();
     controller.startTimer();
 
+    final size = MediaQuery.of(context).size;
+
     String maskedNumber = number;
     if (number.length > 6) {
       maskedNumber =
@@ -27,64 +28,120 @@ class VerifyUpdatePhoneScreen extends StatelessWidget {
     }
 
     return Scaffold(
-      appBar: CustomAppBar(
-        title: Text('Verify Phone'.tr),
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Enter Verification Code'.tr,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 10),
-              RichText(
-                text: TextSpan(
-                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                  children: [
-                    TextSpan(text: 'We have sent a 6-digit code to '.tr),
-                    TextSpan(
-                      text: maskedNumber,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF0D0D2B),
+              Color(0xFF1A1A3E),
+              Color(0xFF0D0D2B),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                SizedBox(height: size.height * 0.03),
+
+                // Back Button
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: GestureDetector(
+                    onTap: () => Get.back(),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.1),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        color: Colors.white,
+                        size: 18,
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 40),
-              
-              // OTP Input Row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(
-                  6,
-                  (index) => _buildCodeBox(index, context, controller),
+
+                const SizedBox(height: 10),
+
+                // Lottie animation
+                Lottie.asset('assets/file/code.json', height: 150),
+
+                const SizedBox(height: 16),
+
+                // Title
+                const Text(
+                  'Verify & Bind Number',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 30),
-              
-              // Timer & Resend
-              Center(
-                child: Obx(
+                const SizedBox(height: 8),
+                RichText(
+                  textAlign: TextAlign.center,
+                  text: TextSpan(
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.white.withValues(alpha: 0.6),
+                    ),
+                    children: [
+                      TextSpan(text: 'Enter the 6-digit OTP code sent to '.tr),
+                      TextSpan(
+                        text: maskedNumber,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF6C63FF),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 36),
+
+                // 6-digit PIN boxes
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: List.generate(
+                    6,
+                    (index) => _buildCodeBox(index, context, controller),
+                  ),
+                ),
+
+                const SizedBox(height: 30),
+
+                // Timer & Resend
+                Obx(
                   () => controller.isTimerActive.value
                       ? Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.timer_outlined,
-                                size: 18, color: Colors.grey),
-                            const SizedBox(width: 5),
+                            Icon(
+                              Icons.timer_outlined,
+                              size: 18,
+                              color: Colors.white.withValues(alpha: 0.6),
+                            ),
+                            const SizedBox(width: 6),
                             Text(
                               'Resend code in ${controller.timerText}',
-                              style: const TextStyle(
-                                  fontSize: 14, color: Colors.grey),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.white.withValues(alpha: 0.6),
+                              ),
                             ),
                           ],
                         )
@@ -96,56 +153,82 @@ class VerifyUpdatePhoneScreen extends StatelessWidget {
                           child: Text(
                             'Resend Code'.tr,
                             style: const TextStyle(
-                              color: primaryColor,
+                              color: Color(0xFF6C63FF),
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
                             ),
                           ),
                         ),
                 ),
-              ),
-              const Spacer(),
-              
-              // Verify Button
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  onPressed: () => controller.verifyOtp(number),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                  ),
-                  child: Text(
-                    'Verify & Update'.tr,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+
+                const SizedBox(height: 36),
+
+                // Submit Button
+                Obx(
+                  () => SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: ElevatedButton(
+                      onPressed: controller.isLoading.value
+                          ? null
+                          : () => controller.verifyOtp(number),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6C63FF),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: controller.isLoading.value
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.check_circle_outline_rounded, size: 20),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Verify & Bind',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
                     ),
                   ),
                 ),
-              ),
-            ],
+
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildCodeBox(int index, BuildContext context, UpdatePhoneController controller) {
+  Widget _buildCodeBox(
+      int index, BuildContext context, UpdatePhoneController controller) {
     return Container(
-      width: 45,
-      height: 55,
+      width: 48,
+      height: 58,
       decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: controller.activeIndex.value == index
-              ? primaryColor
-              : Colors.transparent,
+              ? const Color(0xFF6C63FF)
+              : Colors.white.withValues(alpha: 0.15),
           width: 1.5,
         ),
       ),
@@ -159,6 +242,7 @@ class VerifyUpdatePhoneScreen extends StatelessWidget {
           style: const TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.bold,
+            color: Colors.white,
           ),
           decoration: const InputDecoration(
             counterText: '',
@@ -170,16 +254,18 @@ class VerifyUpdatePhoneScreen extends StatelessWidget {
           onChanged: (value) {
             if (value.isNotEmpty) {
               if (index < 5) {
-                FocusScope.of(context).requestFocus(controller.focusNodes[index + 1]);
+                FocusScope.of(context)
+                    .requestFocus(controller.focusNodes[index + 1]);
                 controller.activeIndex.value = index + 1;
               } else {
                 controller.focusNodes[index].unfocus();
-                // Auto verify when last digit is entered
+                // Auto verify when 6th digit is entered
                 controller.verifyOtp(number);
               }
             } else {
               if (index > 0) {
-                FocusScope.of(context).requestFocus(controller.focusNodes[index - 1]);
+                FocusScope.of(context)
+                    .requestFocus(controller.focusNodes[index - 1]);
                 controller.activeIndex.value = index - 1;
               }
             }

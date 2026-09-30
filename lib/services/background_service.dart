@@ -40,8 +40,8 @@ class BackgroundService {
         isForegroundMode: true,
 
         notificationChannelId: 'audio_room_channel',
-        initialNotificationTitle: 'Audio Room Active',
-        initialNotificationContent: 'You are connected to an audio room',
+        initialNotificationTitle: 'VoiceRoom is running now',
+        initialNotificationContent: 'click back to the VoiceRoom',
         foregroundServiceNotificationId: 888,
       ),
       iosConfiguration: IosConfiguration(
@@ -73,9 +73,9 @@ class BackgroundService {
         debugPrint('🔄 [BackgroundService] Starting call background service ($title)...');
         await service.startService();
       }
-      if (title != null || content != null) {
-        await updateNotificationInfo(title: title, content: content);
-      }
+      final notifTitle = (title != null && title.isNotEmpty) ? title : 'VoiceRoom is running now';
+      final notifContent = (content != null && content.isNotEmpty) ? content : 'click back to the VoiceRoom';
+      await updateNotificationInfo(title: notifTitle, content: notifContent);
     } catch (e) {
       debugPrint('🔄 [BackgroundService] Error starting call service: $e');
     }

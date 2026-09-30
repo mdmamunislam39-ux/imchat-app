@@ -9,6 +9,8 @@ import 'package:chat_messenger/components/default_button.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/helpers/dialog_helper.dart';
 
+import 'package:cached_network_image/cached_network_image.dart';
+
 import 'controllers/edit_profile_controller.dart';
 
 class EditProfileScreen extends StatelessWidget {
@@ -28,9 +30,9 @@ class EditProfileScreen extends StatelessWidget {
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.maybePop(context),
         ),
-        title: const Text(
-          'Personal Data',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        title: Text(
+          'Personal Data'.tr,
+          style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
       ),
@@ -45,7 +47,7 @@ class EditProfileScreen extends StatelessWidget {
                 final int totalImages = controller.retainedBackgroundUrls.length + controller.newBackgroundFiles.length;
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text('Home Page Background ($totalImages / 9)', style: TextStyle(color: Colors.grey.shade700, fontSize: 14)),
+                  child: Text('${'Home Page Background'.tr} ($totalImages / 9)', style: TextStyle(color: Colors.grey.shade700, fontSize: 14)),
                 );
               }),
               const SizedBox(height: 10),
@@ -59,27 +61,23 @@ class EditProfileScreen extends StatelessWidget {
                     child: Row(
                       children: [
                         // Retained Backgrounds
-                        ...controller.retainedBackgroundUrls.asMap().entries.map((entry) {
-                          int idx = entry.key;
-                          String url = entry.value;
+                        ...controller.retainedBackgroundUrls.map((url) {
                           return Padding(
-                            padding: const EdgeInsets.only(right: 10),
+                            padding: const EdgeInsets.only(right: 12),
                             child: _buildImageSquare(
                               url: url,
-                              onDelete: () => controller.retainedBackgroundUrls.removeAt(idx),
+                              onDelete: () => controller.retainedBackgroundUrls.remove(url),
                             ),
                           );
                         }),
                         
                         // New Background Files
-                        ...controller.newBackgroundFiles.asMap().entries.map((entry) {
-                          int idx = entry.key;
-                          File file = entry.value;
+                        ...controller.newBackgroundFiles.map((file) {
                           return Padding(
-                            padding: const EdgeInsets.only(right: 10),
+                            padding: const EdgeInsets.only(right: 12),
                             child: _buildImageSquare(
                               file: file,
-                              onDelete: () => controller.newBackgroundFiles.removeAt(idx),
+                              onDelete: () => controller.newBackgroundFiles.remove(file),
                             ),
                           );
                         }),
@@ -113,7 +111,7 @@ class EditProfileScreen extends StatelessWidget {
               const Divider(height: 1, color: Colors.black12),
               
               _buildListTile(
-                title: 'Avatar',
+                title: 'Avatar'.tr,
                 trailing: Obx(() {
                   if (controller.photoFile.value != null) {
                     return CircleAvatar(
@@ -134,9 +132,9 @@ class EditProfileScreen extends StatelessWidget {
               const Divider(height: 1, color: Colors.black12),
 
               Obx(() => _buildListTile(
-                title: 'Nickname',
-                trailingText: controller.name.value.isEmpty ? 'Set nickname' : controller.name.value,
-                onTap: () => _showEditDialog(context, 'Nickname', controller.nameController, (val) {
+                title: 'Nickname'.tr,
+                trailingText: controller.name.value.isEmpty ? 'Set nickname'.tr : controller.name.value,
+                onTap: () => _showEditDialog(context, 'Nickname'.tr, controller.nameController, (val) {
                   controller.nameController.text = val;
                   controller.name.value = val;
                 }),
@@ -144,15 +142,15 @@ class EditProfileScreen extends StatelessWidget {
               const Divider(height: 1, color: Colors.black12),
 
               Obx(() => _buildListTile(
-                title: 'Sex',
-                trailingText: controller.gender.value.isEmpty ? 'Select' : controller.gender.value,
+                title: 'Sex'.tr,
+                trailingText: controller.gender.value.isEmpty ? 'Select'.tr : (controller.gender.value == 'Boy' ? 'Boy'.tr : (controller.gender.value == 'Girl' ? 'Girl'.tr : controller.gender.value)),
                 onTap: () => _showGenderDialog(context, controller),
               )),
               const Divider(height: 1, color: Colors.black12),
 
               Obx(() => _buildListTile(
-                title: 'Birthday',
-                trailingText: controller.birthday.value.isEmpty ? 'Select' : controller.birthday.value,
+                title: 'Birthday'.tr,
+                trailingText: controller.birthday.value.isEmpty ? 'Select'.tr : controller.birthday.value,
                 onTap: () => _pickDate(context, controller),
               )),
               const Divider(height: 1, color: Colors.black12),
@@ -167,17 +165,17 @@ class EditProfileScreen extends StatelessWidget {
                 alignLeft: false,
                 builder: (countryCode) {
                   return _buildListTile(
-                    title: 'Country',
-                    trailingText: countryCode?.name ?? (controller.country.value.isEmpty ? 'Select' : controller.country.value),
+                    title: 'Country'.tr,
+                    trailingText: countryCode?.name ?? (controller.country.value.isEmpty ? 'Select'.tr : controller.country.value),
                   );
                 },
               ),
               const Divider(height: 1, color: Colors.black12),
 
               Obx(() => _buildListTile(
-                title: 'Personal Signature',
-                trailingText: controller.bio.value.isEmpty ? 'Set signature' : controller.bio.value,
-                onTap: () => _showEditDialog(context, 'Signature', controller.bioController, (val) {
+                title: 'Personal Signature'.tr,
+                trailingText: controller.bio.value.isEmpty ? 'Set signature'.tr : controller.bio.value,
+                onTap: () => _showEditDialog(context, 'Signature'.tr, controller.bioController, (val) {
                   controller.bioController.text = val;
                   controller.bio.value = val;
                 }),
@@ -195,7 +193,7 @@ class EditProfileScreen extends StatelessWidget {
               height: 45,
               isLoading: controller.isLoading.value,
               width: double.maxFinite,
-              text: 'SAVE CHANGES',
+              text: 'SAVE CHANGES'.tr,
               onPress: () async {
                 await controller.updateAccount();
               },
@@ -208,15 +206,19 @@ class EditProfileScreen extends StatelessWidget {
 
   Widget _buildImageSquare({File? file, String? url, VoidCallback? onDelete}) {
     return Stack(
+      clipBehavior: Clip.none,
       children: [
         Container(
           width: 80,
           height: 80,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
+            color: Colors.grey.shade200,
             image: file != null 
                 ? DecorationImage(image: FileImage(file), fit: BoxFit.cover)
-                : DecorationImage(image: NetworkImage(url!), fit: BoxFit.cover),
+                : (url != null && url.isNotEmpty
+                    ? DecorationImage(image: CachedNetworkImageProvider(url), fit: BoxFit.cover)
+                    : null),
           ),
           child: Align(
             alignment: Alignment.bottomRight,
@@ -230,13 +232,24 @@ class EditProfileScreen extends StatelessWidget {
         ),
         if (onDelete != null)
           Positioned(
-            top: 2,
-            right: 2,
+            top: -6,
+            right: -6,
             child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
               onTap: onDelete,
               child: Container(
-                padding: const EdgeInsets.all(2),
-                decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(
+                  color: Colors.black87,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    )
+                  ],
+                ),
                 child: const Icon(Icons.close, color: Colors.white, size: 14),
               ),
             ),
@@ -268,13 +281,13 @@ class EditProfileScreen extends StatelessWidget {
       builder: (context) {
         final tempController = TextEditingController(text: textController.text);
         return AlertDialog(
-          title: Text('Edit $title'),
+          title: Text('${'edit'.tr} $title'),
           content: TextField(
             controller: tempController,
-            decoration: InputDecoration(hintText: 'Enter $title'),
+            decoration: InputDecoration(hintText: '${'enter'.tr} $title'),
           ),
           actions: [
-            TextButton(onPressed: () => Get.back(), child: const Text('Cancel')),
+            TextButton(onPressed: () => Get.back(), child: Text('cancel'.tr)),
             ElevatedButton(
               onPressed: () {
                 onSave(tempController.text);
@@ -284,7 +297,7 @@ class EditProfileScreen extends StatelessWidget {
                 backgroundColor: Theme.of(context).primaryColor,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Save', style: TextStyle(color: Colors.white)),
+              child: Text('save'.tr, style: const TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -297,19 +310,19 @@ class EditProfileScreen extends StatelessWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Select Sex'),
+          title: Text('Select Sex'.tr),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                title: const Text('Boy'),
+                title: Text('Boy'.tr),
                 onTap: () {
                   controller.gender.value = 'Boy';
                   Get.back();
                 },
               ),
               ListTile(
-                title: const Text('Girl'),
+                title: Text('Girl'.tr),
                 onTap: () {
                   controller.gender.value = 'Girl';
                   Get.back();

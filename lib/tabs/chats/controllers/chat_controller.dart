@@ -7,6 +7,8 @@ import 'package:get/get.dart';
 import 'package:chat_messenger/api/chat_api.dart';
 import 'package:chat_messenger/models/chat.dart';
 
+import 'package:chat_messenger/services/global_settings_service.dart';
+
 class ChatController extends GetxController {
   // Get the current instance
   static ChatController get instance => Get.find<ChatController>();
@@ -27,6 +29,17 @@ class ChatController extends GetxController {
   void onInit() {
     // Load chats
     _getChats();
+
+    // Dynamically re-bind chat stream when backend engine is switched from Admin Panel
+    if (Get.isRegistered<GlobalSettingsService>()) {
+      ever(Get.find<GlobalSettingsService>().activeBackendEngine, (_) {
+        debugPrint('🔄 [ChatController] Backend Engine changed! Switching chat stream in real-time...');
+        _stream?.cancel();
+        isLoading.value = true;
+        _getChats();
+      });
+    }
+
     super.onInit();
   }
 
@@ -44,16 +57,24 @@ class ChatController extends GetxController {
     }, onError: (e) => debugPrint(e.toString()));
   }
 
-  Chat getChat(String receiverId) {
-    final Chat chat = ChatController.instance.chats
-        .firstWhere((chat) => chat.receiver!.userId == receiverId);
-    return chat;
+  Chat? getChat(String receiverId) {
+    try {
+      for (final chat in chats) {
+        if (chat.receiver?.userId == receiverId) {
+          return chat;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   bool isChatMuted(String receiverId) {
-    final Chat chat = ChatController.instance.chats
-        .firstWhere((chat) => chat.receiver!.userId == receiverId);
-    return chat.isMuted;
+    try {
+      final Chat? chat = getChat(receiverId);
+      return chat?.isMuted ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   // Search chats by user full name or message content

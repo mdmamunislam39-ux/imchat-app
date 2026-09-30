@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../models/gift.dart';
 import 'package:chat_messenger/helpers/ranking_helper.dart';
 import 'package:chat_messenger/services/wallet_service.dart';
+import 'package:chat_messenger/services/gift_economy_service.dart';
 import 'package:chat_messenger/services/relationship_service.dart';
 
 /// Service for managing gifts in Firebase
@@ -190,6 +191,26 @@ class GiftService {
     final int totalCredits = perReceiverCredits * receivers.length;
     final String cleanName = _cleanGiftName(giftName);
 
+    // Fetch latest real-time conversion config
+    await GiftEconomyService.instance.getConfig();
+
+    // Fetch sender profile & receiver user profiles in parallel
+    final senderDocFuture = _firestore.collection('Users').doc(senderId).get();
+    final receiverDocsFuture = Future.wait(
+      receivers.map((r) => _firestore.collection('Users').doc(r['id'] as String).get()),
+    );
+
+    final results = await Future.wait([senderDocFuture, receiverDocsFuture]);
+    final senderDoc = results[0] as DocumentSnapshot<Map<String, dynamic>>;
+    final receiverDocs = results[1] as List<DocumentSnapshot<Map<String, dynamic>>>;
+
+    final senderData = senderDoc.data() ?? {};
+    final int currentDiamonds = (senderData['diamonds'] as num?)?.toInt() ?? 0;
+    if (currentDiamonds < totalCredits) {
+      debugPrint('❌ [GiftService] Aborted: Sender $senderId has $currentDiamonds diamonds, required $totalCredits');
+      throw Exception('Insufficient diamonds. Required: $totalCredits, Available: $currentDiamonds');
+    }
+
     // Atomic Batch Write for all core transactions (Sender deduction, receiver beans, room transactions, room revenue)
     final WriteBatch batch = _firestore.batch();
 
@@ -200,51 +221,161 @@ class GiftService {
       'weeklyDiamondsSent_${RankingHelper.weeklySuffix}': FieldValue.increment(totalCredits),
       'monthlyDiamondsSent_${RankingHelper.monthlySuffix}': FieldValue.increment(totalCredits),
       'totalDiamondsSent': FieldValue.increment(totalCredits),
+      'activityStats.dailyDiamondsSent': FieldValue.increment(totalCredits),
+      'activityStats.weeklyDiamondsSent': FieldValue.increment(totalCredits),
+      'activityStats.monthlyDiamondsSent': FieldValue.increment(totalCredits),
+      'activityStats.lastUpdated': FieldValue.serverTimestamp(),
     });
 
-    // Add receiver beans & create room gift transaction docs (only for full SVGA animations, NOT for rapid combo hits)
-    for (var receiver in receivers) {
-      final receiverId = receiver['id'];
-      final receiverName = receiver['name'];
-      final receiverImageUrl = receiver['imageUrl'];
+    // Check room owner if sent inside an audio room
+    DocumentSnapshot<Map<String, dynamic>>? roomDoc;
+    if (roomId.isNotEmpty && roomId != '0') {
+      try {
+        roomDoc = await _firestore.collection('audio_rooms_v2').doc(roomId).get();
+      } catch (_) {}
+    }
+    final roomData = roomDoc?.data() ?? {};
+    final String? roomOwnerId = (roomData['creatorId'] ?? roomData['ownerId'] ?? roomData['hostId']) as String?;
 
+    // Add receiver beans, agency beans, host earnings, and transaction log docs
+    for (int i = 0; i < receivers.length; i++) {
+      final receiver = receivers[i];
+      final receiverDoc = receiverDocs[i];
+
+      if (!receiverDoc.exists || receiverDoc.data() == null) {
+        debugPrint('⚠️ [GiftService] Receiver document does not exist. Skipping.');
+        continue;
+      }
+
+      final receiverData = receiverDoc.data()!;
+      final String receiverId = receiver['id'] as String;
+
+      // Skip banned receivers
+      final banStatus = receiverData['banStatus'] as Map<String, dynamic>?;
+      if (banStatus != null && banStatus['isBanned'] == true) {
+        debugPrint('⚠️ [GiftService] Receiver $receiverId is banned. Skipping.');
+        continue;
+      }
+
+      final String receiverName = receiver['name'] as String? ?? '';
+      final String? receiverImageUrl = receiver['imageUrl'] as String?;
+
+      final String rawType = (receiverData['userType'] ?? 'regular').toString().toLowerCase();
+      final String? agencyId = receiverData['agencyId'] as String?;
+      final bool isExplicitHost = receiverData['isHost'] == true || rawType == 'host';
+      final bool hasAgency = agencyId != null && agencyId.isNotEmpty && isExplicitHost;
+
+      // Robust host detection: userType is host, isHost flag, agency member, or room owner
+      final bool isHost = isExplicitHost ||
+          hasAgency ||
+          (roomOwnerId != null && receiverId == roomOwnerId);
+
+      // Calculate real-time split based on admin panel rates
+      final split = GiftEconomyService.instance.calculateSplit(
+        diamondAmount: perReceiverCredits,
+        isHost: isHost,
+        hasAgency: hasAgency,
+      );
+      final int beansToReceiver = split['beansToReceiver'] ?? 0;
+      final int beansToAgency = split['beansToAgency'] ?? 0;
+      final int platformShare = split['platformShare'] ?? 0;
+
+      // Credit receiver beans based on real-time rate; credit diamonds for rankings based on full amount
       batch.update(_firestore.collection('Users').doc(receiverId), {
-        'beans': FieldValue.increment(perReceiverCredits),
+        'beans': FieldValue.increment(beansToReceiver),
         'dailyDiamondsReceived_${RankingHelper.dailySuffix}': FieldValue.increment(perReceiverCredits),
         'weeklyDiamondsReceived_${RankingHelper.weeklySuffix}': FieldValue.increment(perReceiverCredits),
         'weeklyDiamondsReceived_${RankingHelper.mondayWeeklySuffix}': FieldValue.increment(perReceiverCredits),
         'monthlyDiamondsReceived_${RankingHelper.monthlySuffix}': FieldValue.increment(perReceiverCredits),
         'totalDiamondsReceived': FieldValue.increment(perReceiverCredits),
+        'activityStats.dailyDiamondsReceived': FieldValue.increment(perReceiverCredits),
+        'activityStats.weeklyDiamondsReceived': FieldValue.increment(perReceiverCredits),
+        'activityStats.monthlyDiamondsReceived': FieldValue.increment(perReceiverCredits),
+        'activityStats.lastUpdated': FieldValue.serverTimestamp(),
       });
 
-      // Write to gift_transactions collection ONLY if there is an animation URL to render AND it is NOT a combo hit.
-      // Combo hits display the live combo count banner directly and shouldn't pollute the full-screen animation queue.
-      if (!isComboHit && ((giftSvgaUrl != null && giftSvgaUrl.isNotEmpty) || giftPngUrl.isNotEmpty)) {
-        final txRef = _firestore.collection(_transactionsCollection).doc();
-        batch.set(txRef, {
-          'giftId': giftId,
-          'giftName': cleanName,
-          'giftPngUrl': giftPngUrl,
-          'giftSvgaUrl': giftSvgaUrl,
-          'senderId': senderId,
-          'senderName': senderName,
-          'senderImageUrl': senderImageUrl,
-          'receiverId': receiverId,
-          'receiverName': receiverName,
-          'receiverImageUrl': receiverImageUrl,
-          'roomId': roomId,
-          'credits': giftCredits,
-          'quantity': safeQuantity,
-          'count': safeQuantity,
-          'totalCredits': perReceiverCredits,
-          'timestamp': FieldValue.serverTimestamp(),
+      // If host belongs to an agency, credit agency beans and totalCommissionEarned
+      if (isHost && agencyId != null && agencyId.isNotEmpty && beansToAgency > 0) {
+        batch.update(_firestore.collection('agencies').doc(agencyId), {
+          'beans': FieldValue.increment(beansToAgency),
+          'totalCommissionEarned': FieldValue.increment(beansToAgency),
+          'updatedAt': FieldValue.serverTimestamp(),
         });
       }
+
+      // If host, record to host_earnings for commissions & analytics
+      if (isHost) {
+        final earningRef = _firestore.collection('host_earnings').doc();
+        batch.set(earningRef, {
+          'hostId': receiverId,
+          'diamondsEarned': perReceiverCredits,
+          'beansEarned': beansToReceiver,
+          'agencyId': agencyId,
+          'earningDate': FieldValue.serverTimestamp(),
+          'source': 'gift',
+          'giftName': cleanName,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Record full gift transaction doc (read by Admin Panel in real-time)
+      final txRef = _firestore.collection(_transactionsCollection).doc();
+      batch.set(txRef, {
+        'giftId': giftId,
+        'giftName': cleanName,
+        'giftPngUrl': giftPngUrl,
+        'giftSvgaUrl': giftSvgaUrl,
+        'senderId': senderId,
+        'senderName': senderName,
+        'senderImageUrl': senderImageUrl,
+        'receiverId': receiverId,
+        'receiverName': receiverName,
+        'receiverImageUrl': receiverImageUrl,
+        'receiverType': isHost ? 'host' : 'normalUser',
+        'roomId': roomId,
+        'credits': giftCredits,
+        'quantity': safeQuantity,
+        'count': safeQuantity,
+        'totalCredits': perReceiverCredits,
+        'diamondAmount': perReceiverCredits,
+        'beansToReceiver': beansToReceiver,
+        'beansToAgency': beansToAgency,
+        'platformShare': platformShare,
+        'agencyId': agencyId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'isComboHit': isComboHit,
+      });
+
+      // Atomically record to user_received_gifts with identical transaction doc ID
+      final userReceivedRef =
+          _firestore.collection('user_received_gifts').doc(txRef.id);
+      batch.set(userReceivedRef, {
+        'giftId': giftId,
+        'giftName': cleanName,
+        'giftPngUrl': giftPngUrl,
+        'giftSvgaUrl': giftSvgaUrl,
+        'senderId': senderId,
+        'senderName': senderName,
+        'senderImageUrl': senderImageUrl,
+        'receiverId': receiverId,
+        'receiverName': receiverName,
+        'receiverImageUrl': receiverImageUrl,
+        'roomId': roomId,
+        'credits': giftCredits,
+        'quantity': safeQuantity,
+        'count': safeQuantity,
+        'totalCredits': perReceiverCredits,
+        'diamondAmount': perReceiverCredits,
+        'beansToReceiver': beansToReceiver,
+        'timestamp': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
     }
 
-    // Update room total revenue and contributors in same batch if roomId provided
+    // Update room total revenue, contributors, and per-user received beans for 22h cycle
     if (roomId.isNotEmpty && roomId != '0') {
-      batch.update(_firestore.collection('audio_rooms_v2').doc(roomId), {
+      final Map<String, dynamic> roomUpdates = {
         'totalRevenue': FieldValue.increment(totalCredits),
         'dailyRevenue_${RankingHelper.dailySuffix}': FieldValue.increment(totalCredits),
         'weeklyRevenue_${RankingHelper.weeklySuffix}': FieldValue.increment(totalCredits),
@@ -265,7 +396,32 @@ class GiftService {
         'contributors.$senderId.weeklyContribution': FieldValue.increment(totalCredits),
         'contributors.$senderId.monthlyContribution': FieldValue.increment(totalCredits),
         'contributors.$senderId.lastContributionAt': FieldValue.serverTimestamp(),
-      });
+      };
+
+      for (int i = 0; i < receivers.length; i++) {
+        final receiver = receivers[i];
+        final receiverDoc = receiverDocs[i];
+        final receiverData = receiverDoc.data() ?? {};
+        final String receiverId = receiver['id'] as String;
+        final String rawType = (receiverData['userType'] ?? 'regular').toString().toLowerCase();
+        final String? agencyId = receiverData['agencyId'] as String?;
+        final bool hasAgency = agencyId != null && agencyId.isNotEmpty;
+        final bool isHost = rawType == 'host' ||
+            receiverData['isHost'] == true ||
+            hasAgency ||
+            (roomOwnerId != null && receiverId == roomOwnerId);
+        final split = GiftEconomyService.instance.calculateSplit(
+          diamondAmount: perReceiverCredits,
+          isHost: isHost,
+          hasAgency: hasAgency,
+        );
+        final int beansToReceiver = split['beansToReceiver'] ?? 0;
+        if (beansToReceiver > 0) {
+          roomUpdates['userReceivedBeans_${RankingHelper.daily22CycleSuffix}.$receiverId'] = FieldValue.increment(beansToReceiver);
+        }
+      }
+
+      batch.update(_firestore.collection('audio_rooms_v2').doc(roomId), roomUpdates);
     }
 
     // Commit ALL core operations in ONE SINGLE ATOMIC NETWORK REQUEST!
@@ -380,25 +536,22 @@ class GiftService {
             );
           } catch (_) {}
 
+          // Update host record performance in hosts collection
           try {
-            await _firestore.collection('user_received_gifts').add({
-              'giftId': giftId,
-              'giftName': cleanName,
-              'giftPngUrl': giftPngUrl,
-              'giftSvgaUrl': giftSvgaUrl,
-              'senderId': senderId,
-              'senderName': senderName,
-              'senderImageUrl': senderImageUrl,
-              'receiverId': receiverId,
-              'receiverName': receiverName,
-              'receiverImageUrl': receiverImageUrl,
-              'roomId': roomId,
-              'credits': giftCredits,
-              'quantity': safeQuantity,
-              'count': safeQuantity,
-              'totalCredits': perReceiverCredits,
-              'timestamp': FieldValue.serverTimestamp(),
-            });
+            final hostQuery = await _firestore
+                .collection('hosts')
+                .where('userId', isEqualTo: receiverId)
+                .where('isActive', isEqualTo: true)
+                .limit(1)
+                .get();
+            if (hostQuery.docs.isNotEmpty) {
+              await hostQuery.docs.first.reference.update({
+                'performance.totalDiamonds': FieldValue.increment(perReceiverCredits),
+                'performance.totalGiftsReceived': FieldValue.increment(safeQuantity),
+                'performance.lastUpdated': FieldValue.serverTimestamp(),
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
           } catch (_) {}
         }
       } catch (err) {
@@ -414,7 +567,7 @@ class GiftService {
         .collection(_transactionsCollection)
         .where('roomId', isEqualTo: roomId)
         .orderBy('timestamp', descending: true)
-        .limit(50)
+        .limit(100)
         .snapshots()
         .map((snapshot) {
       return snapshot.docs.map((doc) {

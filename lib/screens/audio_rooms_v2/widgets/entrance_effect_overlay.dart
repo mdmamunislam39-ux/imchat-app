@@ -59,6 +59,11 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
         _processedIds.add(effectKey);
         _queue.add(effect);
         added = true;
+
+        // Proactively preload entrance animation into RAM/Disk
+        if (effect.effectUrl.isNotEmpty) {
+          FastAssetCache.preload(effect.effectUrl);
+        }
       }
     }
 
@@ -84,6 +89,13 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
     _isProcessing = true;
     final effect = _queue.removeAt(0);
 
+    // Lookahead: Preload upcoming queue items in background
+    for (final nextEffect in _queue.take(2)) {
+      if (nextEffect.effectUrl.isNotEmpty) {
+        FastAssetCache.preload(nextEffect.effectUrl);
+      }
+    }
+
     if (mounted) {
       setState(() {
         _currentEffect = effect;
@@ -106,61 +118,50 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
       } else if (isMp4) {
         _videoController?.dispose();
 
-        // Cache the file locally to guarantee instant, deadlock-free playback on all devices
-        File cachedFile =
-            await DefaultCacheManager().getSingleFile(effect.effectUrl);
+        // Get preloaded/cached video file instantly
+        File? cachedFile = await FastAssetCache.getVideoFile(effect.effectUrl);
 
-        // Critical Fix: Android's MediaExtractor fails to decode the video track
-        // if the file doesn't have an .mp4 extension, resulting in audio-only black screens.
-        if (!cachedFile.path.toLowerCase().endsWith('.mp4')) {
-          final newPath = '${cachedFile.path}.mp4';
-          final newFile = File(newPath);
-          if (!await newFile.exists()) {
-            await cachedFile.copy(newPath);
-          }
-          cachedFile = newFile;
-        }
-
-        _videoController = VideoPlayerController.file(
-          cachedFile,
-          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-        );
-        await _videoController!.initialize();
-        if (!mounted) {
-          _videoController?.dispose();
-          _videoController = null;
-          return;
-        }
-
-        // Instantly trigger a rebuild once the controller is initialized so the player is displayed immediately!
-        setState(() {});
-
-        duration = _videoController!.value.duration;
-
-        if (isVap && Theme.of(context).platform == TargetPlatform.android) {
-          debugPrint(
-              '🎬 [EntranceAnimation] VAP Android native playback duration: ${duration.inMilliseconds}ms');
-        } else {
-          await _videoController!.play();
+        if (cachedFile != null) {
+          _videoController = VideoPlayerController.file(
+            cachedFile,
+            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+          );
+          await _videoController!.initialize();
           if (!mounted) {
             _videoController?.dispose();
             _videoController = null;
             return;
           }
-          debugPrint(
-              '🎬 [EntranceAnimation] MP4 duration: ${duration.inMilliseconds}ms');
+
+          // Instantly trigger a rebuild once the controller is initialized so the player is displayed immediately!
+          setState(() {});
+
+          duration = _videoController!.value.duration;
+
+          if (isVap && Theme.of(context).platform == TargetPlatform.android) {
+            debugPrint(
+                '🎬 [EntranceAnimation] VAP Android native playback duration: ${duration.inMilliseconds}ms');
+          } else {
+            await _videoController!.play();
+            if (!mounted) {
+              _videoController?.dispose();
+              _videoController = null;
+              return;
+            }
+            debugPrint(
+                '🎬 [EntranceAnimation] MP4 duration: ${duration.inMilliseconds}ms');
+          }
         }
       } else if (isPng) {
         duration = const Duration(seconds: 4);
         debugPrint('🎬 [EntranceAnimation] PNG duration: 4000ms');
       } else {
-        final parser = SVGAParser();
         dynamic videoItem;
 
-        // 1. Wait for SVGA to load/decode
+        // 1. Wait for SVGA to load/decode instantly from RAM/Disk
         if (effect.effectUrl.isNotEmpty) {
           try {
-            videoItem = await parser.decodeFromURL(effect.effectUrl);
+            videoItem = await FastAssetCache.decodeSvga(effect.effectUrl);
           } catch (e) {
             debugPrint('❌ [EntranceAnimation] SVGA Parse Error: $e');
           }
@@ -170,12 +171,16 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
 
         // 2. Determine duration dynamically from decoded SVGA
         if (videoItem != null) {
-          final frames = videoItem.frames;
-          final fps = videoItem.fps;
-          final durationMs = (frames / fps * 1000).toInt();
-          duration = Duration(milliseconds: durationMs);
-          debugPrint(
-              '🎬 [EntranceAnimation] Calculated duration: ${duration.inMilliseconds}ms ($frames frames @ $fps fps)');
+          try {
+            final int frames = (videoItem.params.frames ?? 60) as int;
+            final int fps = (videoItem.params.fps ?? 20) as int;
+            final durationMs = (frames / (fps > 0 ? fps : 20) * 1000).toInt();
+            duration = Duration(milliseconds: durationMs);
+            debugPrint(
+                '🎬 [EntranceAnimation] Calculated duration: ${duration.inMilliseconds}ms ($frames frames @ $fps fps)');
+          } catch (_) {
+            duration = const Duration(seconds: 4);
+          }
         }
       }
 

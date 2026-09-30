@@ -130,8 +130,43 @@ class ModernRoomCard extends StatelessWidget {
                                 ),
                               ),
 
-                              // Trending Badge
-                              if (room.trendingScore > 0)
+                              // Pinned Badge or Trending Badge
+                              if (room.isCurrentlyPinned)
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [Color(0xFFFF3D00), Color(0xFFFF9100)],
+                                      ),
+                                      borderRadius: BorderRadius.circular(6),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.deepOrangeAccent.withValues(alpha: 0.4),
+                                          blurRadius: 4,
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.push_pin, color: Colors.white, size: 9),
+                                        SizedBox(width: 2),
+                                        Text(
+                                          'PINNED',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 8.5,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              else if (room.trendingScore > 0)
                                 Positioned(
                                   top: 0,
                                   left: 0,
@@ -280,7 +315,7 @@ class ModernRoomCard extends StatelessWidget {
       builder: (context, snapshot) {
         String displayName = room.creatorName;
         String? userPhone = room.creatorPhone;
-        String? userCountry = room.creatorCountry;
+        String? fallbackUserCountry = room.creatorCountry;
 
         if (snapshot.hasData && snapshot.data!.exists) {
           final userData = snapshot.data!.data() as Map<String, dynamic>?;
@@ -289,16 +324,18 @@ class ModernRoomCard extends StatelessWidget {
               displayName = userData['fullname'] ?? room.creatorName;
             }
             userPhone = userData['number'] ?? userPhone;
-            userCountry = userData['country'] ?? userCountry;
+            fallbackUserCountry = fallbackUserCountry ?? userData['country'];
           }
         }
 
-        final countryCode = room.countryCode != null && room.countryCode!.isNotEmpty
+        final countryCode = (room.countryCode != null && room.countryCode!.isNotEmpty)
             ? CountryHelper.detectCountryCodeFromPhoneOrUser(countryStr: room.countryCode)
-            : CountryHelper.detectCountryCodeFromPhoneOrUser(
-                phone: userPhone,
-                countryStr: userCountry,
-              );
+            : (room.creatorCountry != null && room.creatorCountry!.isNotEmpty)
+                ? CountryHelper.detectCountryCodeFromPhoneOrUser(countryStr: room.creatorCountry)
+                : CountryHelper.detectCountryCodeFromPhoneOrUser(
+                    phone: userPhone,
+                    countryStr: fallbackUserCountry,
+                  );
         final flag = CountryHelper.codeToFlag(countryCode);
 
         return Row(

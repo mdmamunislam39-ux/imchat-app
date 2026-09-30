@@ -55,7 +55,7 @@ class ContactsScreen extends StatelessWidget {
             icon: Icons.person_add_alt_1_outlined,
             iconColor: const Color(0xFF00897B),
             iconBg: const Color(0xFFE0F2F1),
-            title: 'New Contacts',
+            title: 'new_contacts'.tr,
             badgeCount: controller.pendingRequestsCount.value,
             onTap: () => Get.to(() => const FriendRequestScreen()),
           ),
@@ -65,7 +65,7 @@ class ContactsScreen extends StatelessWidget {
             icon: Icons.phone_callback_outlined,
             iconColor: const Color(0xFF00ACC1),
             iconBg: const Color(0xFFE0F7FA),
-            title: 'Call History',
+            title: 'calls'.tr,
             onTap: () => Get.to(() => const CallHistoryScreen()),
           ),
 
@@ -74,7 +74,7 @@ class ContactsScreen extends StatelessWidget {
             icon: Icons.people_outline,
             iconColor: const Color(0xFF43A047),
             iconBg: const Color(0xFFE8F5E9),
-            title: 'Groups',
+            title: 'groups'.tr,
             onTap: () => Get.to(() => const GroupsScreen()),
           ),
 
@@ -86,13 +86,14 @@ class ContactsScreen extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Sort by status',
+                  'sort_by_status'.tr,
                   style: TextStyle(
                     color: Colors.grey.shade600,
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
+
                 InkWell(
                   onTap: () => controller.toggleSort(),
                   child: const Icon(

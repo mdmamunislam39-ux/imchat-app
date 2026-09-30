@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
@@ -104,14 +105,33 @@ class RoomCard extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 const SizedBox(height: 2),
-                                Text(
-                                  'by ${room.creatorName}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: secondaryTextColor,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                StreamBuilder<DocumentSnapshot>(
+                                  stream: room.creatorId.isNotEmpty
+                                      ? FirebaseFirestore.instance
+                                          .collection('Users')
+                                          .doc(room.creatorId)
+                                          .snapshots()
+                                      : null,
+                                  builder: (context, userSnap) {
+                                    String creatorDisplayName = room.creatorName;
+                                    if (userSnap.hasData && userSnap.data!.exists) {
+                                      final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                                      if (uData != null &&
+                                          uData['fullname'] != null &&
+                                          uData['fullname'].toString().trim().isNotEmpty) {
+                                        creatorDisplayName = uData['fullname'].toString().trim();
+                                      }
+                                    }
+                                    return Text(
+                                      'by $creatorDisplayName',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: secondaryTextColor,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    );
+                                  },
                                 ),
                               ],
                             ),

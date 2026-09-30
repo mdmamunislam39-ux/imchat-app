@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/controllers/gift_combo_controller.dart';
 import 'package:chat_messenger/AdminPane/models/gift.dart';
 import 'package:chat_messenger/AdminPane/services/gift_service.dart';
 import 'package:chat_messenger/services/emoji_chat_service.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
+import 'package:chat_messenger/components/universal_asset_widget.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
@@ -43,6 +43,9 @@ class GiftSelectionBottomSheet extends StatefulWidget {
 
 class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
     with TickerProviderStateMixin {
+  static List<Gift>? _staticCachedGifts;
+  static List<String>? _staticCategories;
+
   final GiftService _giftService = GiftService();
   List<Gift> _allActiveGifts = [];
   List<Gift> _gifts = [];
@@ -70,6 +73,18 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
   @override
   void initState() {
     super.initState();
+    // Immediate 0ms initialization if static memory cache is present
+    if (_staticCachedGifts != null && _staticCachedGifts!.isNotEmpty && _staticCategories != null) {
+      _allActiveGifts = List.from(_staticCachedGifts!);
+      _categories = List.from(_staticCategories!);
+      _selectedCategory = _categories.first;
+      _gifts = _allActiveGifts.where((g) => g.category == _selectedCategory).toList();
+      _selectedGift = _gifts.isNotEmpty ? _gifts.first : null;
+      _tabController = TabController(length: _categories.length, vsync: this);
+      _isLoading = false;
+      _isCategoriesLoading = false;
+    }
+
     // Build participant map and seated list
     for (final p in widget.participants) {
       _participantMap[p.userId] = p;
@@ -124,23 +139,15 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
   Future<void> _listenToGifts() async {
     debugPrint('🎁 [GiftSelection] Setting up gifts listener...');
     
-    // 1. Aggressively load via .get() first to ensure UI doesn't hang
+    // 1. Try local Firestore cache FIRST (0ms latency, works offline / low internet)
     try {
-      final initialSnapshot = await _giftService.firestore.collection('gift')
-          .get()
-          .timeout(const Duration(seconds: 5));
-      if (mounted) {
-        _processSnapshot(initialSnapshot);
+      final cacheSnapshot = await _giftService.firestore
+          .collection('gift')
+          .get(const GetOptions(source: Source.cache));
+      if (mounted && cacheSnapshot.docs.isNotEmpty) {
+        _processSnapshot(cacheSnapshot);
       }
-    } catch (e, st) {
-      debugPrint('❌ [GiftSelection] Initial .get() failed: $e\n$st');
-      if (mounted) {
-        setState(() {
-          _isCategoriesLoading = false;
-          _isLoading = false;
-        });
-      }
-    }
+    } catch (_) {}
 
     // 2. Attach real-time listener for future updates
     _giftsSubscription = _giftService.firestore
@@ -151,7 +158,7 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
       _processSnapshot(snapshot);
     }, onError: (e) {
       debugPrint('❌ GiftSelectionBottomSheet: Error listening to gifts: $e');
-      if (mounted) {
+      if (mounted && _gifts.isEmpty) {
         setState(() {
           _isCategoriesLoading = false;
           _isLoading = false;
@@ -255,6 +262,23 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
 
       final categories = orderedCategories.isNotEmpty ? orderedCategories : configuredOrder;
     
+      // Ultra-fast proactive background preloading for all active gifts (SVGA, MP4, PNG, WebP)
+      final List<String> urlsToPreload = [];
+      for (final g in activeGifts) {
+        if (g.svgaUrl != null && g.svgaUrl!.trim().isNotEmpty) {
+          urlsToPreload.add(g.svgaUrl!.trim());
+        }
+        if (g.pngUrl != null && g.pngUrl!.trim().isNotEmpty) {
+          urlsToPreload.add(g.pngUrl!.trim());
+        }
+      }
+      if (urlsToPreload.isNotEmpty) {
+        FastAssetCache.preloadBatch(urlsToPreload);
+      }
+
+      _staticCachedGifts = activeGifts;
+      _staticCategories = categories;
+
       setState(() {
         _debugTotalDocs = snapshot.docs.length;
         _debugActiveGifts = activeGifts.length;
@@ -370,6 +394,18 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
       return;
     }
 
+    if (!AuthController.instance.deductDiamonds(totalCost)) {
+      _showErrorSnackBar(
+          'Insufficient diamonds. You need $totalCost diamonds but have $userBalance.',
+          action: SnackBarAction(
+            label: 'Recharge',
+            textColor: Colors.white,
+            onPressed: _navigateToRecharge,
+          ),
+      );
+      return;
+    }
+
     _isSending = true;
 
     // Capture all needed values BEFORE closing the sheet
@@ -439,6 +475,7 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
     required String? senderImageUrl,
     required List<Map<String, dynamic>> receiversList,
   }) async {
+    final totalCredits = giftCredits * receiversList.length;
     try {
       // 1. Send gifts
       await _giftService.sendGifts(
@@ -482,6 +519,7 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
       debugPrint('✅ [GiftSelection] Background gift processing complete!');
     } catch (e) {
       debugPrint('❌ [GiftSelection] Background gift error: $e');
+      AuthController.instance.refundDiamonds(totalCredits);
       Get.snackbar(
         'Gift Failed',
         'Could not complete the gift transaction: $e',
@@ -804,20 +842,17 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
                                         children: [
                                           SelectedGiftPulse(
                                             isSelected: isSelected,
-                                            child: gift.pngUrl != null &&
-                                                    gift.pngUrl!.isNotEmpty &&
-                                                    gift.pngUrl!.startsWith('http')
-                                                ? CachedNetworkImage(
-                                                    imageUrl: gift.pngUrl!,
-                                                    width: 55,
-                                                    height: 55,
-                                                    fit: BoxFit.contain,
-                                                  )
-                                                : const Icon(
-                                                    Icons.card_giftcard,
-                                                    color: Colors.white,
-                                                    size: 30,
-                                                  ),
+                                            child: UniversalAssetWidget(
+                                              url: gift.pngUrl,
+                                              width: 55,
+                                              height: 55,
+                                              fit: BoxFit.contain,
+                                              placeholder: const Icon(
+                                                Icons.card_giftcard,
+                                                color: Colors.white,
+                                                size: 30,
+                                              ),
+                                            ),
                                           ),
                                           const SizedBox(height: 6),
                                           Text(

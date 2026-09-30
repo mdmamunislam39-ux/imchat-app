@@ -29,7 +29,7 @@ class _GiftWallPageState extends State<GiftWallPage> {
   final Map<String, Map<String, dynamic>> _activeDocs = {};
 
   late List<Map<String, dynamic>> _gifts;
-  
+
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _receivedSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _activeSub;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userSub;
@@ -38,13 +38,27 @@ class _GiftWallPageState extends State<GiftWallPage> {
   String _sortMode = 'price'; // 'price' or 'quantity'
   final int _selectedTabIndex = 0; // 0 = Gift Display
   int _totalGiftQuantity = 0;
+  int _totalGiftPoints = 0;
 
   @override
   void initState() {
     super.initState();
     _userAvatarUrl = widget.userImage;
     _gifts = List<Map<String, dynamic>>.from(widget.gifts);
-    _rebuildGifts();
+
+    // Initial sum calculation from widget.gifts to avoid empty screen flash
+    int initQty = 0;
+    int initPoints = 0;
+    for (final g in _gifts) {
+      final count = g['count'] as int? ?? 1;
+      final credits = g['credits'] as int? ?? 0;
+      final totalVal = g['totalValue'] as int? ?? (credits * count);
+      initQty += count;
+      initPoints += totalVal;
+    }
+    _totalGiftQuantity = initQty;
+    _totalGiftPoints = initPoints;
+
     _loadSortPreference();
     _listenToGiftWall();
     _listenToUserData();
@@ -90,7 +104,8 @@ class _GiftWallPageState extends State<GiftWallPage> {
         .listen((snapshot) {
       if (snapshot.exists && snapshot.data() != null) {
         final data = snapshot.data()!;
-        final photoUrl = data['photoUrl'] as String? ?? data['userImage'] as String? ?? '';
+        final photoUrl =
+            data['photoUrl'] as String? ?? data['userImage'] as String? ?? '';
         if (photoUrl.isNotEmpty && mounted) {
           setState(() {
             _userAvatarUrl = photoUrl;
@@ -141,8 +156,10 @@ class _GiftWallPageState extends State<GiftWallPage> {
     var cleaned = name.trim();
     cleaned = cleaned.replaceAll(RegExp(r'\s+x\s*\d+$', caseSensitive: false), '');
     cleaned = cleaned.replaceAll(RegExp(r'\s+\d+\s*x$', caseSensitive: false), '');
-    cleaned = cleaned.replaceAll(RegExp(r'\s*\(\s*x?\s*\d+\s*x?\s*\)$', caseSensitive: false), '');
-    cleaned = cleaned.replaceAll(RegExp(r'\s*\(\s*combo\s*\)$', caseSensitive: false), '');
+    cleaned = cleaned.replaceAll(
+        RegExp(r'\s*\(\s*x?\s*\d+\s*x?\s*\)$', caseSensitive: false), '');
+    cleaned = cleaned.replaceAll(
+        RegExp(r'\s*\(\s*combo\s*\)$', caseSensitive: false), '');
     return cleaned.trim();
   }
 
@@ -169,12 +186,21 @@ class _GiftWallPageState extends State<GiftWallPage> {
   }
 
   void _rebuildGifts() {
+    if (_activeDocs.isEmpty && _receivedDocs.isEmpty) {
+      if (_gifts.isNotEmpty) {
+        _sortGiftsList(_gifts);
+      }
+      return;
+    }
+
     final mergedDocs = <String, Map<String, dynamic>>{
       ..._activeDocs,
       ..._receivedDocs,
     };
+
     final giftMap = <String, Map<String, dynamic>>{};
     int quantitySum = 0;
+    int pointsSum = 0;
 
     for (final data in mergedDocs.values) {
       final rawGiftName = _stringValue(data, ['giftName', 'name'], 'Gift');
@@ -185,12 +211,14 @@ class _GiftWallPageState extends State<GiftWallPage> {
         '',
       );
       final credits = _intValue(data['credits'] ?? data['diamondAmount']);
-      final quantity = _intValue(data['quantity'] ?? data['count'], fallback: 1);
+      final quantity =
+          _intValue(data['quantity'] ?? data['count'], fallback: 1);
       final timestamp = _dateValue(data['timestamp']);
       final key = _getGiftGroupKey(data);
 
       final totalItemVal = credits * quantity;
       quantitySum += quantity;
+      pointsSum += totalItemVal;
 
       // Group Gift items
       final item = giftMap.putIfAbsent(key, () {
@@ -220,29 +248,37 @@ class _GiftWallPageState extends State<GiftWallPage> {
       setState(() {
         _gifts = updatedGifts;
         _totalGiftQuantity = quantitySum;
+        _totalGiftPoints = pointsSum;
       });
     } else {
       _gifts = updatedGifts;
       _totalGiftQuantity = quantitySum;
+      _totalGiftPoints = pointsSum;
     }
   }
 
   void _sortGiftsList(List<Map<String, dynamic>> list) {
     list.sort((a, b) {
       if (_sortMode == 'quantity') {
-        final countCompare = (b['count'] as int? ?? 0).compareTo(a['count'] as int? ?? 0);
+        final countCompare =
+            (b['count'] as int? ?? 0).compareTo(a['count'] as int? ?? 0);
         if (countCompare != 0) return countCompare;
-        final unitCompare = (b['credits'] as int? ?? 0).compareTo(a['credits'] as int? ?? 0);
+        final unitCompare =
+            (b['credits'] as int? ?? 0).compareTo(a['credits'] as int? ?? 0);
         if (unitCompare != 0) return unitCompare;
-        final valueCompare = (b['totalValue'] as int? ?? 0).compareTo(a['totalValue'] as int? ?? 0);
+        final valueCompare =
+            (b['totalValue'] as int? ?? 0).compareTo(a['totalValue'] as int? ?? 0);
         if (valueCompare != 0) return valueCompare;
       } else {
-        // 'price' mode: Sort by diamond price (credits) descending (highest diamond amount at top)
-        final unitCompare = (b['credits'] as int? ?? 0).compareTo(a['credits'] as int? ?? 0);
+        // 'price' mode: Sort by diamond price (credits) descending
+        final unitCompare =
+            (b['credits'] as int? ?? 0).compareTo(a['credits'] as int? ?? 0);
         if (unitCompare != 0) return unitCompare;
-        final valueCompare = (b['totalValue'] as int? ?? 0).compareTo(a['totalValue'] as int? ?? 0);
+        final valueCompare =
+            (b['totalValue'] as int? ?? 0).compareTo(a['totalValue'] as int? ?? 0);
         if (valueCompare != 0) return valueCompare;
-        final countCompare = (b['count'] as int? ?? 0).compareTo(a['count'] as int? ?? 0);
+        final countCompare =
+            (b['count'] as int? ?? 0).compareTo(a['count'] as int? ?? 0);
         if (countCompare != 0) return countCompare;
       }
       return (b['lastTimestamp'] as DateTime? ?? DateTime.now())
@@ -311,9 +347,9 @@ class _GiftWallPageState extends State<GiftWallPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Sort Gifts By',
-                    style: TextStyle(
+                  Text(
+                    'sort_gifts_by'.tr,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -321,7 +357,7 @@ class _GiftWallPageState extends State<GiftWallPage> {
                   ),
                   const SizedBox(height: 16),
                   _buildSortOptionItem(
-                    title: 'Quantity',
+                    title: 'quantity'.tr,
                     isSelected: _sortMode == 'quantity',
                     onTap: () {
                       setState(() {
@@ -334,7 +370,7 @@ class _GiftWallPageState extends State<GiftWallPage> {
                   ),
                   const SizedBox(height: 8),
                   _buildSortOptionItem(
-                    title: 'Value',
+                    title: 'value'.tr,
                     isSelected: _sortMode == 'price',
                     onTap: () {
                       setState(() {
@@ -446,9 +482,9 @@ class _GiftWallPageState extends State<GiftWallPage> {
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Gift Wall',
-                style: TextStyle(
+              Text(
+                'gift_wall'.tr,
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -456,9 +492,10 @@ class _GiftWallPageState extends State<GiftWallPage> {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Collect gifts to light up your gift wall!',
-                style: TextStyle(
+              Text(
+                'gift_wall_info_subtitle'.tr,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
                   color: Colors.white70,
                   fontSize: 14,
                 ),
@@ -467,17 +504,17 @@ class _GiftWallPageState extends State<GiftWallPage> {
               // Gift Points Header
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Text('⭐ ', style: TextStyle(fontSize: 16)),
+                children: [
+                  const Text('⭐ ', style: TextStyle(fontSize: 16)),
                   Text(
-                    'Gift Points',
-                    style: TextStyle(
+                    'gift_points'.tr,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  Text(' ⭐', style: TextStyle(fontSize: 16)),
+                  const Text(' ⭐', style: TextStyle(fontSize: 16)),
                 ],
               ),
               const SizedBox(height: 16),
@@ -492,14 +529,14 @@ class _GiftWallPageState extends State<GiftWallPage> {
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    _RuleBulletPoint(text: 'One free gift package counts as 1 point.'),
-                    SizedBox(height: 12),
-                    _RuleBulletPoint(text: 'For paid gift packages, 1 diamond equals 1 point.'),
-                    SizedBox(height: 12),
-                    _RuleBulletPoint(text: 'A gift on the gift panel counts as 1 point per diamond.'),
-                    SizedBox(height: 12),
-                    _RuleBulletPoint(text: 'The new points rules will only take effect in the new version.'),
+                  children: [
+                    _RuleBulletPoint(text: 'gift_wall_rule_1'.tr),
+                    const SizedBox(height: 12),
+                    _RuleBulletPoint(text: 'gift_wall_rule_2'.tr),
+                    const SizedBox(height: 12),
+                    _RuleBulletPoint(text: 'gift_wall_rule_3'.tr),
+                    const SizedBox(height: 12),
+                    _RuleBulletPoint(text: 'gift_wall_rule_4'.tr),
                   ],
                 ),
               ),
@@ -517,9 +554,9 @@ class _GiftWallPageState extends State<GiftWallPage> {
                     ),
                     elevation: 0,
                   ),
-                  child: const Text(
-                    'Got It',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  child: Text(
+                    'got_it'.tr,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -557,7 +594,8 @@ class _GiftWallPageState extends State<GiftWallPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white, size: 20),
                       onPressed: () => Get.back(),
                     ),
                     IconButton(
@@ -567,7 +605,8 @@ class _GiftWallPageState extends State<GiftWallPage> {
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white70, width: 1.5),
                         ),
-                        child: const Icon(Icons.question_mark_rounded, color: Colors.white, size: 14),
+                        child: const Icon(Icons.question_mark_rounded,
+                            color: Colors.white, size: 14),
                       ),
                       onPressed: _showGiftPointsInfoDialog,
                     ),
@@ -599,11 +638,13 @@ class _GiftWallPageState extends State<GiftWallPage> {
                       child: CircleAvatar(
                         radius: 36,
                         backgroundColor: const Color(0xFF101B35),
-                        backgroundImage: (_userAvatarUrl != null && _userAvatarUrl!.isNotEmpty)
+                        backgroundImage: (_userAvatarUrl != null &&
+                                _userAvatarUrl!.isNotEmpty)
                             ? CachedNetworkImageProvider(_userAvatarUrl!)
                             : null,
                         child: (_userAvatarUrl == null || _userAvatarUrl!.isEmpty)
-                            ? const Icon(Icons.person, color: Colors.white, size: 36)
+                            ? const Icon(Icons.person,
+                                color: Colors.white, size: 36)
                             : null,
                       ),
                     ),
@@ -619,7 +660,7 @@ class _GiftWallPageState extends State<GiftWallPage> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Points Box
+                    // Points & Status Box
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -635,9 +676,9 @@ class _GiftWallPageState extends State<GiftWallPage> {
                             size: 16,
                           ),
                         ),
-                        const SizedBox(height: 0, width: 6),
+                        const SizedBox(width: 6),
                         Text(
-                          _formatNumber(_totalGiftQuantity),
+                          _formatNumber(_totalGiftPoints),
                           style: const TextStyle(
                             color: Color(0xFFFFD166),
                             fontSize: 22,
@@ -647,15 +688,16 @@ class _GiftWallPageState extends State<GiftWallPage> {
                         ),
                         const SizedBox(width: 10),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
                             color: const Color(0xFF1E3563),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: const Color(0xFF2E4B88)),
                           ),
-                          child: const Text(
-                            'Over 99% of users',
-                            style: TextStyle(
+                          child: Text(
+                            '$_totalGiftQuantity ${'Gift'.tr}',
+                            style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 11,
                               fontWeight: FontWeight.w500,
@@ -679,7 +721,7 @@ class _GiftWallPageState extends State<GiftWallPage> {
                 ),
                 child: Row(
                   children: [
-                    _buildTabButton(title: 'Gift Display', index: 0),
+                    _buildTabButton(title: 'gift_display'.tr, index: 0),
                   ],
                 ),
               ),
@@ -698,30 +740,30 @@ class _GiftWallPageState extends State<GiftWallPage> {
   Widget _buildTabButton({required String title, required int index}) {
     final isSelected = _selectedTabIndex == index;
     return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Text(
-              title,
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.white54,
-                fontSize: 18,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-              ),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Text(
+            title,
+            style: TextStyle(
+              color: isSelected ? Colors.white : Colors.white54,
+              fontSize: 18,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
             ),
           ),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            height: 3,
-            width: isSelected ? 40 : 0,
-            decoration: BoxDecoration(
-              color: isSelected ? const Color(0xFF0075FF) : Colors.transparent,
-              borderRadius: BorderRadius.circular(2),
-            ),
+        ),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: 3,
+          width: isSelected ? 40 : 0,
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF0075FF) : Colors.transparent,
+            borderRadius: BorderRadius.circular(2),
           ),
-        ],
-      );
+        ),
+      ],
+    );
   }
 
   Widget _buildGiftDisplayTab() {
@@ -733,9 +775,9 @@ class _GiftWallPageState extends State<GiftWallPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Other Gifts',
-                style: TextStyle(
+              Text(
+                'other_gifts'.tr,
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
@@ -745,11 +787,14 @@ class _GiftWallPageState extends State<GiftWallPage> {
                 onTap: _showSortMenu,
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: Row(
                     children: [
                       Text(
-                        _sortMode == 'quantity' ? 'By quantity' : 'By price',
+                        _sortMode == 'quantity'
+                            ? 'by_quantity'.tr
+                            : 'by_price'.tr,
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 13,
@@ -775,16 +820,16 @@ class _GiftWallPageState extends State<GiftWallPage> {
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(
+                    children: [
+                      const Icon(
                         Icons.card_giftcard_rounded,
                         size: 64,
                         color: Color(0xFF263A63),
                       ),
-                      SizedBox(height: 16),
+                      const SizedBox(height: 16),
                       Text(
-                        'No gifts received yet',
-                        style: TextStyle(
+                        'no_gifts_received'.tr,
+                        style: const TextStyle(
                           color: Colors.white38,
                           fontSize: 15,
                         ),
@@ -793,7 +838,8 @@ class _GiftWallPageState extends State<GiftWallPage> {
                   ),
                 )
               : GridView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 4,
                     crossAxisSpacing: 10,

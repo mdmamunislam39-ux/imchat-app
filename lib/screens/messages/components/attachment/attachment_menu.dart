@@ -124,7 +124,7 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                             // <--- Attach File --->
                             AttachmentButton(
                               icon: IconlyBold.document,
-                              title: 'Document',
+                              title: 'Document'.tr,
                               color: Colors.indigo,
                               onPress: () async {
                                 // Pick docs/files
@@ -146,7 +146,7 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                             // <--- Camera --->
                             AttachmentButton(
                               icon: IconlyBold.camera,
-                              title: 'Camera',
+                              title: 'Camera'.tr,
                               color: Colors.pink,
                               onPress: () async {
                                 Get.back();
@@ -160,7 +160,7 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                             // <--- Gallery (Image/Video) --->
                             AttachmentButton(
                               icon: Icons.photo,
-                              title: 'Gallery',
+                              title: 'Gallery'.tr,
                               color: Colors.purpleAccent,
                               onPress: () async {
                                 Get.back();
@@ -179,7 +179,7 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                             // <--- Send Audio --->
                             AttachmentButton(
                               icon: IconlyBold.voice,
-                              title: 'Audio',
+                              title: 'Audio'.tr,
                               color: Colors.orange,
                               onPress: () async {
                                 Get.back();
@@ -196,7 +196,7 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                             // <--- Share Location --->
                             AttachmentButton(
                               icon: IconlyBold.location,
-                              title: 'Location',
+                              title: 'Location'.tr,
                               color: Colors.green,
                               onPress: () async {
                                 // Close this modal
@@ -215,7 +215,7 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                             // <--- Share Contact --->
                             AttachmentButton(
                               icon: IconlyBold.profile,
-                              title: 'Contact',
+                              title: 'Contact'.tr,
                               color: Colors.blue,
                               onPress: () {
                                 Get.back();
@@ -232,7 +232,7 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                               // <--- Group Audio Room --->
                               AttachmentButton(
                                 icon: Icons.event_seat,
-                                title: 'AudioRoom',
+                                title: 'AudioRoom'.tr,
                                 color: Colors.deepPurple,
                                 onPress: () {
                                   Get.back();
@@ -299,15 +299,15 @@ class _AttachmentMenuState extends State<AttachmentMenu> {
                   },
                   icon: const Icon(Icons.upload),
                   label: Text(
-                    'Upload  (${messageController.documents.length})',
+                    '${'Upload'.tr}  (${messageController.documents.length})',
                     style: const TextStyle(
                       fontSize: 18,
                     ),
                   ),
                 )
-              : const Text(
-                  'Choose attachment',
-                  style: TextStyle(fontSize: 18, color: Colors.grey),
+              : Text(
+                  'Choose attachment'.tr,
+                  style: const TextStyle(fontSize: 18, color: Colors.grey),
                 ),
         ),
         // Close button

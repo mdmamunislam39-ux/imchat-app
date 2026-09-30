@@ -12,13 +12,17 @@ import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/helpers/dialog_helper.dart';
 import 'package:chat_messenger/models/user.dart' hide User;
 import 'package:chat_messenger/routes/app_routes.dart';
+import 'package:chat_messenger/api/user_api.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/services/device_session_service.dart';
 
 abstract class AuthApi {
   static final AuthController _authController = AuthController.instance;
   static final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
-  static final GoogleSignIn _googleSignIn = GoogleSignIn();
+  static final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['email', 'profile'],
+    serverClientId: '518076067996-48s6rn0q2qe4197hp9a5f9fvb1kibrd3.apps.googleusercontent.com',
+  );
 
   static Future<void> signUpWithEmailAndPassword({
     required String email,
@@ -127,7 +131,12 @@ abstract class AuthApi {
   static Future<void> signInWithGoogle() async {
     try {
       DialogHelper.showProcessingDialog();
-      //
+
+      // Clear any previous cached account session so user can pick account
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
+
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       if (googleUser == null) {
         DialogHelper.closeDialog();
@@ -148,14 +157,140 @@ abstract class AuthApi {
 
       // Check user account in database
       await _authController.checkUserAccount();
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       DialogHelper.closeDialog();
+      debugPrint('[AuthApi] FirebaseAuthException in signInWithGoogle: ${e.code} - ${e.message}');
+      DialogHelper.showSnackbarMessage(
+        SnackMsgType.error,
+        e.message ?? 'Authentication failed. Please try again.',
+      );
+    } catch (e, stack) {
+      DialogHelper.closeDialog();
+      debugPrint('[AuthApi] Error in signInWithGoogle: $e\n$stack');
       DialogHelper.showSnackbarMessage(
         SnackMsgType.error,
         "failed_to_sign_in_with_google".trParams(
           {'error': e.toString()},
         ),
       );
+    }
+  }
+
+  /// Links the current user with a Google account
+  static Future<bool> linkGoogleAccount() async {
+    try {
+      DialogHelper.showProcessingDialog();
+
+      // Sign out from GoogleSignIn cache to let user choose account
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
+
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) {
+        DialogHelper.closeDialog();
+        return false;
+      }
+
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+      final AuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      final currentUser = _firebaseAuth.currentUser;
+      if (currentUser != null) {
+        await currentUser.linkWithCredential(credential);
+
+        // Update in Firestore
+        await UserApi.updateUserData(
+          userId: currentUser.uid,
+          data: {
+            'email': googleUser.email,
+            'user_email': googleUser.email,
+            'google_linked': true,
+          },
+          isSet: true,
+        );
+
+        // Update local memory user
+        final appUser = _authController.currentUser;
+        appUser.email = googleUser.email;
+        appUser.googleLinked = true;
+
+        DialogHelper.closeDialog();
+        DialogHelper.showSnackbarMessage(
+          SnackMsgType.success,
+          'Google account linked successfully!',
+        );
+        return true;
+      }
+      DialogHelper.closeDialog();
+      return false;
+    } on FirebaseAuthException catch (e) {
+      DialogHelper.closeDialog();
+      debugPrint('[AuthApi] linkGoogleAccount FirebaseAuthException: ${e.code} - ${e.message}');
+      String msg = e.message ?? e.toString();
+      if (e.code == 'credential-already-in-use' || e.code == 'email-already-in-use') {
+        msg = 'This Google account is already linked with another user account.';
+      } else if (e.code == 'provider-already-linked') {
+        msg = 'Google account is already linked to this user.';
+      }
+      DialogHelper.showSnackbarMessage(SnackMsgType.error, msg);
+      return false;
+    } catch (e, stack) {
+      DialogHelper.closeDialog();
+      debugPrint('[AuthApi] linkGoogleAccount Error: $e\n$stack');
+      DialogHelper.showSnackbarMessage(
+        SnackMsgType.error,
+        "failed_to_sign_in_with_google".trParams(
+          {'error': e.toString()},
+        ),
+      );
+      return false;
+    }
+  }
+
+  /// Unlinks Google account from current user
+  static Future<bool> unlinkGoogleAccount() async {
+    try {
+      final currentUser = _firebaseAuth.currentUser;
+      if (currentUser == null) return false;
+
+      // Make sure user has at least one other login provider
+      if (currentUser.providerData.length <= 1) {
+        DialogHelper.showSnackbarMessage(
+          SnackMsgType.error,
+          'You must keep at least one login method (e.g. Phone number) before unlinking Google.',
+        );
+        return false;
+      }
+
+      DialogHelper.showProcessingDialog();
+      await currentUser.unlink('google.com');
+
+      await UserApi.updateUserData(
+        userId: currentUser.uid,
+        data: {
+          'google_linked': false,
+        },
+        isSet: true,
+      );
+
+      final appUser = _authController.currentUser;
+      appUser.googleLinked = false;
+
+      DialogHelper.closeDialog();
+      DialogHelper.showSnackbarMessage(
+        SnackMsgType.success,
+        'Google account unlinked successfully.',
+      );
+      return true;
+    } catch (e) {
+      DialogHelper.closeDialog();
+      DialogHelper.showSnackbarMessage(SnackMsgType.error, e.toString());
+      return false;
     }
   }
 

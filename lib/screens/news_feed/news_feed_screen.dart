@@ -17,6 +17,7 @@ import 'package:chat_messenger/services/social_affinity_service.dart';
 import 'package:chat_messenger/helpers/nameplate_helper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:chat_messenger/components/animated_svip_name.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -320,11 +321,12 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                       padding: const EdgeInsets.all(3),
                       child: Row(
                         children: [
-                          _buildFeedTabChip('Latest', 'Latest', isDarkMode),
-                          _buildFeedTabChip('Trending 🔥', 'Trending', isDarkMode),
-                          _buildFeedTabChip('Followers 👥', 'Followers', isDarkMode),
+                          _buildFeedTabChip('latest'.tr, 'Latest', isDarkMode),
+                          _buildFeedTabChip('${'trending'.tr} 🔥', 'Trending', isDarkMode),
+                          _buildFeedTabChip('${'followers'.tr} 👥', 'Followers', isDarkMode),
                         ],
                       ),
+
                     ),
                   ],
                 ),
@@ -1345,15 +1347,27 @@ class RealtimePostHeader extends StatelessWidget {
                         Flexible(
                           child: GestureDetector(
                             onTap: onViewProfile,
-                            child: Text(
-                              userName,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                                color: isDarkMode ? Colors.white : Colors.black,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            child: userSnapshot.hasData && userSnapshot.data!.exists
+                                ? AnimatedSvipName.fromUserData(
+                                    data: userSnapshot.data!.data() as Map<String, dynamic>,
+                                    defaultName: userName,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      color: isDarkMode ? Colors.white : Colors.black,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  )
+                                : AnimatedSvipName.fromUserId(
+                                    userId: post.userId,
+                                    defaultName: userName,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      color: isDarkMode ? Colors.white : Colors.black,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                           ),
                         ),
                         if (isVerified)

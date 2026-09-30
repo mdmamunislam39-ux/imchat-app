@@ -201,6 +201,16 @@ class _LuckyBagGlobalBannerState extends State<LuckyBagGlobalBanner>
 
                 if (doc.exists && doc.data() != null) {
                   final room = AudioRoomV2.fromFirestore(doc);
+                  if (room.isUserBlocked(currentUser.userId)) {
+                    Get.snackbar('Access Denied', 'You are blocked from entering this room.',
+                        snackPosition: SnackPosition.BOTTOM, backgroundColor: Colors.redAccent, colorText: Colors.white);
+                    return;
+                  }
+                  if (room.isUserKickedRecently(currentUser.userId)) {
+                    Get.snackbar('Access Denied', 'You have been removed from this room and cannot join for 24 hours.',
+                        snackPosition: SnackPosition.BOTTOM, backgroundColor: Colors.redAccent, colorText: Colors.white);
+                    return;
+                  }
                   final newBloc = AudioRoomsBloc(
                     repository: AudioRoomsRepository(),
                   );

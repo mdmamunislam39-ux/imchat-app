@@ -167,8 +167,23 @@ class _FloatingMusicPlayerState extends State<FloatingMusicPlayer> with SingleTi
     _progressTimer?.cancel();
     _progressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
       if (_isPlaying && mounted) {
-        final pos = await AgoraService().getAudioMixingCurrentPosition();
-        final dur = await AgoraService().getAudioMixingDuration();
+        int pos = 0;
+        int dur = 0;
+        try {
+          final bloc = context.read<AudioRoomsBloc>();
+          if (bloc.isLiveKit) {
+            final lkPos = await bloc.audioPlayer.getCurrentPosition();
+            final lkDur = await bloc.audioPlayer.getDuration();
+            pos = lkPos?.inMilliseconds ?? (_currentPositionMs + 500);
+            dur = lkDur?.inMilliseconds ?? _totalDurationMs;
+          } else {
+            pos = await AgoraService().getAudioMixingCurrentPosition();
+            dur = await AgoraService().getAudioMixingDuration();
+          }
+        } catch (_) {
+          pos = _currentPositionMs + 500;
+        }
+
         if (mounted) {
           setState(() {
             _currentPositionMs = pos;
@@ -251,16 +266,16 @@ class _FloatingMusicPlayerState extends State<FloatingMusicPlayer> with SingleTi
       });
       _rotationController.stop();
     } else {
-      if (AgoraService().isConnected) {
+      if (_currentPositionMs > 0) {
         context.read<AudioRoomsBloc>().add(const ResumeBackgroundMusic());
-        _syncMusicState(true);
-        setState(() {
-          _isPlaying = true;
-        });
-        _rotationController.repeat();
       } else {
         _playSong(_currentIndex);
       }
+      _syncMusicState(true);
+      setState(() {
+        _isPlaying = true;
+      });
+      _rotationController.repeat();
     }
   }
 
@@ -356,7 +371,14 @@ class _FloatingMusicPlayerState extends State<FloatingMusicPlayer> with SingleTi
     setState(() {
       _volume = val;
     });
-    AgoraService().setAudioMixingVolume(val);
+    try {
+      final bloc = context.read<AudioRoomsBloc>();
+      if (bloc.isLiveKit) {
+        bloc.audioPlayer.setVolume(val / 100.0);
+      } else {
+        AgoraService().setAudioMixingVolume(val);
+      }
+    } catch (_) {}
   }
 
   void _toggleLoopMode() {
@@ -754,7 +776,14 @@ class _FloatingMusicPlayerState extends State<FloatingMusicPlayer> with SingleTi
                                     });
                                   },
                                   onChangeEnd: (val) {
-                                    AgoraService().setAudioMixingPosition(val.toInt());
+                                    try {
+                                      final bloc = context.read<AudioRoomsBloc>();
+                                      if (bloc.isLiveKit) {
+                                        bloc.audioPlayer.seek(Duration(milliseconds: val.toInt()));
+                                      } else {
+                                        AgoraService().setAudioMixingPosition(val.toInt());
+                                      }
+                                    } catch (_) {}
                                   },
                                 ),
                               ),

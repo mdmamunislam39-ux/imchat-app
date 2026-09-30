@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
@@ -48,7 +49,11 @@ class ContactList extends GetView<CreateGroupController> {
                 style: TextStyle(
                     color: controller.isSelected(user) ? primaryColor : null),
               ),
-              subtitle: Text(user.searchId.isNotEmpty ? 'ID: ${user.searchId}' : 'ID: ${user.userId}'),
+              subtitle: UserIdBadgeWidget(
+                searchId: user.searchId.isNotEmpty ? user.searchId : user.userId,
+                badgeHeight: 13,
+                textStyle: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
               tileColor: controller.isSelected(user)
                   ? primaryColor.withValues(alpha: 0.10)
                   : null,

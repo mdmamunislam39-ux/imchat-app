@@ -1,3 +1,4 @@
+import 'dart:async';
 // import 'package:dash_bubble/dash_bubble.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -10,6 +11,7 @@ import 'package:chat_messenger/routes/app_pages.dart';
 import 'package:chat_messenger/routes/app_routes.dart';
 
 import 'controllers/preferences_controller.dart';
+import 'controllers/auth_controller.dart';
 import 'firebase_options.dart';
 import 'i18n/app_languages.dart';
 import 'theme/app_theme.dart';
@@ -20,6 +22,11 @@ import 'package:chat_messenger/services/app_theme_service.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:chat_messenger/services/firebase_messaging_service.dart';
 import 'package:chat_messenger/services/premium_room_service.dart';
+import 'package:chat_messenger/services/rtc_engine_manager.dart';
+import 'package:chat_messenger/services/livekit_service.dart';
+import 'package:chat_messenger/services/backend_engine_manager.dart';
+import 'package:chat_messenger/services/vps_api_service.dart';
+import 'package:chat_messenger/services/vps_socket_service.dart';
 import 'package:flutter/services.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 
@@ -30,6 +37,7 @@ bool isDebugMode() {
 }
 
 final navigatorKey = Get.key;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -37,97 +45,73 @@ void main() async {
   } catch (e) {
     debugPrint('⚠️ GetStorage.init() error: $e');
   }
-  MobileAds.instance.initialize();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
-  /// <-- Initialize Firebase App -->
+  /// <-- Initialize Firebase Core App -->
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    
-    // Initialize push notifications immediately so background handler is attached
-    await FirebaseMessagingService.initFirebaseMessagingUpdates();
 
-    // Initialize GlobalSettingsService for real-time app settings
-    debugPrint('🔄 Initializing GlobalSettingsService...');
-    await Get.putAsync(() => GlobalSettingsService().init());
-    
-    debugPrint('🔄 Initializing AppThemeService...');
+    // Register essential synchronous services early
+    if (!Get.isRegistered<AuthController>()) {
+      Get.put(AuthController(), permanent: true);
+    }
+    Get.put(GlobalSettingsService(), permanent: true);
+    Get.put(LiveKitService(), permanent: true);
+    Get.put(RtcEngineManager(), permanent: true);
+    Get.put(VpsApiService(), permanent: true);
+    Get.put(VpsSocketService(), permanent: true);
+    Get.put(BackendEngineManager(), permanent: true);
     Get.put(AppThemeService());
-
-    debugPrint('🔄 Initializing PremiumRoomService...');
     Get.put(PremiumRoomService(), permanent: true);
 
-    debugPrint('🔄 Initializing DeepLinkService...');
-    await Get.putAsync(() => DeepLinkService().init());
-
-    try {
-      await FirebaseAppCheck.instance.activate(
-        providerAndroid: kDebugMode ? AndroidDebugProvider() : AndroidPlayIntegrityProvider(),
-        providerApple: kDebugMode ? AppleDebugProvider() : AppleAppAttestProvider(),
-      );
-      debugPrint('Firebase App Check initialized');
-    } catch (e) {
-      debugPrint('Firebase App Check initialization failed: $e');
-    }
+    // Initialize non-blocking background services without freezing first frame render
+    unawaited(_initAsyncServices());
   } catch (e) {
     if (kDebugMode) {
       debugPrint('Firebase initialization error: $e');
     }
   }
 
-//  if (isDebugMode()) {
-//     FirebaseAppCheck.instance.onTokenChange.listen((token) {
-//       debugPrint("Debug App Check Token: $token");
-//     });
-//   }
-
-//   if (!isDebugMode()) {
-//     // Activate App Check for release mode
-//     await FirebaseAppCheck.instance.activate(
-//       androidProvider: AndroidProvider.playIntegrity,
-//       appleProvider: AppleProvider.appAttest,
-//     );
-//   } else {
-//     // Use debug provider in debug mode
-//     await FirebaseAppCheck.instance.activate(
-//       androidProvider: AndroidProvider.debug,
-//       appleProvider: AppleProvider.debug,
-//     );
-//   }
-  // Initialize the Mobile Ads SDK
-  // MobileAds.instance.initialize();
-
-  // Future<void> requestOverlayPermission() async {
-  //   bool isGranted = await DashBubble.instance.requestOverlayPermission();
-
-  //   if (isGranted == true) {
-  //     debugPrint('permission granted');
-  //   } else {
-  //     debugPrint('permission declined');
-  //   }
-  // }
-//   Future<void> requestOverlayPermission2() async {
-//   if (await Permission.systemAlertWindow.isGranted) {
-//     debugPrint('Overlay permission already granted');
-//   } else {
-//     await Permission.systemAlertWindow.request();
-//     debugPrint('Requesting overlay permission');
-//   }
-// }
-
-  // requestOverlayPermission();
-  // requestOverlayPermission2();
-
-  // Initialize Background Service (handling notification channel creation)
-  try {
-    await BackgroundService().initialize();
-  } catch (e) {
-    debugPrint('Background Service initialization failed: $e');
-  }
-
   runApp(const MyApp());
+}
+
+Future<void> _initAsyncServices() async {
+  try {
+    // 1. Initialize mobile ads and background service
+    MobileAds.instance.initialize();
+    BackgroundService().initialize().catchError((e) {
+      debugPrint('Background Service initialization failed: $e');
+    });
+
+    // 2. Initialize settings and deep links
+    Get.find<GlobalSettingsService>().init().catchError((e) {
+      debugPrint('GlobalSettingsService init error: $e');
+      return Get.find<GlobalSettingsService>();
+    });
+    Get.putAsync(() => DeepLinkService().init()).catchError((e) {
+      debugPrint('DeepLinkService init error: $e');
+      return DeepLinkService();
+    });
+
+    // 3. Initialize push notifications
+    FirebaseMessagingService.initFirebaseMessagingUpdates().catchError((e) {
+      debugPrint('FCM init error: $e');
+    });
+
+    // 4. Activate App Check in background
+    FirebaseAppCheck.instance.activate(
+      providerAndroid: kDebugMode ? AndroidDebugProvider() : AndroidPlayIntegrityProvider(),
+      providerApple: kDebugMode ? AppleDebugProvider() : AppleAppAttestProvider(),
+    ).then((_) {
+      debugPrint('Firebase App Check initialized');
+    }).catchError((e) {
+      debugPrint('Firebase App Check initialization failed: $e');
+    });
+  } catch (e) {
+    debugPrint('Async services init error: $e');
+  }
 }
 
 class MyApp extends StatefulWidget {

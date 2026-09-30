@@ -186,8 +186,12 @@ class _ChatsScreenState extends State<ChatsScreen> {
               if (item is Chat) {
                 return ChatCard(
                   item,
-                  onDeleteChat: () =>
-                      controller.deleteChat(item.receiver!.userId),
+                  onDeleteChat: () {
+                    final uid = item.receiver?.userId;
+                    if (uid != null && uid.isNotEmpty) {
+                      controller.deleteChat(uid);
+                    }
+                  },
                 );
               } else if (item is Group) {
                 return GroupCard(

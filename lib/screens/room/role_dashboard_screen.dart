@@ -17,6 +17,9 @@ import 'package:chat_messenger/AdminPane/screens/admin_invitation_reward_screen.
 import 'package:chat_messenger/AdminPane/screens/admin_payment_management_screen.dart';
 import 'package:chat_messenger/AdminPane/screens/admin_recharge_requests_screen.dart';
 import 'package:chat_messenger/AdminPane/screens/admin_agora_settings_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_database_settings_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_seller_requests_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_withdrawals_screen.dart';
 
 class RoleDashboardScreen extends StatefulWidget {
   final User currentUser;
@@ -121,8 +124,17 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 _buildCardBase('Recharge Requests', Icons.receipt_long_rounded, Colors.tealAccent, () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminRechargeRequestsScreen()));
                 }),
+                _buildCardBase('Seller Diamond Top-Ups', Icons.storefront_rounded, Colors.orangeAccent, () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminSellerRequestsScreen()));
+                }),
+                _buildCardBase('Withdrawal Management', Icons.price_check_rounded, const Color(0xFF00E676), () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminWithdrawalsScreen()));
+                }),
                 _buildCardBase('Agora RTC Settings', Icons.cell_tower_rounded, Colors.purpleAccent, () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminAgoraSettingsScreen()));
+                }),
+                _buildCardBase('Database & VPS Server Settings', Icons.storage_rounded, Colors.blueAccent, () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDatabaseSettingsScreen()));
                 }),
                 ...roleService.superAdminPermissions.entries
                     .where((entry) => entry.value == true)

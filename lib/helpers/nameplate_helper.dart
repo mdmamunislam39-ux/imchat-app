@@ -1,4 +1,5 @@
 import 'package:chat_messenger/services/store_service.dart';
+import 'package:chat_messenger/services/svip_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
@@ -129,15 +130,21 @@ class NameplateHelper {
       // If user has active SVIP or VIP status and no nameplate is selected yet,
       // resolve active SVIP/VIP nameplate automatically.
       if (ids.isEmpty && userData != null) {
-        final now = DateTime.now();
-        final currentMonth = "${now.year}-${now.month.toString().padLeft(2, '0')}";
-        final int activeSvip = userData['activeSvipLevel'] as int? ?? 0;
+        final int activeSvip = (userData['activeSvipLevel'] as num?)?.toInt() ?? 0;
         final String svipMonth = userData['svipValidUntilMonth']?.toString() ?? '';
-        final int activeVip = userData['activeVipLevel'] as int? ?? 0;
-        final Timestamp? vipExpiry = userData['vipValidUntil'] as Timestamp?;
-        final bool isSvipActive = activeSvip > 0 && svipMonth == currentMonth;
-        final bool isVipActive = activeVip > 0 &&
-            (vipExpiry == null || vipExpiry.toDate().isAfter(now));
+        final int activeVip = (userData['activeVipLevel'] as num?)?.toInt() ?? 0;
+        DateTime? vipExpiry;
+        if (userData['vipValidUntil'] != null) {
+          if (userData['vipValidUntil'] is Timestamp) {
+            vipExpiry = (userData['vipValidUntil'] as Timestamp).toDate();
+          } else if (userData['vipValidUntil'] is String) {
+            vipExpiry = DateTime.tryParse(userData['vipValidUntil'].toString());
+          }
+        }
+        final String vipMonth = userData['vipValidUntilMonth']?.toString() ?? '';
+
+        final bool isSvipActive = SvipService.isSvipActive(activeSvip, svipMonth);
+        final bool isVipActive = SvipService.isVipActive(activeVip, vipExpiry, vipMonth);
 
         if (isSvipActive) {
           ids.add('svip_svip${activeSvip}_nameplate');

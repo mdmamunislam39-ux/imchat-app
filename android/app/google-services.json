@@ -67,6 +67,38 @@
       },
       "oauth_client": [
         {
+          "client_id": "518076067996-018q7v7ivu0cmleo9mspvp7tjgoig22n.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.imchatapp",
+            "certificate_hash": "98f4ad24a02fa2d9a559717e7aa340b37743672c"
+          }
+        },
+        {
+          "client_id": "518076067996-td5b22e7dpfvjqjpipn7kn90idokum2u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.imchatapp",
+            "certificate_hash": "067f6a48a26f9fae5d2de725c2d425e73558d7b8"
+          }
+        },
+        {
+          "client_id": "518076067996-3953e16bf7e9a61303f1c1b0567790c32d993c8b.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.imchatapp",
+            "certificate_hash": "3953e16bf7e9a61303f1c1b0567790c32d993c8b"
+          }
+        },
+        {
+          "client_id": "518076067996-3ad93c93f066cc526daed01c556fbe4082c8047d.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.imchatapp",
+            "certificate_hash": "3ad93c93f066cc526daed01c556fbe4082c8047d"
+          }
+        },
+        {
           "client_id": "518076067996-48s6rn0q2qe4197hp9a5f9fvb1kibrd3.apps.googleusercontent.com",
           "client_type": 3
         }

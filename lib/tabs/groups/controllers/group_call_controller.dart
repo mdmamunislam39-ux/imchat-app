@@ -5,12 +5,16 @@ import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:chat_messenger/components/app_loading.dart';
 import 'package:chat_messenger/models/call.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:chat_messenger/services/background_service.dart';
 import 'package:chat_messenger/services/agora_token_service.dart';
 import 'package:chat_messenger/services/agora_service.dart';
+import 'package:chat_messenger/services/rtc_engine_manager.dart';
+import 'package:chat_messenger/services/livekit_service.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:chat_messenger/screens/home/home_screen.dart';
 
@@ -19,6 +23,15 @@ class GroupCallController extends GetxController {
 
   // Constructor
   GroupCallController({required this.call});
+
+  bool get isLiveKit =>
+      Get.isRegistered<RtcEngineManager>() &&
+      Get.find<RtcEngineManager>().isLiveKitActive;
+
+  LiveKitService get livekitService =>
+      Get.isRegistered<LiveKitService>()
+          ? Get.find<LiveKitService>()
+          : Get.put(LiveKitService(), permanent: true);
 
   // Vars
   Timer? _timer;
@@ -42,9 +55,72 @@ class GroupCallController extends GetxController {
 
   @override
   void onInit() {
-    _initAgora();
+    if (isLiveKit) {
+      _initLiveKitGroupCall();
+    } else {
+      _initAgora();
+    }
     _listenToCallState();
     super.onInit();
+  }
+
+  Future<void> _initLiveKitGroupCall() async {
+    try {
+      if (call.isVideo) {
+        await [Permission.microphone, Permission.camera].request();
+      } else {
+        await Permission.microphone.request();
+      }
+
+      playRingtone();
+
+      final myUid = AuthController.instance.currentUser.userId;
+      final myName = AuthController.instance.currentUser.fullname;
+      final roomName = call.callerId;
+      final url = Get.find<RtcEngineManager>().livekitServerUrl;
+
+      final token = await livekitService.generateToken(
+        roomName: roomName,
+        identity: myUid,
+        userName: myName,
+      );
+
+      livekitService.onParticipantJoined = (participant) {
+        remoteUsers.add(participant.identity);
+        remoteUid.value = 1;
+        _startTimer();
+        stopRingtone();
+      };
+
+      livekitService.onParticipantLeft = (participant) {
+        remoteUsers.remove(participant.identity);
+        if (remoteUsers.isEmpty) {
+          onEndCall();
+        }
+      };
+
+      final success = await livekitService.connectToRoom(
+        url: url,
+        token: token,
+        enableAudio: true,
+        enableVideo: call.isVideo,
+        autoPublishMic: true,
+      );
+
+      if (success) {
+        isLocalUserJoined.value = true;
+        mute.value = false;
+        debugPrint('🚀 [LiveKit Group Call] Connected successfully');
+      } else {
+        debugPrint('⚠️ [LiveKit Group Call] Failed to join LiveKit room');
+        AppStyle().failedSnackBar(message: 'Failed to connect to LiveKit WebRTC server');
+        onEndCall();
+      }
+    } catch (e) {
+      debugPrint('❌ [LiveKit Group Call] Error: $e');
+      AppStyle().failedSnackBar(message: 'LiveKit Group Call Error: $e');
+      onEndCall();
+    }
   }
 
   void _listenToCallState() {
@@ -82,6 +158,11 @@ class GroupCallController extends GetxController {
     } catch (e) {
       debugPrint('Error stopping background service: $e');
     }
+    // Clear wake screen flags so the app doesn't stay over the lock screen
+    const MethodChannel('com.imchatapp/app_visibility')
+        .invokeMethod('clearWakeScreen')
+        .catchError((_) {});
+
     // Restore the shared AgoraService event handler that was overridden
     try {
       Get.find<AgoraService>().setupEventHandlers();
@@ -239,16 +320,30 @@ class GroupCallController extends GetxController {
   // Toggle phone speaker
   void onToggleSpeaker() {
     final bool newValue = speaker.value = !speaker.value;
-    engine.setEnableSpeakerphone(newValue);
+    if (!isLiveKit) {
+      try {
+        engine.setEnableSpeakerphone(newValue);
+      } catch (e) {
+        debugPrint('Agora speaker error: $e');
+      }
+    }
   }
 
   // Toggle mute
   void onToggleMute() async {
     final bool newValue = mute.value = !mute.value;
-    await engine.muteLocalAudioStream(newValue);
-    await engine.updateChannelMediaOptions(
-      ChannelMediaOptions(publishMicrophoneTrack: !newValue),
-    );
+    if (isLiveKit) {
+      await livekitService.setMicrophoneEnabled(!newValue);
+    } else {
+      try {
+        await engine.muteLocalAudioStream(newValue);
+        await engine.updateChannelMediaOptions(
+          ChannelMediaOptions(publishMicrophoneTrack: !newValue),
+        );
+      } catch (e) {
+        debugPrint('Agora mute error: $e');
+      }
+    }
   }
 
   // End the call and pass the value
@@ -258,11 +353,15 @@ class GroupCallController extends GetxController {
     } catch (_) {}
     FlutterCallkitIncoming.endAllCalls();
     try {
-      if (_eventHandler != null) {
-        engine.unregisterEventHandler(_eventHandler!);
+      if (isLiveKit) {
+        livekitService.leaveRoom();
+      } else {
+        if (_eventHandler != null) {
+          engine.unregisterEventHandler(_eventHandler!);
+        }
+        engine.leaveChannel();
+        AgoraService().setupEventHandlers();
       }
-      engine.leaveChannel();
-      AgoraService().setupEventHandlers();
     } catch (e) {
       debugPrint('Error leaving group call: $e');
     }

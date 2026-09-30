@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
+import 'package:chat_messenger/services/backend_engine_manager.dart';
 
 /// Clean follow service with proper error handling
 class FollowService {
@@ -62,6 +64,17 @@ class FollowService {
         debugPrint('Sound/notification error on follow: $soundErr');
       }
 
+      // In VPS mode, also sync follow relation to VPS backend in background
+      if (BackendEngineManager.isVps) {
+        unawaited(Future(() async {
+          try {
+            await BackendEngineManager.instance.apiService.post('/api/user/follow', body: {
+              'targetUserId': targetUserId,
+            });
+          } catch (_) {}
+        }));
+      }
+
       debugPrint('✅ Successfully followed user: $targetUserId');
       return FollowResult.success('Successfully followed user');
     } catch (e) {
@@ -105,6 +118,17 @@ class FollowService {
         targetUserRef.set({'followers': FieldValue.increment(-1)}, SetOptions(merge: true)).timeout(const Duration(seconds: 15)),
       ]);
       
+      // In VPS mode, also sync unfollow relation to VPS backend in background
+      if (BackendEngineManager.isVps) {
+        unawaited(Future(() async {
+          try {
+            await BackendEngineManager.instance.apiService.post('/api/user/unfollow', body: {
+              'targetUserId': targetUserId,
+            });
+          } catch (_) {}
+        }));
+      }
+
       debugPrint('✅ Successfully unfollowed user: $targetUserId');
       return FollowResult.success('Successfully unfollowed user');
     } catch (e) {

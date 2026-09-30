@@ -106,6 +106,27 @@ class _RoomIdSearchScreenState extends State<RoomIdSearchScreen> {
   void _enterRoom(AudioRoomV2 room) {
     final currentUser = AuthController.instance.currentUser;
 
+    if (room.isUserBlocked(currentUser.userId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You are blocked from entering this room.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (room.isUserKickedRecently(currentUser.userId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'You have been removed from this room and cannot join for 24 hours.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     MinimizedRoomController.checkAndProceed(
       context: context,
       targetRoom: room,
@@ -324,9 +345,28 @@ class _RoomIdSearchScreenState extends State<RoomIdSearchScreen> {
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              'Host: ${_foundRoom!.creatorName}',
-                              style: const TextStyle(color: Colors.white54, fontSize: 13),
+                            StreamBuilder<DocumentSnapshot>(
+                              stream: _foundRoom!.creatorId.isNotEmpty
+                                  ? FirebaseFirestore.instance
+                                      .collection('Users')
+                                      .doc(_foundRoom!.creatorId)
+                                      .snapshots()
+                                  : null,
+                              builder: (context, userSnap) {
+                                String hostDisplayName = _foundRoom!.creatorName;
+                                if (userSnap.hasData && userSnap.data!.exists) {
+                                  final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                                  if (uData != null &&
+                                      uData['fullname'] != null &&
+                                      uData['fullname'].toString().trim().isNotEmpty) {
+                                    hostDisplayName = uData['fullname'].toString().trim();
+                                  }
+                                }
+                                return Text(
+                                  'Host: $hostDisplayName',
+                                  style: const TextStyle(color: Colors.white54, fontSize: 13),
+                                );
+                              },
                             ),
                             const SizedBox(height: 6),
                             Row(

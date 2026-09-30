@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -17,10 +19,60 @@ import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/services/push_notification_service.dart';
 
+import 'package:chat_messenger/services/backend_engine_manager.dart';
+
 abstract class MessageApi {
   //
   // MessageApi - CRUD Operations
   //
+
+  // In-Memory & Persistent Message Cache for 0ms instant chat rendering across screen transitions
+  static final Map<String, List<Message>> _messageMemoryCache = {};
+
+  static List<Message>? getCachedMessages(String chatId) {
+    final list = _messageMemoryCache[chatId];
+    if (list != null && list.isNotEmpty) {
+      return List<Message>.from(list);
+    }
+    return null;
+  }
+
+  static Future<List<Message>?> getPersistentCachedMessages(String chatId) async {
+    final mem = getCachedMessages(chatId);
+    if (mem != null && mem.isNotEmpty) return mem;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('cached_chat_msgs_$chatId');
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          final list = decoded.map((e) => Message.fromJson(Map<String, dynamic>.from(e))).toList();
+          if (list.isNotEmpty) {
+            _messageMemoryCache[chatId] = list;
+            return list;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[MessageApi] Error reading persistent message cache: $e');
+    }
+    return null;
+  }
+
+  static void cacheMessages(String chatId, List<Message> msgs) {
+    if (chatId.isEmpty || msgs.isEmpty) return;
+    _messageMemoryCache[chatId] = List<Message>.from(msgs);
+    // Write asynchronously to persistent disk cache
+    Future(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final jsonList = msgs.take(100).map((m) => m.toJson()).toList();
+        await prefs.setString('cached_chat_msgs_$chatId', jsonEncode(jsonList));
+      } catch (e) {
+        debugPrint('[MessageApi] Error writing persistent message cache: $e');
+      }
+    });
+  }
 
   // Firestore instance
   static final _firestore = FirebaseFirestore.instance;
@@ -41,6 +93,56 @@ abstract class MessageApi {
   }) async {
     final User currentUser = AuthController.instance.currentUser;
 
+    if (BackendEngineManager.isVps) {
+      try {
+        final vpsSocket = BackendEngineManager.instance.socketService;
+        final vpsApi = BackendEngineManager.instance.apiService;
+
+        // Emit via Socket.io
+        vpsSocket.sendDirectMessage(
+          receiverId: receiver.userId,
+          content: message.textMsg,
+          messageType: message.type.name,
+          mediaUrl: message.fileUrl,
+          msgId: message.msgId,
+        );
+
+        // Backup via REST API
+        await vpsApi.sendDirectMessage(
+          receiverId: receiver.userId,
+          content: message.textMsg,
+          messageType: message.type.name,
+          mediaUrl: message.fileUrl,
+        );
+
+        // Send push notification to receiver
+        String targetToken = receiver.deviceToken;
+        if (targetToken.isEmpty) {
+          try {
+            final profile = await vpsApi.getUserProfile(receiver.userId);
+            targetToken = profile?['fcm_token'] ?? profile?['fcmToken'] ?? profile?['deviceToken'] ?? '';
+          } catch (_) {}
+        }
+
+        if (targetToken.isNotEmpty) {
+          PushNotificationService.sendNotification(
+            type: NotificationType.message,
+            title: currentUser.fullname,
+            body: PushNotificationService.getMessageType(message),
+            deviceToken: targetToken,
+            call: {
+              'messageId': message.msgId,
+              'senderId': currentUser.userId,
+            },
+          );
+        }
+        debugPrint('[MessageApi] VPS sendMessage() -> success');
+      } catch (e) {
+        debugPrint('[MessageApi] VPS sendMessage error: $e');
+      }
+    }
+
+    // Universal Cloud & Firestore Sync
     // 1. Save message for current user (Sender)
     try {
       await _getCollectionRef(userId1: currentUser.userId, userId2: receiver.userId)
@@ -181,13 +283,31 @@ abstract class MessageApi {
     required Message message,
   }) async {
     try {
-      // Get sender profile
       final User sender = group.getMemberProfile(message.senderId);
 
-      // Update the last message
-      group.lastMsg = message;
-      // Save group message
-      await saveGroupMessage(group);
+      if (BackendEngineManager.isVps) {
+        final vpsSocket = BackendEngineManager.instance.socketService;
+        final vpsApi = BackendEngineManager.instance.apiService;
+
+        vpsSocket.sendGroupMessage(
+          groupId: group.groupId,
+          content: message.textMsg,
+          messageType: message.type.name,
+          mediaUrl: message.fileUrl,
+        );
+
+        await vpsApi.sendGroupMessage(
+          groupId: group.groupId,
+          content: message.textMsg,
+          messageType: message.type.name,
+          mediaUrl: message.fileUrl,
+        );
+      } else {
+        // Update the last message
+        group.lastMsg = message;
+        // Save group message
+        await saveGroupMessage(group);
+      }
 
       // Hold notify futures
       List<Future<void>> notifyFutures = [];
@@ -205,6 +325,11 @@ abstract class MessageApi {
               body:
                   "${sender.fullname}: ${PushNotificationService.getMessageType(message)}",
               deviceToken: member.deviceToken,
+              call: {
+                'groupId': group.groupId,
+                'senderId': message.senderId,
+                'messageId': message.msgId,
+              },
             ),
           );
         }
@@ -359,8 +484,8 @@ abstract class MessageApi {
     }
   }
 
-  // Get 1-to-1 messages
-  static Stream<List<Message>> getMessages(User user) {
+  // Get 1-to-1 messages with instant limit & pagination support
+  static Stream<List<Message>> getMessages(User user, {int limit = 60}) {
     // Get current user
     final User currentUser = AuthController.instance.currentUser;
     final String userId = user.userId;
@@ -417,7 +542,7 @@ abstract class MessageApi {
           // 1. official_notifications subcollection
           subNotifs = _firestore
               .collection('Users/${currentUser.userId}/official_notifications')
-              .limit(100)
+              .limit(limit)
               .snapshots()
               .listen((snapshot) {
             notifMap.clear();
@@ -443,7 +568,7 @@ abstract class MessageApi {
           // 2. Chats/official_team/Messages subcollection
           subChats = _firestore
               .collection('Users/${currentUser.userId}/Chats/official_team/Messages')
-              .limit(100)
+              .limit(limit)
               .snapshots()
               .listen((snapshot) {
             chatMap.clear();
@@ -469,7 +594,7 @@ abstract class MessageApi {
           // 3. Central official_broadcasts collection
           subBroadcasts = _firestore
               .collection('official_broadcasts')
-              .limit(50)
+              .limit(limit)
               .snapshots()
               .listen((snapshot) {
             broadcastMap.clear();
@@ -518,7 +643,7 @@ abstract class MessageApi {
       return _firestore
           .collection('channel_posts')
           .where('channelId', isEqualTo: userId)
-          .limit(200)
+          .limit(limit)
           .snapshots()
           .map((event) {
         // Sort locally to bypass the need for a Firestore composite index
@@ -564,8 +689,127 @@ abstract class MessageApi {
     }
 
     // Query messages
+    if (BackendEngineManager.isVps) {
+      final vpsApi = BackendEngineManager.instance.apiService;
+      final vpsSocket = BackendEngineManager.instance.socketService;
+
+      late StreamController<List<Message>> controller;
+      StreamSubscription? socketSub;
+      StreamSubscription? fsSub;
+      final Map<String, Message> messageMap = {};
+
+      void emitMerged() {
+        if (controller.isClosed) return;
+        final list = messageMap.values.toList();
+        list.sort((a, b) {
+          final tA = a.sentAt ?? DateTime.now();
+          final tB = b.sentAt ?? DateTime.now();
+          return tB.compareTo(tA);
+        });
+        controller.add(list);
+      }
+
+      void addOrUpdateMessage(Message msg) {
+        final key = msg.msgId.isNotEmpty ? msg.msgId : '${msg.senderId}_${msg.sentAt?.millisecondsSinceEpoch}';
+        messageMap[key] = msg;
+        emitMerged();
+      }
+
+      Future<void> fetchRestMessages() async {
+        try {
+          final msgsData = await vpsApi.getDirectMessages(userId, limit: limit);
+          for (var data in msgsData) {
+            final sentAtStr = data['created_at'] ?? data['createdAt'] ?? data['sentAt'];
+            final DateTime sentAt = sentAtStr != null
+                ? (DateTime.tryParse(sentAtStr.toString())?.toLocal() ?? DateTime.now())
+                : DateTime.now();
+            final String senderId = data['sender_id']?.toString() ?? data['senderId']?.toString() ?? '';
+            final msgId = data['id']?.toString() ?? data['msgId']?.toString() ?? '';
+            final msg = Message(
+              msgId: msgId,
+              senderId: senderId,
+              type: Message.getMsgType(data['message_type']?.toString() ?? data['messageType']?.toString() ?? 'text'),
+              textMsg: data['content']?.toString() ?? data['textMsg']?.toString() ?? '',
+              fileUrl: data['media_url']?.toString() ?? data['mediaUrl']?.toString() ?? data['fileUrl']?.toString() ?? '',
+              sentAt: sentAt,
+              isRead: data['is_read'] == true || data['isRead'] == true,
+            );
+            final key = msgId.isNotEmpty ? msgId : '${senderId}_${sentAt.millisecondsSinceEpoch}';
+            messageMap[key] = msg;
+          }
+          emitMerged();
+        } catch (e) {
+          debugPrint('[MessageApi] VPS REST getDirectMessages notice: $e');
+          emitMerged();
+        }
+      }
+
+      controller = StreamController<List<Message>>.broadcast(
+        onListen: () {
+          // 1. Initial REST fetch with limit
+          fetchRestMessages();
+
+          // 2. 0ms Real-Time Socket.io event listener
+          socketSub = vpsSocket.directMessageStream.listen((data) {
+            try {
+              final senderId = data['sender_id']?.toString() ?? data['senderId']?.toString() ?? '';
+              final receiverId = data['receiver_id']?.toString() ?? data['receiverId']?.toString() ?? '';
+              if ((senderId == userId && receiverId == currentUser.userId) ||
+                  (senderId == currentUser.userId && receiverId == userId) ||
+                  (senderId == userId || receiverId == userId)) {
+                final msgId = data['id']?.toString() ?? data['msgId']?.toString() ?? '';
+                final sentAtStr = data['created_at'] ?? data['createdAt'] ?? data['sentAt'];
+                final DateTime sentAt = sentAtStr != null
+                    ? (DateTime.tryParse(sentAtStr.toString())?.toLocal() ?? DateTime.now())
+                    : DateTime.now();
+                final msg = Message(
+                  msgId: msgId,
+                  senderId: senderId,
+                  type: Message.getMsgType(data['message_type']?.toString() ?? data['messageType']?.toString() ?? 'text'),
+                  textMsg: data['content']?.toString() ?? data['textMsg']?.toString() ?? '',
+                  fileUrl: data['media_url']?.toString() ?? data['mediaUrl']?.toString() ?? data['fileUrl']?.toString() ?? '',
+                  sentAt: sentAt,
+                  isRead: data['is_read'] == true || data['isRead'] == true,
+                );
+                addOrUpdateMessage(msg);
+              }
+            } catch (e) {
+              debugPrint('[MessageApi] Direct message stream parse error: $e');
+            }
+          });
+
+          // 3. Parallel Real-Time Firestore snapshots stream with limit for instant speed
+          fsSub = _getCollectionRef(userId1: currentUser.userId, userId2: userId)
+              .orderBy('sentAt', descending: true)
+              .limit(limit)
+              .snapshots()
+              .listen((snapshot) {
+            for (final doc in snapshot.docs) {
+              try {
+                final msg = Message.fromMap(data: doc.data(), docRef: doc.reference, isGroup: false);
+                final key = msg.msgId.isNotEmpty ? msg.msgId : '${msg.senderId}_${msg.sentAt?.millisecondsSinceEpoch}';
+                messageMap[key] = msg;
+              } catch (_) {}
+            }
+            emitMerged();
+          }, onError: (e) {
+            debugPrint('[MessageApi] Firestore 1v1 listener notice: $e');
+            emitMerged();
+          });
+        },
+        onCancel: () {
+          socketSub?.cancel();
+          fsSub?.cancel();
+        },
+      );
+
+      return controller.stream;
+    }
+
+    // Default Firebase Mode - with instant limit (0ms delay)
     return _getCollectionRef(userId1: currentUser.userId, userId2: userId)
         .orderBy('sentAt', descending: true)
+        .limit(limit)
         .snapshots()
         .map((event) {
       return event.docs.map((doc) {
@@ -575,12 +819,66 @@ abstract class MessageApi {
     });
   }
 
-  // <-- Get Group Messages -->
-  static Stream<List<Message>> getGroupMessages(String groupId) {
+  // <-- Get Group Messages with instant limit & pagination support -->
+  static Stream<List<Message>> getGroupMessages(String groupId, {int limit = 60}) {
+    if (BackendEngineManager.isVps) {
+      final vpsApi = BackendEngineManager.instance.apiService;
+      final vpsSocket = BackendEngineManager.instance.socketService;
+
+      late StreamController<List<Message>> controller;
+      StreamSubscription? sub;
+
+      Future<void> fetchAndEmit() async {
+        try {
+          final msgsData = await vpsApi.getGroupMessages(groupId, limit: limit);
+          final list = msgsData.map((data) {
+            final sentAtStr = data['created_at'];
+            final DateTime sentAt = sentAtStr != null ? (DateTime.tryParse(sentAtStr.toString()) ?? DateTime.now()) : DateTime.now();
+            return Message(
+              msgId: data['id']?.toString() ?? '',
+              senderId: data['sender_id']?.toString() ?? '',
+              type: Message.getMsgType(data['message_type']?.toString() ?? 'text'),
+              textMsg: data['content']?.toString() ?? '',
+              fileUrl: data['media_url']?.toString() ?? '',
+              sentAt: sentAt,
+            );
+          }).toList();
+
+          if (!controller.isClosed) {
+            controller.add(list);
+          }
+        } catch (e) {
+          debugPrint('[MessageApi] VPS getGroupMessages error: $e');
+          if (!controller.isClosed) {
+            controller.add([]);
+          }
+        }
+      }
+
+      controller = StreamController<List<Message>>.broadcast(
+        onListen: () {
+          vpsSocket.joinGroup(groupId);
+          fetchAndEmit();
+          sub = vpsSocket.groupMessageStream.listen((data) {
+            if (data['group_id']?.toString() == groupId) {
+              fetchAndEmit();
+            }
+          });
+        },
+        onCancel: () {
+          vpsSocket.leaveGroup(groupId);
+          sub?.cancel();
+        },
+      );
+
+      return controller.stream;
+    }
+
     return GroupApi.groupsRef
         .doc(groupId)
         .collection('Messages')
         .orderBy('sentAt', descending: true)
+        .limit(limit)
         .snapshots()
         .map((event) {
       return event.docs.map((doc) {
@@ -620,10 +918,10 @@ abstract class MessageApi {
       final User currentUser = AuthController.instance.currentUser;
 
       // Get the Chat node
-      final Chat chat = ChatController.instance.getChat(receiverId);
+      final Chat? chat = ChatController.instance.getChat(receiverId);
 
       // Check the last message id to update the current user chat node
-      if (chat.msgId == message.msgId) {
+      if (chat != null && chat.msgId == message.msgId) {
         ChatApi.softDeleteChat(
           userId1: currentUser.userId,
           userId2: receiverId,
@@ -680,11 +978,15 @@ abstract class MessageApi {
         return;
       }
 
+      if (receiverId == null || receiverId.isEmpty) {
+        return;
+      }
+
       // Get the Chat node
-      final Chat chat = ChatController.instance.getChat(receiverId!);
+      final Chat? chat = ChatController.instance.getChat(receiverId);
 
       // Check the last message id to update the chat node
-      if (chat.msgId == message.msgId) {
+      if (chat != null && chat.msgId == message.msgId) {
         Future.wait([
           ChatApi.softDeleteChat(
             userId1: currentUser.userId,

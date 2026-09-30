@@ -226,13 +226,14 @@ class OfficialTeamApi {
     );
   }
 
-  /// Trigger: Follow notification when followed user opens a voice room
+  /// Trigger: Follow notification when followed user opens a voice room (Pure push notification only, does not create imChat Team chat message)
   static Future<void> sendFollowedUserOpenedRoomMessage(User receiver, String followedUserName, String roomId) async {
-    final msg = "$followedUserName has opened a voice room.";
-    await sendOfficialMessage(
-      receiverId: receiver.userId,
-      receiverDeviceToken: receiver.deviceToken,
-      messageText: msg,
+    if (receiver.deviceToken.isEmpty) return;
+    await PushNotificationService.sendNotification(
+      type: NotificationType.follower_room,
+      title: "$followedUserName is on live!",
+      body: "Let's have fun together!!🤘🤟",
+      deviceToken: receiver.deviceToken,
       call: {
         'type': 'follower_room',
         'roomId': roomId,

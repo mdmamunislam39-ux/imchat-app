@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'dart:async';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/models/user.dart';
@@ -550,9 +551,10 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  'ID: ${_foundUser!.searchId}',
-                  style: TextStyle(
+                UserIdBadgeWidget(
+                  searchId: _foundUser!.searchId,
+                  badgeHeight: 14,
+                  textStyle: TextStyle(
                     fontSize: 13,
                     color: Colors.grey.shade600,
                   ),

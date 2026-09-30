@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/services/family_service.dart';
@@ -1285,7 +1286,11 @@ class _FamilyScreenState extends State<FamilyScreen> with TickerProviderStateMix
             ],
           ),
           title: Text(member.fullname, style: const TextStyle(color: Colors.white)),
-          subtitle: Text('ID: ${member.searchId.isNotEmpty ? member.searchId : member.userId}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          subtitle: UserIdBadgeWidget(
+            searchId: member.searchId.isNotEmpty ? member.searchId : member.userId,
+            badgeHeight: 14,
+            textStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [

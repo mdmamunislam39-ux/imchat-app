@@ -134,6 +134,7 @@ import 'package:flutter/material.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
 
 class GroupCallScreen extends StatefulWidget {
   final bool isVideo;
@@ -150,7 +151,7 @@ class GroupCallScreen extends StatefulWidget {
   });
 
   @override
-  _GroupCallScreenState createState() => _GroupCallScreenState();
+  State<GroupCallScreen> createState() => _GroupCallScreenState();
 }
 
 class _GroupCallScreenState extends State<GroupCallScreen> {
@@ -203,6 +204,13 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
     // Render the local user video
     Widget renderLocalVideo() {
       if (widget.isVideo && groupCallController.isLocalUserJoined.value) {
+        if (groupCallController.isLiveKit) {
+          return groupCallController.livekitService.localVideoTrack.value != null
+              ? lk.VideoTrackRenderer(
+                  groupCallController.livekitService.localVideoTrack.value!,
+                )
+              : const Center(child: Text('Joining...'));
+        }
         return AgoraVideoView(
           controller: VideoViewController(
             rtcEngine: groupCallController.engine,
@@ -258,6 +266,21 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
                           ),
                           itemCount: groupCallController.remoteUsers.length,
                           itemBuilder: (context, index) {
+                            if (groupCallController.isLiveKit) {
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(15),
+                                child: groupCallController.livekitService.remoteVideoTrack.value != null
+                                    ? lk.VideoTrackRenderer(
+                                        groupCallController.livekitService.remoteVideoTrack.value!,
+                                      )
+                                    : Container(
+                                        color: Colors.black54,
+                                        child: const Center(
+                                          child: Icon(Icons.person, color: Colors.white, size: 40),
+                                        ),
+                                      ),
+                              );
+                            }
                             final uidForVideo =
                                 groupCallController.remoteUsers[index];
                             return ClipRRect(

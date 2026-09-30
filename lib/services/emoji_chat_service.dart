@@ -1,14 +1,100 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:chat_messenger/models/emoji_models.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/services/ban_service.dart';
+import 'package:chat_messenger/services/backend_engine_manager.dart';
 import 'package:get/get.dart';
 
 /// Service for sending emoji messages in audio rooms
 class EmojiChatService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static final Map<String, List<EmojiChatMessage>> _vpsRoomMessages = {};
+  static final StreamController<String> _vpsRoomUpdateNotifier = StreamController<String>.broadcast();
+  static bool _socketListenerAttached = false;
+
+  static void _ensureVpsSocketListener() {
+    if (_socketListenerAttached) return;
+    _socketListenerAttached = true;
+    final vpsSocket = BackendEngineManager.instance.socketService;
+    vpsSocket.roomMessageStream.listen((data) {
+      try {
+        final incomingRoomId = data['roomId']?.toString().trim() ?? data['room_id']?.toString().trim() ?? '';
+        if (incomingRoomId.isEmpty) return;
+
+        final roomMessages = _vpsRoomMessages.putIfAbsent(incomingRoomId, () => []);
+        final extra = (data['extraData'] is Map)
+            ? Map<String, dynamic>.from(data['extraData'])
+            : ((data['extra_data'] is Map) ? Map<String, dynamic>.from(data['extra_data']) : {});
+        final msgId = data['id']?.toString() ?? extra['id']?.toString() ?? '';
+        if (msgId.isNotEmpty && roomMessages.any((m) => m.id == msgId)) {
+          return;
+        }
+
+        final msgTypeStr = data['messageType']?.toString() ?? data['message_type']?.toString() ?? 'text';
+        final msgType = EmojiMessageType.values.firstWhere(
+          (e) => e.name == msgTypeStr,
+          orElse: () => EmojiMessageType.text,
+        );
+
+        final timestamp = data['createdAt'] != null || data['created_at'] != null
+            ? (DateTime.tryParse((data['createdAt'] ?? data['created_at']).toString())?.toLocal() ?? DateTime.now())
+            : DateTime.now();
+
+        final emojiUrl = extra['emojiUrl']?.toString() ?? extra['emoji_url']?.toString();
+        final emojiName = extra['emojiName']?.toString() ?? extra['emoji_name']?.toString() ?? 'emoji';
+
+        final emojiItem = (emojiUrl != null && emojiUrl.isNotEmpty)
+            ? EmojiItem(
+                id: emojiName,
+                name: emojiName,
+                displayName: data['content']?.toString() ?? '',
+                emojiUrl: emojiUrl,
+                categoryId: 'general',
+                order: 0,
+              )
+            : null;
+
+        final msg = EmojiChatMessage(
+          id: msgId,
+          userId: data['senderId']?.toString() ?? data['sender_id']?.toString() ?? '',
+          username: extra['username']?.toString() ?? extra['userName']?.toString() ?? extra['user_name']?.toString() ?? 'User',
+          userAvatar: extra['userAvatar']?.toString() ?? extra['user_avatar']?.toString(),
+          message: data['content']?.toString() ?? '',
+          messageType: msgType,
+          emojiItem: emojiItem,
+          timestamp: timestamp,
+          roomId: incomingRoomId,
+          giftImageUrl: extra['giftImageUrl']?.toString() ?? extra['gift_image_url']?.toString(),
+          giftCredits: (extra['giftCredits'] is num)
+              ? (extra['giftCredits'] as num).toInt()
+              : ((extra['gift_credits'] is num) ? (extra['gift_credits'] as num).toInt() : null),
+          replyToMessageId: extra['replyToMessageId']?.toString() ?? extra['reply_to_message_id']?.toString(),
+          replyToUsername: extra['replyToUsername']?.toString() ?? extra['reply_to_username']?.toString(),
+          replyToText: extra['replyToText']?.toString() ?? extra['reply_to_text']?.toString(),
+          senderLevelBadgeUrl: extra['senderLevelBadgeUrl']?.toString() ?? extra['sender_level_badge_url']?.toString(),
+        );
+
+        roomMessages.add(msg);
+        if (roomMessages.length > 100) roomMessages.removeAt(0);
+        _vpsRoomUpdateNotifier.add(incomingRoomId);
+      } catch (e) {
+        debugPrint('[EmojiChatService] Error processing VPS room message: $e');
+      }
+    });
+  }
+
+  static void _addLocalVpsMessage(String roomId, EmojiChatMessage msg) {
+    _ensureVpsSocketListener();
+    final list = _vpsRoomMessages.putIfAbsent(roomId, () => []);
+    if (!list.any((m) => m.id == msg.id)) {
+      list.add(msg);
+      if (list.length > 100) list.removeAt(0);
+      _vpsRoomUpdateNotifier.add(roomId);
+    }
+  }
 
   /// Send an emoji message to a room
   static Future<void> sendEmojiMessage({
@@ -47,12 +133,31 @@ class EmojiChatService {
         senderLevelBadgeUrl: senderLevelBadgeUrl,
       );
 
-      await _firestore
+      if (BackendEngineManager.isVps) {
+        _addLocalVpsMessage(roomId, emojiMessage);
+        BackendEngineManager.instance.socketService.sendRoomMessage(
+          roomId: roomId,
+          content: emoji.displayName,
+          messageType: 'emoji',
+          extraData: {
+            'id': messageId,
+            'emojiUrl': emoji.emojiUrl,
+            'emojiName': emoji.name,
+            'username': username,
+            'userAvatar': userAvatar,
+            'senderLevelBadgeUrl': senderLevelBadgeUrl,
+          },
+        );
+      }
+
+      // Universal cloud sync to Firestore
+      _firestore
           .collection('audio_rooms_v2')
           .doc(roomId)
           .collection('chat')
           .doc(messageId)
-          .set(emojiMessage.toJson());
+          .set(emojiMessage.toJson())
+          .catchError((e) => debugPrint('[EmojiChatService] Firestore sync non-fatal error: $e'));
 
       // Update participant's active emoji status if requested
       if (updateParticipantStatus) {
@@ -107,12 +212,32 @@ class EmojiChatService {
         replyToText: replyToText,
       );
 
-      await _firestore
+      if (BackendEngineManager.isVps) {
+        _addLocalVpsMessage(roomId, textMessage);
+        BackendEngineManager.instance.socketService.sendRoomMessage(
+          roomId: roomId,
+          content: message,
+          messageType: 'text',
+          extraData: {
+            'id': messageId,
+            'username': username,
+            'userAvatar': userAvatar,
+            'senderLevelBadgeUrl': senderLevelBadgeUrl,
+            'replyToMessageId': replyToMessageId,
+            'replyToUsername': replyToUsername,
+            'replyToText': replyToText,
+          },
+        );
+      }
+
+      // Universal cloud sync to Firestore
+      _firestore
           .collection('audio_rooms_v2')
           .doc(roomId)
           .collection('chat')
           .doc(messageId)
-          .set(textMessage.toJson());
+          .set(textMessage.toJson())
+          .catchError((e) => debugPrint('[EmojiChatService] Firestore sync non-fatal error: $e'));
 
       debugPrint('💬 [EmojiChatService] Text message sent successfully');
     } catch (e) {
@@ -193,6 +318,21 @@ class EmojiChatService {
         roomId: roomId,
       );
 
+      if (BackendEngineManager.isVps) {
+        _addLocalVpsMessage(roomId, presenceMessage);
+        BackendEngineManager.instance.socketService.sendRoomMessage(
+          roomId: roomId,
+          content: isJoin ? 'joined' : 'left',
+          messageType: isJoin ? 'join' : 'leave',
+          extraData: {
+            'id': messageId,
+            'username': username,
+            'userAvatar': userAvatar,
+          },
+        );
+        return;
+      }
+
       await _firestore
           .collection('audio_rooms_v2')
           .doc(roomId)
@@ -219,15 +359,14 @@ class EmojiChatService {
     try {
       debugPrint('🎁 [EmojiChatService] Sending gift message: $giftName to $receiverName');
 
+      final String message = '$giftName|||${receiverName ?? ''}';
+
       final messageId = _firestore
           .collection('audio_rooms_v2')
           .doc(roomId)
           .collection('chat')
           .doc()
           .id;
-
-      // Build message with receiver name
-      String message = '$giftName|||${receiverName ?? ''}';
 
       final giftMessage = EmojiChatMessage(
         id: messageId,
@@ -242,6 +381,25 @@ class EmojiChatService {
         giftCredits: giftCredits,
         senderLevelBadgeUrl: senderLevelBadgeUrl,
       );
+
+      if (BackendEngineManager.isVps) {
+        _addLocalVpsMessage(roomId, giftMessage);
+        BackendEngineManager.instance.socketService.sendRoomMessage(
+          roomId: roomId,
+          content: message,
+          messageType: 'gift',
+          extraData: {
+            'id': messageId,
+            'username': username,
+            'userAvatar': userAvatar,
+            'giftImageUrl': giftImageUrl,
+            'giftCredits': giftCredits,
+            'senderLevelBadgeUrl': senderLevelBadgeUrl,
+            'receiverName': receiverName,
+          },
+        );
+        return;
+      }
 
       await _firestore
           .collection('audio_rooms_v2')
@@ -268,14 +426,14 @@ class EmojiChatService {
     try {
       debugPrint('🎉 [EmojiChatService] Sending Lucky Win message: $username won ${multiplier}x ($wonDiamonds diamonds)');
 
+      final message = '🎉 $username opened $giftName and WON ${multiplier}x Multiplier! (+$wonDiamonds 💎)';
+
       final messageId = _firestore
           .collection('audio_rooms_v2')
           .doc(roomId)
           .collection('chat')
           .doc()
           .id;
-
-      final message = '🎉 $username opened $giftName and WON ${multiplier}x Multiplier! (+$wonDiamonds 💎)';
 
       final luckyMessage = EmojiChatMessage(
         id: messageId,
@@ -289,6 +447,23 @@ class EmojiChatService {
         giftImageUrl: giftImageUrl,
         giftCredits: wonDiamonds,
       );
+
+      if (BackendEngineManager.isVps) {
+        _addLocalVpsMessage(roomId, luckyMessage);
+        BackendEngineManager.instance.socketService.sendRoomMessage(
+          roomId: roomId,
+          content: message,
+          messageType: 'rouletteResult',
+          extraData: {
+            'id': messageId,
+            'username': username,
+            'userAvatar': userAvatar,
+            'giftImageUrl': giftImageUrl,
+            'giftCredits': wonDiamonds,
+          },
+        );
+        return;
+      }
 
       await _firestore
           .collection('audio_rooms_v2')
@@ -304,45 +479,93 @@ class EmojiChatService {
   /// Get enhanced chat messages stream with emoji support
   static Stream<List<EmojiChatMessage>> getEmojiChatMessagesStream(
       String roomId) {
-    return _firestore
-        .collection('audio_rooms_v2')
-        .doc(roomId)
-        .collection('chat')
-        .orderBy('timestamp', descending: true)
-        .limit(50)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs
-          .map((doc) {
+    _ensureVpsSocketListener();
+    if (BackendEngineManager.isVps) {
+      final vpsSocket = BackendEngineManager.instance.socketService;
+      vpsSocket.joinRoom(roomId);
+    }
+
+    final roomMessages = _vpsRoomMessages.putIfAbsent(roomId, () => []);
+
+    late StreamController<List<EmojiChatMessage>> controller;
+    StreamSubscription? updateSub;
+    StreamSubscription? fsSub;
+
+    controller = StreamController<List<EmojiChatMessage>>.broadcast(
+      onListen: () {
+        // 1. Immediately emit current in-memory messages
+        if (roomMessages.isNotEmpty) {
+          controller.add(List<EmojiChatMessage>.from(roomMessages));
+        }
+
+        // 2. Listen to VPS Socket updates (0ms real-time)
+        updateSub = _vpsRoomUpdateNotifier.stream.listen((updatedRoomId) {
+          if (updatedRoomId == roomId || updatedRoomId.isEmpty) {
+            if (!controller.isClosed) {
+              final sorted = List<EmojiChatMessage>.from(roomMessages);
+              sorted.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+              controller.add(sorted);
+            }
+          }
+        });
+
+        // 3. Listen to Firestore collection in real-time as universal cloud stream
+        fsSub = _firestore
+            .collection('audio_rooms_v2')
+            .doc(roomId)
+            .collection('chat')
+            .orderBy('timestamp', descending: true)
+            .limit(50)
+            .snapshots()
+            .listen((snapshot) {
+          for (final doc in snapshot.docs) {
             try {
               final data = doc.data();
-              // Handle different timestamp formats
               if (data['timestamp'] is Timestamp) {
                 data['timestamp'] = (data['timestamp'] as Timestamp).toDate();
               } else if (data['timestamp'] is int) {
                 data['timestamp'] =
                     DateTime.fromMillisecondsSinceEpoch(data['timestamp']);
-              } else if (data['timestamp'] is DateTime) {
-                // Already correct format
-              } else {
-                // Fallback to current time
+              } else if (data['timestamp'] is! DateTime) {
                 data['timestamp'] = DateTime.now();
               }
-              return EmojiChatMessage.fromJson(data);
+              final msg = EmojiChatMessage.fromJson(data);
+              if (!roomMessages.any((m) => m.id == msg.id)) {
+                roomMessages.add(msg);
+              }
             } catch (e) {
-              debugPrint(
-                  '💬 [EmojiChatService] Error parsing chat message: $e');
-              return null;
+              debugPrint('[EmojiChatService] Error parsing snapshot message: $e');
             }
-          })
-          .where((message) => message != null)
-          .cast<EmojiChatMessage>()
-          .toList();
-    });
+          }
+          if (roomMessages.length > 100) {
+            roomMessages.removeRange(0, roomMessages.length - 100);
+          }
+          if (!controller.isClosed) {
+            final sorted = List<EmojiChatMessage>.from(roomMessages);
+            sorted.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+            controller.add(sorted);
+          }
+        }, onError: (e) {
+          debugPrint('[EmojiChatService] Firestore room chat listener error: $e');
+        });
+      },
+      onCancel: () {
+        updateSub?.cancel();
+        fsSub?.cancel();
+      },
+    );
+
+    return controller.stream;
   }
 
   /// Get regular chat messages stream (for backward compatibility)
   static Stream<List<ChatMessage>> getChatMessagesStream(String roomId) {
+    if (BackendEngineManager.isVps) {
+      return getEmojiChatMessagesStream(roomId).map((emojiMessages) {
+        return emojiMessages.map((e) => e.toChatMessage()).toList();
+      });
+    }
+
     return _firestore
         .collection('audio_rooms_v2')
         .doc(roomId)

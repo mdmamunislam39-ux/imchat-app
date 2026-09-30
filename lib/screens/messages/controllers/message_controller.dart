@@ -17,16 +17,19 @@ import 'package:chat_messenger/models/group.dart';
 import 'package:chat_messenger/models/location.dart';
 import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/models/user.dart';
+import 'package:chat_messenger/services/firebase_messaging_service.dart';
 import 'package:chat_messenger/tabs/groups/controllers/group_controller.dart';
 import 'package:get/get.dart';
 
 class MessageController extends GetxController {
   final bool isGroup;
   final User? user;
+  final String? groupId;
 
   MessageController({
     required this.isGroup,
     this.user,
+    this.groupId,
   });
 
   // Variables
@@ -38,6 +41,10 @@ class MessageController extends GetxController {
 
   // Message vars
   final RxBool isLoading = RxBool(true);
+  final RxBool isLoadingMore = RxBool(false);
+  final RxBool isInitialDataSettled = RxBool(false);
+  final RxBool hasMore = RxBool(true);
+  final RxInt messageLimit = RxInt(60);
   final RxList<Message> messages = RxList();
   StreamSubscription<List<Message>>? _stream;
 
@@ -64,11 +71,44 @@ class MessageController extends GetxController {
     // Get selected group instance
     _groupController.getSelectedGroup();
 
-    // Get messages
+    // Register active chat user / group to suppress in-app notification banners while chatting
+    final String chatId = isGroup ? (groupId ?? _groupController.groupId.value ?? '') : (user?.userId ?? '');
+    if (isGroup) {
+      FirebaseMessagingService.activeGroupId = chatId.isNotEmpty ? chatId : null;
+      FirebaseMessagingService.activeChatUserId = null;
+    } else {
+      FirebaseMessagingService.activeChatUserId = chatId.isNotEmpty ? chatId : null;
+      FirebaseMessagingService.activeGroupId = null;
+    }
+
+    // 0ms instant cache load from RAM & persistent disk
+    if (chatId.isNotEmpty) {
+      final cached = MessageApi.getCachedMessages(chatId);
+      if (cached != null && cached.isNotEmpty) {
+        messages.assignAll(cached);
+        isLoading.value = false;
+        isInitialDataSettled.value = true;
+        debugPrint('⚡ [MessageController] Instantly loaded ${cached.length} messages from RAM cache for $chatId');
+      } else {
+        MessageApi.getPersistentCachedMessages(chatId).then((diskCached) {
+          if (diskCached != null && diskCached.isNotEmpty && messages.isEmpty) {
+            messages.assignAll(diskCached);
+            isLoading.value = false;
+            isInitialDataSettled.value = true;
+            debugPrint('⚡ [MessageController] Loaded ${diskCached.length} messages from disk cache for $chatId');
+          }
+        });
+      }
+    }
+
+    // Initialize scroll listener for smooth bottom scroll & scroll-up pagination
+    _scrollControllerListener();
+
+    // Get messages with initial 60 limit
     _getMessages();
-    // Check
+
+    // Check 1v1 presence & typing
     if (!isGroup) {
-      _scrollControllerListener();
       if (user != null && user!.userType != 'channel' && user!.userId != 'official_team' && !user!.userId.startsWith('official_channel_')) {
         _checkMuteStatus();
 
@@ -87,6 +127,15 @@ class MessageController extends GetxController {
 
   @override
   void onClose() {
+    // Unregister active chat user / group
+    if (!isGroup && FirebaseMessagingService.activeChatUserId == user?.userId) {
+      FirebaseMessagingService.activeChatUserId = null;
+    }
+    final String? gId = groupId ?? _groupController.groupId.value;
+    if (isGroup && FirebaseMessagingService.activeGroupId == gId) {
+      FirebaseMessagingService.activeGroupId = null;
+    }
+
     _receiverPresenceSubscription?.cancel();
     // Clear the previous one
     _groupController.clearSelectedGroup();
@@ -98,36 +147,89 @@ class MessageController extends GetxController {
     super.onClose();
   }
 
-  // Get Message Updates
-  void _getMessages() {
+  // Load older messages on scroll up
+  void loadMoreOlderMessages() {
+    if (isLoadingMore.value || !hasMore.value) return;
+    isLoadingMore.value = true;
+    final int previousCount = messages.length;
+    messageLimit.value += 40;
+    _stream?.cancel();
+    _getMessages(isPagination: true, previousCount: previousCount);
+  }
+
+  // Get Message Updates with instant limit and smooth pagination
+  void _getMessages({bool isPagination = false, int previousCount = 0}) {
+    final currentLimit = messageLimit.value;
     if (isGroup) {
+      final String gId = selectedGroup?.groupId ?? groupId ?? _groupController.groupId.value ?? '';
+      if (gId.isEmpty) {
+        isLoading.value = false;
+        isInitialDataSettled.value = true;
+        return;
+      }
+
       _stream =
-          MessageApi.getGroupMessages(selectedGroup!.groupId).listen((event) {
+          MessageApi.getGroupMessages(gId, limit: currentLimit).listen((event) {
         final pending = messages.where((m) => m.sentAt == null).toList();
-        messages.value = event;
+        if (event.isNotEmpty || messages.isEmpty) {
+          messages.value = event;
+        }
         for (var p in pending) {
           if (!messages.any((m) => m.msgId == p.msgId)) messages.insert(0, p);
         }
         isLoading.value = false;
-        scrollToBottom();
+        isLoadingMore.value = false;
+        isInitialDataSettled.value = true;
+        if (event.isNotEmpty) {
+          MessageApi.cacheMessages(gId, event);
+        }
+        if (isPagination && event.length <= previousCount) {
+          hasMore.value = false;
+        }
+        if (!isPagination && (scrollController.hasClients && scrollController.offset < 100)) {
+          scrollToBottom();
+        }
       }, onError: (e) {
         isLoading.value = false;
+        isLoadingMore.value = false;
+        isInitialDataSettled.value = true;
         debugPrint(e.toString());
       });
     } else {
-      _stream = MessageApi.getMessages(user!).listen((event) {
+      if (user == null) {
+        isLoading.value = false;
+        isInitialDataSettled.value = true;
+        return;
+      }
+      final String uId = user!.userId;
+
+      _stream = MessageApi.getMessages(user!, limit: currentLimit).listen((event) {
         final pending = messages.where((m) => m.sentAt == null).toList();
-        messages.value = event;
+        if (event.isNotEmpty || messages.isEmpty) {
+          messages.value = event;
+        }
         for (var p in pending) {
           if (!messages.any((m) => m.msgId == p.msgId)) messages.insert(0, p);
         }
         isLoading.value = false;
-        scrollToBottom();
+        isLoadingMore.value = false;
+        isInitialDataSettled.value = true;
+        if (event.isNotEmpty) {
+          MessageApi.cacheMessages(uId, event);
+        }
+        if (isPagination && event.length <= previousCount) {
+          hasMore.value = false;
+        }
+        if (!isPagination && (scrollController.hasClients && scrollController.offset < 100)) {
+          scrollToBottom();
+        }
         
         // Safely mark messages as read without rebuild loops or permission crashes
         _markMessagesAsRead(event);
       }, onError: (e) {
         isLoading.value = false;
+        isLoadingMore.value = false;
+        isInitialDataSettled.value = true;
         debugPrint(e.toString());
       });
     }
@@ -199,6 +301,8 @@ class MessageController extends GetxController {
             final uploadedFileUrl = await _uploadFile(file);
             if (uploadedFileUrl != null) {
               optimisticMsg.fileUrl = uploadedFileUrl;
+              optimisticMsg.sentAt = DateTime.now();
+              messages.refresh();
               
               // Upload video thumbnail if needed
               if (type == MessageType.video && localVideoThumbnail.isNotEmpty) {
@@ -246,7 +350,12 @@ class MessageController extends GetxController {
         isRead: isReceiverOnline.value,
         isRecAudio: isRecAudio,
         replyMessage: replyMessage.value,
+        sentAt: DateTime.now(),
       );
+
+      // Insert optimistic message in UI for instant responsiveness
+      messages.insert(0, message);
+      scrollToBottom();
 
       // Send message
       if (isGroup) {
@@ -362,12 +471,18 @@ class MessageController extends GetxController {
   // Listen scrollController updates
   void _scrollControllerListener() {
     scrollController.addListener(() {
-      if (!scrollController.hasClients || scrollController.positions.length != 1) return;
-      if (scrollController.offset == 0.0) {
+      if (!scrollController.hasClients) return;
+      if (scrollController.offset <= 10.0) {
         // Update value
         showScrollButton.value = false;
       } else {
         showScrollButton.value = true;
+      }
+
+      // In reverse ListView, maxScrollExtent is the top of the chat history
+      if (scrollController.position.maxScrollExtent > 50 &&
+          scrollController.position.pixels >= scrollController.position.maxScrollExtent - 150) {
+        loadMoreOlderMessages();
       }
     });
   }

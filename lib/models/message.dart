@@ -171,4 +171,50 @@ class Message {
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'msgId': msgId,
+      'senderId': senderId,
+      'type': type.name,
+      'textMsg': textMsg,
+      'fileUrl': fileUrl,
+      'gifUrl': gifUrl,
+      'location': location?.toMap(),
+      'videoThumbnail': videoThumbnail,
+      'isRead': isRead,
+      'isDelivered': isDelivered,
+      'isRecAudio': isRecAudio,
+      'isDeleted': isDeleted,
+      'isForwarded': isForwarded,
+      'sentAt': sentAt?.toIso8601String(),
+      'updatedAt': updatedAt?.toIso8601String(),
+      'invitationId': invitationId,
+      'invitationAgencyName': invitationAgencyName,
+      'invitationAgencyId': invitationAgencyId,
+    };
+  }
+
+  factory Message.fromJson(Map<String, dynamic> json) {
+    return Message(
+      msgId: json['msgId'] ?? '',
+      senderId: json['senderId'] ?? '',
+      type: getMsgType(json['type'] ?? 'text'),
+      textMsg: json['textMsg'] ?? '',
+      fileUrl: json['fileUrl'] ?? '',
+      gifUrl: json['gifUrl'] ?? '',
+      location: json['location'] != null ? Location.fromMap(Map<String, dynamic>.from(json['location'])) : null,
+      videoThumbnail: json['videoThumbnail'] ?? '',
+      isRead: json['isRead'] == true,
+      isDelivered: json['isDelivered'] == true,
+      isRecAudio: json['isRecAudio'] == true,
+      isDeleted: json['isDeleted'] == true,
+      isForwarded: json['isForwarded'] == true,
+      sentAt: _parseDate(json['sentAt']),
+      updatedAt: _parseDate(json['updatedAt']),
+      invitationId: json['invitationId'],
+      invitationAgencyName: json['invitationAgencyName'],
+      invitationAgencyId: json['invitationAgencyId'],
+    );
+  }
 }

@@ -2,6 +2,7 @@ import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'widgets/level_list_item.dart';
 
 class LevelScreen extends StatefulWidget {
@@ -37,7 +38,7 @@ class _LevelScreenState extends State<LevelScreen> with TickerProviderStateMixin
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('My Level'),
+        title: Text('my_level'.tr),
         backgroundColor: Colors.white,
         elevation: 0.5,
         iconTheme: const IconThemeData(color: Colors.black),
@@ -52,13 +53,14 @@ class _LevelScreenState extends State<LevelScreen> with TickerProviderStateMixin
           unselectedLabelColor: Colors.grey,
           indicatorColor: primaryColor,
           labelStyle: const TextStyle(fontWeight: FontWeight.bold),
-          tabs: const [
-            Tab(text: 'Wealth'),
-            Tab(text: 'Charm'),
-            Tab(text: 'Active'),
+          tabs: [
+            Tab(text: 'wealth'.tr),
+            Tab(text: 'charm'.tr),
+            Tab(text: 'active'.tr),
           ],
         ),
       ),
+
       body: TabBarView(
         controller: _tabController,
         children: [

@@ -1,4 +1,5 @@
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
 
 import 'package:chat_messenger/components/cached_card_image.dart';
 import 'package:chat_messenger/components/loading_indicator.dart';
@@ -67,21 +68,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         final String profileName =
             widget.call.isCaller ? widget.call.receiverName : widget.call.callerName;
         return Scaffold(
-          // extendBodyBehindAppBar: true,
-          // appBar: CustomAppBar(
-          //   // Show call duration
-          //  title: controller.remoteUid.value != null ? const CallTimer() : null,
-          //   centerTitle: false,
-          //  // backgroundColor: Colors.transparent,
-          //   onBackPress: () => controller.onEndCall(),
-          // ),
           body: CallBackground(
             remoteUid: remoteUid,
-           //remoteUid: controller.remoteUid.value,
             // <-- REMOTE user video preview  -->
             preview:
              remoteUid != null
-            //controller.remoteUid.value !=null
                 ? Stack(
                   fit: StackFit.expand,
                   children: [
@@ -95,36 +86,39 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                                   : CachedCardImage(photoUrl),
                             ),
                           )
-                        : AgoraVideoView(
-                            controller: VideoViewController.remote(
-                              rtcEngine: controller.engine,
-                              canvas: VideoCanvas(
-                                uid: remoteUid,
-                              ),
-                              connection: RtcConnection(
-                                channelId: widget.call.callerId
-                              ),
-                            ),
-                          ),
+                        : (controller.isLiveKit
+                            ? (controller.livekitService.remoteVideoTrack.value != null
+                                ? lk.VideoTrackRenderer(
+                                    controller.livekitService.remoteVideoTrack.value!,
+                                  )
+                                : CachedCardImage(photoUrl))
+                            : AgoraVideoView(
+                                controller: VideoViewController.remote(
+                                  rtcEngine: controller.engine,
+                                  canvas: VideoCanvas(
+                                    uid: remoteUid,
+                                  ),
+                                  connection: RtcConnection(
+                                    channelId: widget.call.callerId
+                                  ),
+                                ),
+                              )),
                     Positioned(
                       top: 45, // Adjust the top margin as needed
                       left: 30, // Adjust the left margin as needed
                       child: IconButton(
-                        icon: Icon(Icons.zoom_out_map,
+                        icon: const Icon(Icons.zoom_out_map,
                             color: Colors.white, size: 30),
                         onPressed: () {
-                          
                             controller.isMinimized.value = true;
-                         
-                           box.write('callIsActive', widget.call.toMap());
-                         
-                          Get.to(()=>HomeScreen(
-                            passController: controller,routeVideo: 'video',
+                            box.write('callIsActive', widget.call.toMap());
+                            Get.to(()=>HomeScreen(
+                              passController: controller,routeVideo: 'video',
                             ));
                         },
                       ),
                     ),
-                    Center(child: CallTimer(),),
+                    const Center(child: CallTimer()),
                   ],
                 )
                 : photoUrl.isEmpty
@@ -143,12 +137,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                       Obx(
                         () => LocalUserPreview(
                           child: controller.isLocalUserJoined.value
-                              ? AgoraVideoView(
-                                  controller: VideoViewController(
-                                    rtcEngine: controller.engine,
-                                    canvas: const VideoCanvas(uid: 0),
-                                  ),
-                                )
+                              ? (controller.isLiveKit
+                                  ? (controller.livekitService.localVideoTrack.value != null
+                                      ? lk.VideoTrackRenderer(
+                                          controller.livekitService.localVideoTrack.value!,
+                                        )
+                                      : CachedCardImage(currentUser.photoUrl))
+                                  : AgoraVideoView(
+                                      controller: VideoViewController(
+                                        rtcEngine: controller.engine,
+                                        canvas: const VideoCanvas(uid: 0),
+                                      ),
+                                    ))
                               : currentUser.photoUrl.isEmpty
                                   ? const Icon(IconlyBold.profile,
                                       color: Colors.white, size: 60)

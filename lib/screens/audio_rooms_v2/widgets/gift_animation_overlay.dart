@@ -8,20 +8,23 @@ import 'package:video_player/video_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import '../../../components/universal_asset_widget.dart';
+import '../../../components/dynamic_diamond_icon.dart';
 import '../../../vap/vap_widget.dart';
 
 /// Class for grouping identical multi-recipient transactions
 class GroupedGiftTransaction {
   final GiftTransaction primaryTransaction;
   final List<String> receiverIds;
+  int totalQuantity;
 
   GroupedGiftTransaction({
     required this.primaryTransaction,
     required this.receiverIds,
+    this.totalQuantity = 1,
   });
 }
 
-/// Overlay widget for displaying gift animations using SVGA/MP4
+/// Overlay widget for displaying gift animations (SVGA, MP4, VAP, and Image/WebP/PNG gifts)
 class GiftAnimationOverlay extends StatefulWidget {
   final List<GiftTransaction> transactions;
   final VoidCallback? onAnimationComplete;
@@ -47,8 +50,15 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
   bool _isProcessing = false;
   VideoPlayerController? _videoController;
   SVGAAnimationController? _svgaController;
+  AnimationController? _imageGiftAnimController;
 
   static final Map<String, Uint8List> _svgaBytesCache = {};
+
+  static bool _isHeavyAnimation(String? url) {
+    if (url == null || url.trim().isEmpty) return false;
+    final lower = url.toLowerCase();
+    return lower.contains('.vap') || lower.contains('.mp4') || lower.contains('.svga');
+  }
 
   Future<dynamic> _loadSvgaWithCache(String url) async {
     try {
@@ -86,8 +96,16 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
       if (!_processedIds.contains(transaction.id)) {
         _processedIds.add(transaction.id);
 
-        // Combo hits and simple gifts without SVGA animation skip full-screen playback queue
-        if (transaction.giftSvgaUrl == null || transaction.giftSvgaUrl!.trim().isEmpty) {
+        // Proactively preload asset into RAM and disk cache immediately
+        if (transaction.giftSvgaUrl != null && transaction.giftSvgaUrl!.trim().isNotEmpty) {
+          FastAssetCache.preload(transaction.giftSvgaUrl);
+        }
+        if (transaction.giftPngUrl.trim().isNotEmpty) {
+          FastAssetCache.preload(transaction.giftPngUrl);
+        }
+
+        // Rapid combo hits bypass full screen display and trigger flight directly
+        if (transaction.isComboHit) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             widget.onGiftFlightTriggered?.call(transaction, [transaction.receiverId]);
@@ -112,6 +130,7 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
             if (!grouped.receiverIds.contains(transaction.receiverId)) {
               grouped.receiverIds.add(transaction.receiverId);
             }
+            grouped.totalQuantity += (transaction.quantity > 0 ? transaction.quantity : 1);
             merged = true;
             break;
           }
@@ -129,6 +148,7 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
             if (!_currentTransaction!.receiverIds.contains(transaction.receiverId)) {
               _currentTransaction!.receiverIds.add(transaction.receiverId);
             }
+            _currentTransaction!.totalQuantity += (transaction.quantity > 0 ? transaction.quantity : 1);
             merged = true;
           }
         }
@@ -137,6 +157,7 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
           _queue.add(GroupedGiftTransaction(
             primaryTransaction: transaction,
             receiverIds: [transaction.receiverId],
+            totalQuantity: transaction.quantity > 0 ? transaction.quantity : 1,
           ));
           added = true;
         }
@@ -165,6 +186,14 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
     _isProcessing = true;
     final transaction = _queue.removeAt(0);
 
+    // Lookahead: Preload upcoming queue items in background
+    for (final nextGroup in _queue.take(2)) {
+      final nextUrl = nextGroup.primaryTransaction.giftSvgaUrl;
+      if (nextUrl != null && nextUrl.isNotEmpty) {
+        FastAssetCache.preload(nextUrl);
+      }
+    }
+
     if (mounted) {
       setState(() {
         _currentTransaction = transaction;
@@ -175,107 +204,90 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
       debugPrint(
           '🎁 [GiftAnimation] Processing grouped gift: ${transaction.primaryTransaction.giftName} for ${transaction.receiverIds.length} users');
 
-      final url = transaction.primaryTransaction.giftSvgaUrl?.toLowerCase() ?? '';
-      final isVap = url.contains('.vap');
-      final isMp4 = url.contains('.mp4') || isVap;
-      final isPng = url.contains('.png');
+      final rawUrl = transaction.primaryTransaction.giftSvgaUrl?.toLowerCase() ?? '';
+      final isVap = rawUrl.contains('.vap');
+      final isMp4 = rawUrl.contains('.mp4') || isVap;
+      final isSvga = rawUrl.contains('.svga');
 
       if (isMp4) {
         _videoController?.dispose();
 
-        // Cache the file locally to guarantee instant playback
-        File cachedFile = await DefaultCacheManager()
-            .getSingleFile(transaction.primaryTransaction.giftSvgaUrl!)
-            .timeout(const Duration(seconds: 5));
-            
-        // Critical Fix: Android's MediaExtractor fails to decode the video track 
-        // if the file doesn't have an .mp4 extension, resulting in audio-only black screens.
-        if (!cachedFile.path.toLowerCase().endsWith('.mp4')) {
-          final newPath = '${cachedFile.path}.mp4';
-          final newFile = File(newPath);
-          if (!await newFile.exists()) {
-            await cachedFile.copy(newPath);
-          }
-          cachedFile = newFile;
-        }
+        // Get preloaded/cached file instantly from RAM/Disk
+        File? cachedFile = await FastAssetCache.getVideoFile(
+          transaction.primaryTransaction.giftSvgaUrl!,
+        );
 
-        try {
-          _videoController = VideoPlayerController.file(
-            cachedFile,
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-          );
-          await _videoController!.initialize();
-          if (!mounted) {
-            _videoController?.dispose();
-            _videoController = null;
-            return;
-          }
-
-          // Instantly trigger a rebuild once the controller is initialized so the player is displayed immediately!
-          setState(() {});
-
-          if (isVap && Theme.of(context).platform == TargetPlatform.android) {
-            final duration = _videoController!.value.duration;
-            await Future.delayed(duration);
-            debugPrint('🎁 [GiftAnimation] VAP Android native playback finished via duration timer: $duration');
-          } else {
-            final Completer<void> videoCompleter = Completer<void>();
-            _videoController!.addListener(() {
-              if (_videoController == null) return;
-              
-              if (_videoController!.value.hasError) {
-                debugPrint('❌ [GiftAnimation] MP4 player error during playback: ${_videoController!.value.errorDescription}');
-                if (!videoCompleter.isCompleted) {
-                  videoCompleter.complete();
-                }
-              } else {
-                final pos = _videoController!.value.position;
-                final dur = _videoController!.value.duration;
-                if ((dur > Duration.zero && pos >= dur) ||
-                    (pos > const Duration(milliseconds: 500) && !_videoController!.value.isPlaying)) {
-                  if (!videoCompleter.isCompleted) {
-                    videoCompleter.complete();
-                  }
-                }
-              }
-            });
-
-            await _videoController!.play();
+        if (cachedFile != null) {
+          try {
+            _videoController = VideoPlayerController.file(
+              cachedFile,
+              videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+            );
+            await _videoController!.initialize();
             if (!mounted) {
               _videoController?.dispose();
               _videoController = null;
               return;
             }
-            final duration = _videoController!.value.duration;
-            final safeTimeout = duration > Duration.zero
-                ? duration + const Duration(milliseconds: 800)
-                : const Duration(seconds: 4);
 
-            await videoCompleter.future.timeout(
-              safeTimeout,
-              onTimeout: () {
-                debugPrint('⏱️ [GiftAnimation] MP4 player timeout after ${safeTimeout.inMilliseconds}ms - advancing');
-              },
-            );
-            debugPrint('🎁 [GiftAnimation] MP4 playback finished');
+            setState(() {});
+
+            final duration = _videoController!.value.duration;
+
+            if (isVap && Theme.of(context).platform == TargetPlatform.android) {
+              final effectiveDuration = duration > Duration.zero ? duration : const Duration(seconds: 4);
+              await Future.delayed(effectiveDuration);
+              debugPrint('🎁 [GiftAnimation] VAP Android native playback finished via duration timer: $effectiveDuration');
+            } else {
+              final Completer<void> videoCompleter = Completer<void>();
+              _videoController!.addListener(() {
+                if (_videoController == null) return;
+                
+                if (_videoController!.value.hasError) {
+                  debugPrint('❌ [GiftAnimation] MP4 player error during playback: ${_videoController!.value.errorDescription}');
+                  if (!videoCompleter.isCompleted) {
+                    videoCompleter.complete();
+                  }
+                } else {
+                  final pos = _videoController!.value.position;
+                  final dur = _videoController!.value.duration;
+                  if (dur > Duration.zero && (pos >= dur || (pos > const Duration(milliseconds: 500) && !_videoController!.value.isPlaying && !_videoController!.value.isBuffering))) {
+                    if (!videoCompleter.isCompleted) {
+                      videoCompleter.complete();
+                    }
+                  }
+                }
+              });
+
+              await _videoController!.play();
+              if (!mounted) {
+                _videoController?.dispose();
+                _videoController = null;
+                return;
+              }
+              final safeTimeout = duration > Duration.zero
+                  ? duration + const Duration(milliseconds: 1200)
+                  : const Duration(seconds: 5);
+
+              await videoCompleter.future.timeout(
+                safeTimeout,
+                onTimeout: () {
+                  debugPrint('⏱️ [GiftAnimation] MP4 player timeout after ${safeTimeout.inMilliseconds}ms - advancing');
+                },
+              );
+              debugPrint('🎁 [GiftAnimation] MP4 playback finished (Duration: ${duration.inMilliseconds}ms)');
+            }
+          } catch (e) {
+            debugPrint('❌ [GiftAnimation] Video initialize error: $e');
           }
-        } catch (e) {
-          debugPrint('❌ [GiftAnimation] Video initialize error: $e');
         }
-      } else if (isPng) {
-        final Duration fallbackDuration = _queue.isNotEmpty
-            ? const Duration(milliseconds: 600)
-            : const Duration(milliseconds: 1200);
-        await Future.delayed(fallbackDuration);
-        debugPrint('🎁 [GiftAnimation] PNG duration fallback: ${fallbackDuration.inMilliseconds}ms');
-      } else {
+      } else if (isSvga) {
         dynamic videoItem;
 
-        // 1. Wait for SVGA to load/decode (using memory cache)
         try {
           final svgaUrl = transaction.primaryTransaction.giftSvgaUrl;
           if (svgaUrl != null && svgaUrl.isNotEmpty) {
-            videoItem = await _loadSvgaWithCache(svgaUrl);
+            videoItem = await FastAssetCache.decodeSvga(svgaUrl);
           } else {
             videoItem = null;
           }
@@ -285,11 +297,22 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
 
         if (!mounted) return;
 
-        // 2. Play SVGA and wait for completion via callback
         if (videoItem != null) {
           _svgaController?.dispose();
           _svgaController = SVGAAnimationController(vsync: this);
           _svgaController!.videoItem = videoItem;
+
+          // Dynamically determine exact duration from SVGA file/controller (Frames / FPS)
+          Duration svgaDuration = _svgaController!.duration ?? Duration.zero;
+          if (svgaDuration == Duration.zero) {
+            try {
+              final int frames = (videoItem.params.frames ?? 60) as int;
+              final int fps = (videoItem.params.fps ?? 20) as int;
+              svgaDuration = Duration(milliseconds: (frames / (fps > 0 ? fps : 20) * 1000).toInt());
+            } catch (_) {
+              svgaDuration = const Duration(seconds: 4);
+            }
+          }
 
           final Completer<void> svgaCompleter = Completer<void>();
           _svgaController!.addStatusListener((status) {
@@ -300,31 +323,42 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
             }
           });
 
-          setState(() {}); // Trigger rebuild to show SVGAImage
+          setState(() {});
 
-          _svgaController!.forward(); // Play exactly once
+          _svgaController!.forward();
 
-          int durationMs = 3000;
-          try {
-            final int frames = (videoItem.frames ?? 60) as int;
-            final int fps = (videoItem.FPS ?? 20) as int;
-            final calcMs = ((frames / (fps > 0 ? fps : 20)) * 1000).toInt() + 500;
-            durationMs = calcMs.clamp(1000, 8000);
-          } catch (_) {}
-
+          // NO fixed duration limit! Safe timeout is actual SVGA duration + safety buffer
+          final safeTimeout = svgaDuration + const Duration(milliseconds: 1000);
           await svgaCompleter.future.timeout(
-            Duration(milliseconds: durationMs),
+            safeTimeout,
             onTimeout: () {
-              debugPrint('⏱️ [GiftAnimation] SVGA completer timeout after ${durationMs}ms - advancing');
+              debugPrint('⏱️ [GiftAnimation] SVGA safety timeout after ${safeTimeout.inMilliseconds}ms - advancing');
             },
           );
-          debugPrint('🎁 [GiftAnimation] SVGA playback finished');
+          debugPrint('🎁 [GiftAnimation] SVGA playback finished (Duration: ${svgaDuration.inMilliseconds}ms)');
         } else {
           final Duration fallbackDuration = _queue.isNotEmpty
               ? const Duration(milliseconds: 600)
               : const Duration(milliseconds: 1200);
           await Future.delayed(fallbackDuration);
         }
+      } else {
+        // Image / WebP / PNG / JPG / GIF gift with center pill banner - existing configured duration (7s default)
+        _imageGiftAnimController?.dispose();
+        const animDuration = Duration(seconds: 7);
+
+        _imageGiftAnimController = AnimationController(
+          vsync: this,
+          duration: animDuration,
+        );
+
+        if (mounted) {
+          setState(() {});
+        }
+
+        try {
+          await _imageGiftAnimController!.forward();
+        } catch (_) {}
       }
 
       if (!mounted) return;
@@ -343,7 +377,7 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
       }
     }
 
-    // 4. Notify transaction finished, clear current and process next
+    // Notify transaction finished, clear current and process next
     if (mounted) {
       widget.onTransactionFinished?.call(transaction.primaryTransaction);
 
@@ -351,6 +385,8 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
       _videoController = null;
       final sToDispose = _svgaController;
       _svgaController = null;
+      final iToDispose = _imageGiftAnimController;
+      _imageGiftAnimController = null;
 
       setState(() {
         _currentTransaction = null;
@@ -364,10 +400,13 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
         try {
           sToDispose?.dispose();
         } catch (_) {}
+        try {
+          iToDispose?.dispose();
+        } catch (_) {}
       });
 
       // Small delay before next gift to prevent overlap/flicker
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(const Duration(milliseconds: 80));
       if (mounted) {
         _processQueue();
       }
@@ -388,10 +427,12 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
       _svgaController?.dispose();
     } catch (_) {}
     _svgaController = null;
+    try {
+      _imageGiftAnimController?.dispose();
+    } catch (_) {}
+    _imageGiftAnimController = null;
     super.dispose();
   }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -401,12 +442,13 @@ class _GiftAnimationOverlayState extends State<GiftAnimationOverlay> with Ticker
 
     return RepaintBoundary(
       child: IgnorePointer(
-        child: _buildSVGAAnimation(_currentTransaction!.primaryTransaction),
+        child: _buildGiftAnimation(_currentTransaction!),
       ),
     );
   }
 
-Widget _buildSVGAAnimation(GiftTransaction transaction) {
+  Widget _buildGiftAnimation(GroupedGiftTransaction grouped) {
+    final transaction = grouped.primaryTransaction;
     final url = transaction.giftSvgaUrl?.toLowerCase() ?? '';
 
     if (url.contains('.vap') && Theme.of(context).platform == TargetPlatform.android) {
@@ -423,36 +465,260 @@ Widget _buildSVGAAnimation(GiftTransaction transaction) {
         controller: _videoController!,
         fit: BoxFit.contain,
       );
-    } else if (url.contains('.png')) {
-      return SizedBox(
-        width: double.infinity,
-        height: double.infinity,
-        child: Center(
-          child: CachedNetworkImage(
-            imageUrl: transaction.giftSvgaUrl!,
+    } else if (url.contains('.svga')) {
+      if (transaction.giftSvgaUrl != null &&
+          transaction.giftSvgaUrl!.isNotEmpty &&
+          _svgaController != null) {
+        return SizedBox(
+          width: double.infinity,
+          height: double.infinity,
+          child: SVGAImage(
+            _svgaController!,
             fit: BoxFit.contain,
           ),
-        ),
-      );
-    }
-
-    if (transaction.giftSvgaUrl != null &&
-        transaction.giftSvgaUrl!.isNotEmpty &&
-        _svgaController != null) {
-      debugPrint(
-          '🎁 [GiftAnimation] Displaying SVGA via SVGAImage from Firebase URL: ${transaction.giftSvgaUrl}');
-
-      return SizedBox(
-        width: double.infinity,
-        height: double.infinity,
-        child: SVGAImage(
-          _svgaController!,
-          fit: BoxFit.contain,
-        ),
-      );
-    } else {
-      debugPrint('🎁 [GiftAnimation] No SVGA URL or controller not initialized, skipping fallback asset to prevent OOM');
+        );
+      }
       return const SizedBox.shrink();
+    } else {
+      // Image Gift (WebP / PNG / JPG / GIF / Static & Animated Image gifts)
+      return _buildImageGift(grouped);
     }
+  }
+
+  Widget _buildImageGift(GroupedGiftTransaction grouped) {
+    final primaryTx = grouped.primaryTransaction;
+    final imageUrl = (primaryTx.giftSvgaUrl != null &&
+            primaryTx.giftSvgaUrl!.trim().isNotEmpty &&
+            !_isHeavyAnimation(primaryTx.giftSvgaUrl))
+        ? primaryTx.giftSvgaUrl!
+        : primaryTx.giftPngUrl;
+
+    final receiverText = grouped.receiverIds.length > 1
+        ? '${grouped.receiverIds.length}People'
+        : (primaryTx.receiverName.isNotEmpty ? primaryTx.receiverName : 'Recipient');
+
+    final displayQuantity = grouped.totalQuantity > 0
+        ? grouped.totalQuantity
+        : (primaryTx.quantity > 0 ? primaryTx.quantity : 1);
+
+    final anim = _imageGiftAnimController;
+
+    return AnimatedBuilder(
+      animation: anim ?? const AlwaysStoppedAnimation(1.0),
+      builder: (context, child) {
+        final double val = anim?.value ?? 1.0;
+        double scale = 1.0;
+        double opacity = 1.0;
+
+        if (val < 0.08) {
+          final t = val / 0.08;
+          scale = Curves.easeOutBack.transform(t);
+          opacity = t.clamp(0.0, 1.0);
+        } else if (val > 0.92) {
+          final t = (val - 0.92) / 0.08;
+          scale = 1.0 - (t * 0.2);
+          opacity = (1.0 - t).clamp(0.0, 1.0);
+        } else {
+          scale = 1.0;
+          opacity = 1.0;
+        }
+
+        return Center(
+          child: Opacity(
+            opacity: opacity,
+            child: Transform.scale(
+              scale: scale,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Gift Image (PNG / WebP / Image) - nicely constrained
+                  Container(
+                    constraints: const BoxConstraints(
+                      maxWidth: 155,
+                      maxHeight: 155,
+                      minWidth: 80,
+                      minHeight: 80,
+                    ),
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      fit: BoxFit.contain,
+                      placeholder: (context, url) => const SizedBox.shrink(),
+                      errorWidget: (context, url, error) => const Icon(
+                        Icons.card_giftcard,
+                        size: 64,
+                        color: Colors.pinkAccent,
+                      ),
+                    ),
+                  ),
+                                   // Rounded Pill Banner below the gift image (slimmed down frame)
+                  Container(
+                    padding: const EdgeInsets.only(
+                      left: 4,
+                      right: 14,
+                      top: 3,
+                      bottom: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFF00A2FF),
+                          Color(0xFF0066FF),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.35),
+                        width: 1.0,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF007BFF).withValues(alpha: 0.45),
+                          blurRadius: 10,
+                          spreadRadius: 1,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        // Sender Avatar (kept clear and prominent)
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white,
+                              width: 1.5,
+                            ),
+                            image: primaryTx.senderImageUrl != null &&
+                                    primaryTx.senderImageUrl!.isNotEmpty
+                                ? DecorationImage(
+                                    image: CachedNetworkImageProvider(
+                                        primaryTx.senderImageUrl!),
+                                    fit: BoxFit.cover,
+                                  )
+                                : null,
+                          ),
+                          child: primaryTx.senderImageUrl == null ||
+                                  primaryTx.senderImageUrl!.isEmpty
+                              ? const Icon(Icons.person,
+                                  color: Colors.white, size: 20)
+                              : null,
+                        ),
+                        const SizedBox(width: 8),
+                        // Sender Name and Receivers / Diamond Info
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 130),
+                              child: Text(
+                                primaryTx.senderName.isNotEmpty
+                                    ? primaryTx.senderName
+                                    : 'User',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black26,
+                                      blurRadius: 2,
+                                      offset: Offset(0, 1),
+                                    ),
+                                  ],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  receiverText,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.92),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                const DynamicDiamondIcon(
+                                  width: 13,
+                                  height: 13,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  '${primaryTx.credits}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 12),
+                        // Multiplier Text (e.g. × 1 - double size)
+                        RichText(
+                          text: TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '× ',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontStyle: FontStyle.italic,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white.withValues(alpha: 0.95),
+                                  shadows: const [
+                                    Shadow(
+                                      color: Colors.black38,
+                                      blurRadius: 4,
+                                      offset: Offset(1, 2),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              TextSpan(
+                                text: '$displayQuantity',
+                                style: const TextStyle(
+                                  fontSize: 42,
+                                  fontStyle: FontStyle.italic,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  letterSpacing: -1.0,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black38,
+                                      blurRadius: 6,
+                                      offset: Offset(1, 2),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

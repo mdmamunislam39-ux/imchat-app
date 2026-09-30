@@ -129,6 +129,9 @@ class GiftTransaction extends Equatable {
   final String? receiverImageUrl;
   final String roomId;
   final int credits;
+  final int quantity;
+  final int beansToReceiver;
+  final bool isComboHit;
   final DateTime timestamp;
 
   const GiftTransaction({
@@ -145,11 +148,28 @@ class GiftTransaction extends Equatable {
     this.receiverImageUrl,
     required this.roomId,
     required this.credits,
+    this.quantity = 1,
+    this.beansToReceiver = 0,
+    this.isComboHit = false,
     required this.timestamp,
   });
 
   /// Create from JSON
   factory GiftTransaction.fromJson(Map<String, dynamic> json) {
+    final int credits = json['credits'] is int
+        ? json['credits']
+        : int.tryParse(json['credits']?.toString() ?? '0') ?? 0;
+    final int quantity = json['quantity'] is int
+        ? json['quantity']
+        : int.tryParse(json['quantity']?.toString() ??
+                json['count']?.toString() ??
+                '1') ??
+            1;
+    final int beans = json['beansToReceiver'] is int
+        ? json['beansToReceiver']
+        : int.tryParse(json['beansToReceiver']?.toString() ?? '') ??
+            (credits * quantity);
+
     return GiftTransaction(
       id: json['id'] ?? '',
       giftId: json['giftId'] ?? '',
@@ -163,7 +183,10 @@ class GiftTransaction extends Equatable {
       receiverName: json['receiverName'] ?? '',
       receiverImageUrl: json['receiverImageUrl'],
       roomId: json['roomId'] ?? '',
-      credits: json['credits'] ?? 0,
+      credits: credits,
+      quantity: quantity,
+      beansToReceiver: beans,
+      isComboHit: json['isComboHit'] == true,
       timestamp: Gift._parseTimestamp(json['timestamp']),
     );
   }
@@ -184,6 +207,9 @@ class GiftTransaction extends Equatable {
       'receiverImageUrl': receiverImageUrl,
       'roomId': roomId,
       'credits': credits,
+      'quantity': quantity,
+      'beansToReceiver': beansToReceiver,
+      'isComboHit': isComboHit,
       'timestamp': Timestamp.fromDate(timestamp),
     };
   }
@@ -203,6 +229,9 @@ class GiftTransaction extends Equatable {
         receiverImageUrl,
         roomId,
         credits,
+        quantity,
+        beansToReceiver,
+        isComboHit,
         timestamp,
       ];
 }

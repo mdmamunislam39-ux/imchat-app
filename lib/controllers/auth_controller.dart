@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:chat_messenger/services/role_service.dart';
 import 'package:chat_messenger/services/store_service.dart';
+import 'package:chat_messenger/services/svip_service.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/api/user_api.dart';
@@ -12,6 +13,7 @@ import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:chat_messenger/services/device_session_service.dart';
 import 'package:chat_messenger/services/ban_service.dart';
 import 'package:chat_messenger/helpers/frame_helper.dart';
+import 'package:chat_messenger/helpers/country_helper.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' as cloud_firestore;
 
 import 'app_controller.dart';
@@ -52,6 +54,23 @@ class AuthController extends GetxController {
   // Expose stream for real-time reactivity in Blocs
   Stream<User?> get currentUserStream => _currentUser.stream;
 
+  /// Optimistically deduct diamonds for immediate UI/combo validation
+  /// Returns true if deduction succeeded, false if balance is insufficient.
+  bool deductDiamonds(int amount) {
+    if (_currentUser.value == null || amount <= 0) return true;
+    if (_currentUser.value!.diamonds < amount) return false;
+    _currentUser.value!.diamonds -= amount;
+    _currentUser.refresh();
+    return true;
+  }
+
+  /// Refund diamonds if an asynchronous operation failed
+  void refundDiamonds(int amount) {
+    if (_currentUser.value == null || amount <= 0) return;
+    _currentUser.value!.diamonds += amount;
+    _currentUser.refresh();
+  }
+
   @override
   void onClose() {
     _stream?.cancel();
@@ -84,11 +103,16 @@ class AuthController extends GetxController {
   void _updateCurrentUser(User user) {
     _currentUser.value = user;
     _updateFrameUrl(user);
+    _checkAndAutoSetUserCountry(user);
+    SvipService.checkAndCleanupExpiredVipAndSvip(user.userId);
+    _storeService.checkAndCleanupExpiredUserItems(user.userId);
     // Get user updates
     _stream = UserApi.getUserUpdates(user.userId).listen((event) {
       _currentUser.value = event;
       _updateFrameUrl(event);
       _checkRealTimeBans(event);
+      SvipService.checkAndCleanupExpiredVipAndSvip(event.userId);
+      _storeService.checkAndCleanupExpiredUserItems(event.userId);
     }, onError: (e) => debugPrint(e.toString()));
 
     // Start real-time role listener — fires instantly when role changes in Firestore
@@ -96,6 +120,29 @@ class AuthController extends GetxController {
 
     // Listen to device ban in real time
     _listenToDeviceBan();
+  }
+
+  /// If user country is unset or empty, auto-detect device location and save to user profile
+  void _checkAndAutoSetUserCountry(User user) {
+    if (user.country.trim().isEmpty || user.country.trim().toLowerCase() == 'select') {
+      unawaited(Future(() async {
+        try {
+          final detected = await CountryHelper.detectDeviceCountry(userPhone: user.number);
+          if (detected.name.isNotEmpty) {
+            user.country = detected.name;
+            await cloud_firestore.FirebaseFirestore.instance
+                .collection('Users')
+                .doc(user.userId)
+                .set({'country': detected.name}, cloud_firestore.SetOptions(merge: true));
+            _currentUser.value = user;
+            _currentUser.refresh();
+            debugPrint('📍 [AuthController] Auto-assigned user country: ${detected.name} (${detected.code})');
+          }
+        } catch (e) {
+          debugPrint('⚠️ [AuthController] Failed to auto-set country: $e');
+        }
+      }));
+    }
   }
 
   void _checkRealTimeBans(User user) {
@@ -191,26 +238,38 @@ class AuthController extends GetxController {
     // Init app controller
     Get.put(AppController(), permanent: true);
 
-    // Check User Account in database
-    final user = await UserApi.getUser(firebaseUser!.uid);
+    // Parallelize user fetching and device ban check
+    final results = await Future.wait([
+      UserApi.getUser(firebaseUser!.uid),
+      BanService.isDeviceBanned(),
+    ]);
+
+    User? user = results[0] as User?;
+    final isDeviceBanned = results[1] as bool;
+
+    // Check device ban
+    if (isDeviceBanned) {
+      await _firebaseAuth.signOut();
+      Future(() => Get.offAllNamed(AppRoutes.phoneSignIn));
+      Get.snackbar('Device Banned', 'This device has been temporarily banned from logging in.', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 4));
+      return;
+    }
+
+    // Check if account exists with this email (e.g. bound account)
+    if (user == null && firebaseUser!.email != null && firebaseUser!.email!.isNotEmpty) {
+      user = await UserApi.getUserByEmail(firebaseUser!.email!);
+    }
 
     // Check user
     if (user == null) {
-      Future(() => Get.offAllNamed(AppRoutes.phoneSignIn));
+      final phone = firebaseUser!.phoneNumber ?? '';
+      Future(() => Get.offAllNamed(AppRoutes.signUp, arguments: {'number': phone}));
       return;
     }
 
     // Check blocked account status
     if (user.status == 'blocked') {
       Future(() => Get.offAllNamed(AppRoutes.blockedAccount));
-      return;
-    }
-
-    // Check device ban
-    if (await BanService.isDeviceBanned()) {
-      await _firebaseAuth.signOut();
-      Future(() => Get.offAllNamed(AppRoutes.phoneSignIn));
-      Get.snackbar('Device Banned', 'This device has been temporarily banned from logging in.', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 4));
       return;
     }
 
@@ -226,15 +285,13 @@ class AuthController extends GetxController {
     // Update the current user model
     _updateCurrentUser(user);
 
-    // Update current user info
-    UserApi.updateUserInfo(user);
+    // Update current user info & device session in background without delaying navigation
+    unawaited(UserApi.updateUserInfo(user));
+    unawaited(DeviceSessionService.registerSession(firebaseUser!.uid));
 
-    // Register Device Session
-    DeviceSessionService.registerSession(firebaseUser!.uid);
-
-    // Go to home page
+    // Go to home page immediately
     Get.offAllNamed(AppRoutes.home);
-    Future.delayed(const Duration(milliseconds: 500), () {
+    Future.delayed(const Duration(milliseconds: 300), () {
       DeepLinkService.checkPendingDeepLinks();
     });
   }

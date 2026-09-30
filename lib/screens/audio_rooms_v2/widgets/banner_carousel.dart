@@ -305,7 +305,7 @@ class _BannerCarouselState extends State<BannerCarousel> {
 
     return Container(
       height: widget.height ?? 120.0,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: const EdgeInsets.fromLTRB(16, 2, 16, 6),
       child: Stack(
         alignment: Alignment.bottomCenter,
         children: [
@@ -401,10 +401,9 @@ class _BannerCarouselState extends State<BannerCarousel> {
 
   Widget _buildSkeletonLoader() {
     final double bannerHeight = widget.height ?? 120.0;
-    final bool isCompact = bannerHeight < 90.0;
     return Container(
       height: bannerHeight,
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: isCompact ? 2 : 8),
+      margin: const EdgeInsets.fromLTRB(16, 2, 16, 6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
@@ -436,10 +435,7 @@ class _BannerCarouselState extends State<BannerCarousel> {
 
     return Container(
       height: bannerHeight,
-      margin: EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: isCompact ? 2 : 8,
-      ),
+      margin: const EdgeInsets.fromLTRB(16, 2, 16, 6),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         gradient: const LinearGradient(

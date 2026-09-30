@@ -439,3 +439,134 @@ exports.autoTickGamesLoop = functions.pubsub.schedule('* * * * *').onRun(async (
     return null;
 });
 // <-- END GAME AUTO TICK LOOP -->
+
+//
+// <-- LIVE ROOM FOLLOWER NOTIFICATIONS -->
+//
+exports.notifyActiveFollowersOnLive = functions.https.onCall(async (data, context) => {
+  if (!context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication required.");
+  }
+  const creatorId = data.creatorId || context.auth.uid;
+  const creatorName = data.creatorName || "User";
+  const creatorAvatar = data.creatorAvatar || "";
+  const roomId = data.roomId;
+  const roomName = data.roomName || `${creatorName}'s Room`;
+
+  if (!roomId) {
+    throw new functions.https.HttpsError("invalid-argument", "Missing roomId.");
+  }
+
+  try {
+    // 1. Check user cooldown (1 hour = 60 minutes cooldown) to prevent spamming when user hops rooms
+    const creatorRef = firestore.collection("Users").doc(creatorId);
+    const creatorDoc = await creatorRef.get();
+    if (creatorDoc.exists) {
+      const cData = creatorDoc.data() || {};
+      let lastSentMs = 0;
+      if (cData.lastLiveNotificationAt) {
+        if (typeof cData.lastLiveNotificationAt.toMillis === "function") {
+          lastSentMs = cData.lastLiveNotificationAt.toMillis();
+        } else if (typeof cData.lastLiveNotificationAt === "number") {
+          lastSentMs = cData.lastLiveNotificationAt;
+        }
+      }
+      const oneHourMs = 60 * 60 * 1000;
+      if (Date.now() - lastSentMs < oneHourMs) {
+        console.log(`⏳ [Firebase Live Notification] Cooldown active for user ${creatorId}. Hopping rooms will not spam followers.`);
+        return { success: true, skipped: true, reason: "cooldown_active" };
+      }
+    }
+
+    // Update lastLiveNotificationAt timestamp
+    await creatorRef.set({
+      lastLiveNotificationAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    // 2. Get creator's followers
+    const followersSnap = await creatorRef.collection("followers").get();
+    if (followersSnap.empty) {
+      return { success: true, count: 0 };
+    }
+
+    const followerIds = followersSnap.docs.map(doc => doc.id).filter(id => id && id !== creatorId);
+    if (followerIds.length === 0) return { success: true, count: 0 };
+
+    // 2. Fetch followers with registered FCM deviceToken (batch query chunks of 10)
+    const activeFollowers = [];
+    const chunks = [];
+    for (let i = 0; i < followerIds.length; i += 10) {
+      chunks.push(followerIds.slice(i, i + 10));
+    }
+
+    for (const chunk of chunks) {
+      const userDocs = await firestore.collection("Users").where(admin.firestore.FieldPath.documentId(), "in", chunk).get();
+      userDocs.forEach(doc => {
+        const uData = doc.data() || {};
+        if (uData.deviceToken) {
+          activeFollowers.push({
+            id: doc.id,
+            deviceToken: uData.deviceToken,
+            fullname: uData.fullname || "User",
+          });
+        }
+      });
+    }
+
+    if (activeFollowers.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    // 3. Send Push Notifications via FCM
+    const title = `${creatorName} is on live!`;
+    const body = `Let's have fun together!!🤘🤟`;
+
+    const messages = activeFollowers.map(f => ({
+      token: f.deviceToken,
+      data: {
+        type: "follower_room",
+        title: title,
+        body: body,
+        senderId: creatorId,
+        senderAvatar: creatorAvatar,
+        call: JSON.stringify({
+          type: "follower_room",
+          roomId: roomId,
+          roomName: roomName,
+          creatorId: creatorId,
+        }),
+        click_action: "FLUTTER_NOTIFICATION_CLICK",
+        status: "done",
+      },
+      android: {
+        priority: "high",
+        ttl: 3600 * 1000,
+      },
+      apns: {
+        headers: { "apns-priority": "10" },
+        payload: {
+          aps: {
+            contentAvailable: true,
+            sound: "default",
+            alert: { title: title, body: body },
+          },
+        },
+      },
+    }));
+
+    for (let i = 0; i < messages.length; i += 500) {
+      const batch = messages.slice(i, i + 500);
+      if (admin.messaging().sendEach) {
+        await admin.messaging().sendEach(batch);
+      } else {
+        await Promise.all(batch.map(msg => admin.messaging().send(msg).catch(e => console.warn("FCM error:", e))));
+      }
+    }
+
+    return { success: true, count: activeFollowers.length };
+  } catch (err) {
+    console.error("notifyActiveFollowersOnLive error:", err);
+    throw new functions.https.HttpsError("internal", err.message);
+  }
+});
+

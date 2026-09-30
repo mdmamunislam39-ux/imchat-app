@@ -6,6 +6,31 @@ import 'package:chat_messenger/api/official_team_api.dart';
 class SvipService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  /// Calculate the month until which SVIP is valid (current month + 1 full extra month grace period)
+  static String calculateSvipValidUntilMonth(DateTime rechargeDate) {
+    final nextMonthDate = DateTime(rechargeDate.year, rechargeDate.month + 1, 1);
+    return "${nextMonthDate.year}-${nextMonthDate.month.toString().padLeft(2, '0')}";
+  }
+
+  /// Check if user's SVIP is currently active (supports current month + 1 month retention)
+  static bool isSvipActive(int activeSvipLevel, String svipValidUntilMonth) {
+    if (activeSvipLevel <= 0 || svipValidUntilMonth.trim().isEmpty) return false;
+    final now = DateTime.now();
+    final currentMonth = "${now.year}-${now.month.toString().padLeft(2, '0')}";
+    return currentMonth.compareTo(svipValidUntilMonth) <= 0;
+  }
+
+  /// Check if user's VIP is currently active
+  static bool isVipActive(int activeVipLevel, DateTime? vipValidUntil, [String vipValidUntilMonth = '']) {
+    if (activeVipLevel <= 0) return false;
+    if (vipValidUntilMonth.toLowerCase() == 'unlimited') return true;
+    if (vipValidUntil != null) {
+      if (vipValidUntil.year >= 2090) return true;
+      return vipValidUntil.isAfter(DateTime.now());
+    }
+    return false;
+  }
+
   /// Check and auto-upgrade user's SVIP level if they meet the threshold
   static Future<void> checkAndAutoUpgradeSvip({
     required String userId,
@@ -65,8 +90,10 @@ class SvipService {
         return '';
       }
 
+      final now = DateTime.now();
+      final validUntilMonth = calculateSvipValidUntilMonth(now);
       final bool isLevelUpgrade = highestEligibleSvip > currentActiveSvip;
-      final bool isMonthlyRenewal = userValidUntilMonth != currentMonth;
+      final bool isMonthlyRenewal = userValidUntilMonth != validUntilMonth;
       final bool shouldApply = highestEligibleSvip > 0 && highestSvipData != null && (isLevelUpgrade || isMonthlyRenewal || highestEligibleSvip >= currentActiveSvip);
 
       // Apply SVIP Upgrade / Renewal / Sync if eligible
@@ -78,7 +105,7 @@ class SvipService {
 
         transaction.update(userRef, {
           'activeSvipLevel': highestEligibleSvip,
-          'svipValidUntilMonth': currentMonth,
+          'svipValidUntilMonth': validUntilMonth,
         });
 
         // Automatically delete all previous SVIP level items from user_store_items if upgraded
@@ -183,8 +210,7 @@ class SvipService {
           hasUpdates = true;
         }
 
-        final now = DateTime.now();
-        final nextMonth = DateTime(now.year, now.month + 1, 1);
+        final expiryDate = DateTime(now.year, now.month + 2, 0, 23, 59, 59);
         final List<Map<String, String>> itemsToAdd = [
           {'type': 'badge', 'idSuffix': 'badge', 'name': 'SVIP $levelNum Badge', 'url': badgeUrl},
           {'type': 'avatarFrame', 'idSuffix': 'frame', 'name': 'SVIP $levelNum Frame', 'url': frameUrl},
@@ -213,7 +239,7 @@ class SvipService {
               'thumbnailUrl': url,
               'image': url,
               'assignedAt': FieldValue.serverTimestamp(),
-              'expiresAt': Timestamp.fromDate(nextMonth),
+              'expiresAt': Timestamp.fromDate(expiryDate),
               'isActive': true,
             }, SetOptions(merge: true));
           }
@@ -241,6 +267,190 @@ class SvipService {
       }
     } catch (e) {
       debugPrint('Error auto-upgrading SVIP: $e');
+    }
+  }
+
+  /// Automatically check if VIP or SVIP has expired, and clean up all rewards & statuses
+  static Future<void> checkAndCleanupExpiredVipAndSvip(String userId, [Map<String, dynamic>? initialData]) async {
+    try {
+      final userRef = _firestore.collection('Users').doc(userId);
+      Map<String, dynamic> userData = initialData ?? {};
+      if (userData.isEmpty) {
+        final snap = await userRef.get();
+        if (!snap.exists || snap.data() == null) return;
+        userData = snap.data()!;
+      }
+
+      final int activeVip = (userData['activeVipLevel'] as num?)?.toInt() ?? 0;
+      DateTime? vipValidUntil;
+      if (userData['vipValidUntil'] != null) {
+        if (userData['vipValidUntil'] is Timestamp) {
+          vipValidUntil = (userData['vipValidUntil'] as Timestamp).toDate();
+        } else if (userData['vipValidUntil'] is String) {
+          vipValidUntil = DateTime.tryParse(userData['vipValidUntil'].toString());
+        }
+      }
+      final String vipValidMonth = (userData['vipValidUntilMonth'] ?? '').toString();
+
+      final int activeSvip = (userData['activeSvipLevel'] as num?)?.toInt() ?? 0;
+      final String svipValidMonth = (userData['svipValidUntilMonth'] ?? '').toString();
+
+      final bool vipStillValid = isVipActive(activeVip, vipValidUntil, vipValidMonth);
+      final bool svipStillValid = isSvipActive(activeSvip, svipValidMonth);
+
+      bool needsUserUpdate = false;
+      final Map<String, dynamic> userUpdates = {};
+      Map<String, dynamic> custData = Map<String, dynamic>.from(userData['customization'] ?? {});
+      bool custModified = false;
+
+      // VIP Expired Cleanup
+      if (activeVip > 0 && !vipStillValid) {
+        debugPrint('⏰ [SvipService] VIP expired for user $userId (expiry: $vipValidUntil). Cleaning up...');
+        userUpdates['activeVipLevel'] = 0;
+        userUpdates['vipValidUntil'] = null;
+        userUpdates['vipValidUntilMonth'] = '';
+        needsUserUpdate = true;
+
+        // Unequip VIP items
+        if (custData['selectedNameplateId']?.toString().startsWith('vip_') ?? false) {
+          custData['selectedNameplateId'] = null;
+          custData['selectedNameplateUrl'] = null;
+          custData['selectedNameplate'] = null;
+          custModified = true;
+        }
+        if (custData['selectedNameplateIds'] is List) {
+          final list = List<String>.from(custData['selectedNameplateIds']);
+          list.removeWhere((id) => id.startsWith('vip_'));
+          custData['selectedNameplateIds'] = list;
+          custModified = true;
+        }
+        if (custData['selectedFrameId']?.toString().startsWith('vip_') ?? false) {
+          custData['selectedFrameId'] = null;
+          custModified = true;
+        }
+        if (custData['selectedEntryEffectId']?.toString().startsWith('vip_') ?? false) {
+          custData['selectedEntryEffectId'] = null;
+          custModified = true;
+        }
+        if (custData['selectedBackgroundThemeId']?.toString().startsWith('vip_') ?? false) {
+          custData['selectedBackgroundThemeId'] = null;
+          custModified = true;
+        }
+
+        // Clean VIP items from owned lists
+        void cleanOwned(String key) {
+          if (custData[key] is List) {
+            final list = List<String>.from(custData[key]);
+            final initialLen = list.length;
+            list.removeWhere((item) => item.contains('vip_'));
+            if (list.length != initialLen) {
+              custData[key] = list;
+              custModified = true;
+            }
+          }
+        }
+        cleanOwned('ownedBadges');
+        cleanOwned('ownedFrames');
+        cleanOwned('ownedEntryEffects');
+        cleanOwned('ownedBackgroundThemes');
+        cleanOwned('ownedNameplates');
+
+        // Delete / deactivate VIP items from user_store_items
+        _cleanupStoreItemsPrefix(userId, 'vip_');
+      }
+
+      // SVIP Expired Cleanup
+      if (activeSvip > 0 && !svipStillValid) {
+        debugPrint('⏰ [SvipService] SVIP expired for user $userId (validUntilMonth: $svipValidMonth). Cleaning up...');
+        userUpdates['activeSvipLevel'] = 0;
+        userUpdates['svipValidUntilMonth'] = '';
+        needsUserUpdate = true;
+
+        // Unequip SVIP items
+        if (custData['selectedNameplateId']?.toString().startsWith('svip_') ?? false) {
+          custData['selectedNameplateId'] = null;
+          custData['selectedNameplateUrl'] = null;
+          custData['selectedNameplate'] = null;
+          custModified = true;
+        }
+        if (custData['selectedNameplateIds'] is List) {
+          final list = List<String>.from(custData['selectedNameplateIds']);
+          list.removeWhere((id) => id.startsWith('svip_'));
+          custData['selectedNameplateIds'] = list;
+          custModified = true;
+        }
+        if (custData['selectedFrameId']?.toString().startsWith('svip_') ?? false) {
+          custData['selectedFrameId'] = null;
+          custModified = true;
+        }
+        if (custData['selectedEntryEffectId']?.toString().startsWith('svip_') ?? false) {
+          custData['selectedEntryEffectId'] = null;
+          custModified = true;
+        }
+        if (custData['selectedBackgroundThemeId']?.toString().startsWith('svip_') ?? false) {
+          custData['selectedBackgroundThemeId'] = null;
+          custModified = true;
+        }
+
+        // Clean SVIP items from owned lists
+        void cleanOwned(String key) {
+          if (custData[key] is List) {
+            final list = List<String>.from(custData[key]);
+            final initialLen = list.length;
+            list.removeWhere((item) => item.contains('svip_'));
+            if (list.length != initialLen) {
+              custData[key] = list;
+              custModified = true;
+            }
+          }
+        }
+        cleanOwned('ownedBadges');
+        cleanOwned('ownedFrames');
+        cleanOwned('ownedEntryEffects');
+        cleanOwned('ownedBackgroundThemes');
+        cleanOwned('ownedNameplates');
+
+        // Delete / deactivate SVIP items from user_store_items
+        _cleanupStoreItemsPrefix(userId, 'svip_');
+      }
+
+      if (custModified) {
+        userUpdates['customization'] = custData;
+        needsUserUpdate = true;
+      }
+
+      if (needsUserUpdate) {
+        await userRef.update(userUpdates);
+      }
+    } catch (e) {
+      debugPrint('⚠️ [SvipService] Error during expiration cleanup: $e');
+    }
+  }
+
+  static Future<void> _cleanupStoreItemsPrefix(String userId, String prefix) async {
+    try {
+      final snap = await _firestore
+          .collection('user_store_items')
+          .where('userId', isEqualTo: userId)
+          .get();
+
+      final batch = _firestore.batch();
+      bool hasDeletes = false;
+
+      for (final doc in snap.docs) {
+        final storeItemId = doc.data()['storeItemId']?.toString() ?? '';
+        if (storeItemId.startsWith(prefix)) {
+          batch.delete(doc.reference);
+          hasDeletes = true;
+        }
+      }
+
+      if (hasDeletes) {
+        await batch.commit();
+        debugPrint('🧹 [SvipService] Removed expired store items with prefix $prefix for user $userId');
+      }
+    } catch (e) {
+      debugPrint('⚠️ [SvipService] Error removing store items for prefix $prefix: $e');
     }
   }
 

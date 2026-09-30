@@ -1,3 +1,9 @@
+import 'dart:convert';
+import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:country_code_picker/country_code_picker.dart';
+
 /// Model representing country details
 class CountryData {
   final String code; // 2-letter ISO short code (e.g., 'BD', 'IN', 'US')
@@ -17,13 +23,13 @@ class CountryHelper {
   /// Convert 2-letter ISO country code to flag emoji
   static String codeToFlag(String countryCode) {
     final clean = countryCode.trim().toUpperCase();
-    if (clean.length != 2) return '🌐';
+    if (clean.length != 2) return '';
     try {
       final first = clean.codeUnitAt(0) - 0x41 + 0x1F1E6;
       final second = clean.codeUnitAt(1) - 0x41 + 0x1F1E6;
       return String.fromCharCode(first) + String.fromCharCode(second);
     } catch (_) {
-      return '🌐';
+      return '';
     }
   }
 
@@ -89,95 +95,169 @@ class CountryHelper {
     final upper = code.trim().toUpperCase();
     final found = _countries.firstWhere(
       (c) => c.code == upper,
-      orElse: () => CountryData(
-        code: upper,
-        name: upper,
-        flag: codeToFlag(upper),
-        dialCode: '',
-      ),
+      orElse: () {
+        // Search in extended codes if not in standard list
+        for (final c in codes) {
+          if ((c['code'] ?? '').toString().toUpperCase() == upper) {
+            return CountryData(
+              code: upper,
+              name: c['name']?.toString() ?? upper,
+              flag: codeToFlag(upper),
+              dialCode: c['dial_code']?.toString() ?? '',
+            );
+          }
+        }
+        return CountryData(
+          code: upper,
+          name: upper,
+          flag: codeToFlag(upper),
+          dialCode: '',
+        );
+      },
     );
     return found;
   }
 
-  /// Detect ISO 2-letter country code from phone number or user profile country string
+  /// Get country data by country name or code
+  static CountryData getCountryDataByNameOrCode(String countryOrCode) {
+    final clean = countryOrCode.trim();
+    if (clean.isEmpty) return getCountryData('BD');
+
+    final code = detectCountryCodeFromPhoneOrUser(countryStr: clean);
+    if (code.isNotEmpty) {
+      return getCountryData(code);
+    }
+    return getCountryData('BD');
+  }
+
+  /// Automatically detect user's device country via IP, system locale, or phone fallback
+  static Future<CountryData> detectDeviceCountry({String? userPhone}) async {
+    // 1. Try IP Geolocation first (fast timeout)
+    try {
+      final response = await http
+          .get(Uri.parse('http://ip-api.com/json'))
+          .timeout(const Duration(milliseconds: 2500));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is Map<String, dynamic> && data['status'] == 'success') {
+          final String? countryCode = data['countryCode']?.toString();
+          if (countryCode != null && countryCode.trim().isNotEmpty) {
+            final detectedCode = countryCode.trim().toUpperCase();
+            debugPrint('📍 [CountryHelper] IP Geolocation detected: $detectedCode (${data['country']})');
+            return getCountryData(detectedCode);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [CountryHelper] Primary IP detection failed: $e');
+    }
+
+    // Secondary fallback IP service
+    try {
+      final response = await http
+          .get(Uri.parse('https://api.country.is/'))
+          .timeout(const Duration(milliseconds: 2000));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is Map<String, dynamic> && data['country'] != null) {
+          final String detectedCode = data['country'].toString().trim().toUpperCase();
+          if (detectedCode.length == 2) {
+            debugPrint('📍 [CountryHelper] Secondary IP detection detected: $detectedCode');
+            return getCountryData(detectedCode);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [CountryHelper] Secondary IP detection failed: $e');
+    }
+
+    // 2. Try device system locale
+    try {
+      final locale = ui.PlatformDispatcher.instance.locale;
+      final countryCode = locale.countryCode;
+      if (countryCode != null && countryCode.trim().length == 2) {
+        final cleanCode = countryCode.trim().toUpperCase();
+        debugPrint('📍 [CountryHelper] System Locale detected: $cleanCode');
+        return getCountryData(cleanCode);
+      }
+    } catch (e) {
+      debugPrint('⚠️ [CountryHelper] System Locale detection failed: $e');
+    }
+
+    // 3. Try user's phone number
+    if (userPhone != null && userPhone.trim().isNotEmpty) {
+      final phoneCode = detectCountryCodeFromPhoneOrUser(phone: userPhone);
+      if (phoneCode.isNotEmpty) {
+        debugPrint('📍 [CountryHelper] Phone Prefix detected: $phoneCode');
+        return getCountryData(phoneCode);
+      }
+    }
+
+    // 4. Default fallback: Bangladesh
+    return getCountryData('BD');
+  }
+
+  /// Detect ISO 2-letter country code from user profile country string or phone number
   static String detectCountryCodeFromPhoneOrUser({String? phone, String? countryStr}) {
+    // 1. Prioritize user's explicitly selected country from profile
+    if (countryStr != null && countryStr.trim().isNotEmpty && countryStr.trim().toLowerCase() != 'select') {
+      final clean = countryStr.trim();
+      final upper = clean.toUpperCase();
+
+      // If already a 2-letter ISO code (e.g., 'BD', 'IN', 'SA', 'US')
+      if (clean.length == 2 && RegExp(r'^[A-Za-z]{2}$').hasMatch(clean)) {
+        return upper;
+      }
+
+      // Check common aliases
+      if (upper == 'USA' || upper == 'UNITED STATES OF AMERICA' || upper == 'UNITED STATES') return 'US';
+      if (upper == 'UK' || upper == 'UNITED KINGDOM' || upper == 'ENGLAND' || upper == 'GREAT BRITAIN') return 'GB';
+      if (upper == 'KSA' || upper == 'SAUDI ARABIA') return 'SA';
+      if (upper == 'UAE' || upper == 'UNITED ARAB EMIRATES') return 'AE';
+      if (upper == 'SOUTH KOREA' || upper == 'KOREA') return 'KR';
+      if (upper == 'RUSSIA' || upper == 'RUSSIAN FEDERATION') return 'RU';
+
+      // Match against full 250+ country list from country_code_picker
+      for (final c in codes) {
+        final name = c['name']?.toString() ?? '';
+        final code = c['code']?.toString() ?? '';
+        if (name.toLowerCase() == clean.toLowerCase() ||
+            code.toLowerCase() == clean.toLowerCase()) {
+          return code.toUpperCase();
+        }
+      }
+
+      // Partial match in country_code_picker
+      for (final c in codes) {
+        final name = c['name']?.toString() ?? '';
+        final code = c['code']?.toString() ?? '';
+        if (name.isNotEmpty && (name.toLowerCase().contains(clean.toLowerCase()) ||
+            clean.toLowerCase().contains(name.toLowerCase()))) {
+          return code.toUpperCase();
+        }
+      }
+    }
+
+    // 2. Fallback to phone number dial code if country is not set
     if (phone != null && phone.trim().isNotEmpty) {
       String p = phone.trim().replaceAll(RegExp(r'[^\d+]'), '');
       if (p.startsWith('+')) p = p.substring(1);
 
-      // 3-digit dial codes
-      if (p.startsWith('880')) return 'BD';
-      if (p.startsWith('966')) return 'SA';
-      if (p.startsWith('971')) return 'AE';
-      if (p.startsWith('974')) return 'QA';
-      if (p.startsWith('965')) return 'KW';
-      if (p.startsWith('968')) return 'OM';
-      if (p.startsWith('973')) return 'BH';
-      if (p.startsWith('964')) return 'IQ';
-      if (p.startsWith('962')) return 'JO';
-      if (p.startsWith('961')) return 'LB';
-      if (p.startsWith('963')) return 'SY';
-      if (p.startsWith('967')) return 'YE';
-      if (p.startsWith('977')) return 'NP';
-      if (p.startsWith('886')) return 'TW';
-      if (p.startsWith('852')) return 'HK';
-      if (p.startsWith('234')) return 'NG';
-      if (p.startsWith('212')) return 'MA';
-      if (p.startsWith('213')) return 'DZ';
-      if (p.startsWith('216')) return 'TN';
-      if (p.startsWith('249')) return 'SD';
-      if (p.startsWith('254')) return 'KE';
-
-      // 2-digit dial codes
-      if (p.startsWith('91')) return 'IN';
-      if (p.startsWith('92')) return 'PK';
-      if (p.startsWith('60')) return 'MY';
-      if (p.startsWith('65')) return 'SG';
-      if (p.startsWith('66')) return 'TH';
-      if (p.startsWith('84')) return 'VN';
-      if (p.startsWith('62')) return 'ID';
-      if (p.startsWith('63')) return 'PH';
-      if (p.startsWith('90')) return 'TR';
-      if (p.startsWith('20')) return 'EG';
-      if (p.startsWith('49')) return 'DE';
-      if (p.startsWith('33')) return 'FR';
-      if (p.startsWith('39')) return 'IT';
-      if (p.startsWith('34')) return 'ES';
-      if (p.startsWith('44')) return 'GB';
-      if (p.startsWith('81')) return 'JP';
-      if (p.startsWith('82')) return 'KR';
-      if (p.startsWith('86')) return 'CN';
-      if (p.startsWith('55')) return 'BR';
-      if (p.startsWith('98')) return 'IR';
-      if (p.startsWith('93')) return 'AF';
-      if (p.startsWith('94')) return 'LK';
-      if (p.startsWith('27')) return 'ZA';
-
-      // 1-digit dial codes
-      if (p.startsWith('1')) return 'US';
-      if (p.startsWith('7')) return 'RU';
+      // Match dial code from country_code_picker
+      for (final c in codes) {
+        final dial = (c['dial_code'] ?? '').replaceAll('+', '');
+        final code = c['code']?.toString() ?? '';
+        if (dial.isNotEmpty && p.startsWith(dial) && code.isNotEmpty) {
+          return code.toUpperCase();
+        }
+      }
 
       // Local BD mobile prefixes: 013, 014, 015, 016, 017, 018, 019
       if (RegExp(r'^01[3-9]').hasMatch(p)) return 'BD';
     }
-
-    if (countryStr != null && countryStr.trim().isNotEmpty) {
-      final c = countryStr.trim().toUpperCase();
-      if (c == 'BANGLADESH' || c == 'BD') return 'BD';
-      if (c == 'INDIA' || c == 'IN') return 'IN';
-      if (c == 'PAKISTAN' || c == 'PK') return 'PK';
-      if (c == 'SAUDI ARABIA' || c == 'KSA' || c == 'SA') return 'SA';
-      if (c == 'UAE' || c == 'UNITED ARAB EMIRATES' || c == 'AE') return 'AE';
-      if (c == 'QATAR' || c == 'QA') return 'QA';
-      if (c == 'KUWAIT' || c == 'KW') return 'KW';
-      if (c == 'OMAN' || c == 'OM') return 'OM';
-      if (c == 'BAHRAIN' || c == 'BH') return 'BH';
-      if (c == 'MALAYSIA' || c == 'MY') return 'MY';
-      if (c == 'USA' || c == 'UNITED STATES' || c == 'US') return 'US';
-      if (c == 'UK' || c == 'UNITED KINGDOM' || c == 'GB') return 'GB';
-      if (c.length == 2) return c;
-    }
-
-    return 'BD';
+    return '';
   }
 }
+

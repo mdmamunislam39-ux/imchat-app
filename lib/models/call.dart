@@ -1,3 +1,4 @@
+import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 
 class Call {
@@ -26,7 +27,15 @@ class Call {
   });
 
   // Check caller id
-  bool get isCaller => callerId == AuthController.instance.currentUser.userId;
+  bool get isCaller {
+    try {
+      if (Get.isRegistered<AuthController>()) {
+        final uid = AuthController.instance.currentUser.userId;
+        if (uid.isNotEmpty) return callerId == uid;
+      }
+    } catch (_) {}
+    return false;
+  }
   String get effectiveChannelName => callerId;
   bool get isGroup => receiverId == 'group_call';
 

@@ -11,6 +11,11 @@ class FollowButton extends StatefulWidget {
   final bool? initialFollowStatus;
   final Color? textColor;
   final Color? borderColor;
+  final Color? backgroundColor;
+  final double? fontSize;
+  final double? iconSize;
+  final EdgeInsetsGeometry? padding;
+  final BorderRadius? borderRadius;
 
   const FollowButton({
     super.key,
@@ -22,6 +27,11 @@ class FollowButton extends StatefulWidget {
     this.initialFollowStatus,
     this.textColor,
     this.borderColor,
+    this.backgroundColor,
+    this.fontSize,
+    this.iconSize,
+    this.padding,
+    this.borderRadius,
   });
 
   @override
@@ -112,16 +122,24 @@ class _FollowButtonState extends State<FollowButton> {
           icon: Icon(
             isFollowing ? Icons.person_remove : Icons.person_add,
             color: btnColor,
+            size: widget.iconSize ?? 18,
           ),
           label: Text(
             isFollowing ? 'Following' : 'Follow',
-            style: TextStyle(color: btnColor),
+            style: TextStyle(
+              color: btnColor,
+              fontSize: widget.fontSize,
+              fontWeight: FontWeight.w600,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           style: OutlinedButton.styleFrom(
+            backgroundColor: widget.backgroundColor,
             side: BorderSide(color: borderCol),
-            padding: const EdgeInsets.symmetric(vertical: 12),
+            padding: widget.padding ?? const EdgeInsets.symmetric(vertical: 12),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: widget.borderRadius ?? BorderRadius.circular(12),
             ),
           ),
         );

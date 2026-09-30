@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
 import 'package:flutter_svga/flutter_svga.dart';
@@ -163,6 +164,19 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
         return;
       }
 
+      if (room.isUserBlocked(_currentUser!.userId)) {
+        _isNavigatingToRoom = false;
+        _showErrorSnackBar('You are blocked from entering this room.');
+        return;
+      }
+
+      if (room.isUserKickedRecently(_currentUser!.userId)) {
+        _isNavigatingToRoom = false;
+        _showErrorSnackBar(
+            'You have been removed from this room and cannot join for 24 hours.');
+        return;
+      }
+
       MinimizedRoomController.checkAndProceed(
         context: context,
         targetRoom: room,
@@ -192,6 +206,19 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
       if (_currentUser == null) {
         _isNavigatingToRoom = false;
         _showErrorSnackBar('Please log in to join a room');
+        return;
+      }
+
+      if (room.isUserBlocked(_currentUser!.userId)) {
+        _isNavigatingToRoom = false;
+        _showErrorSnackBar('You are blocked from entering this room.');
+        return;
+      }
+
+      if (room.isUserKickedRecently(_currentUser!.userId)) {
+        _isNavigatingToRoom = false;
+        _showErrorSnackBar(
+            'You have been removed from this room and cannot join for 24 hours.');
         return;
       }
 
@@ -416,7 +443,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
       title: Row(
         children: [
           _buildTopNavTab(
-            'Mine',
+            'mine'.tr,
             0,
             isActive: _tabController.index == 0,
             primaryTextColor: primaryTextColor,
@@ -424,7 +451,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
             isLightBg: isLightBg,
           ),
           _buildTopNavTab(
-            'All',
+            'all'.tr,
             1,
             isActive: _tabController.index == 1,
             primaryTextColor: primaryTextColor,
@@ -432,7 +459,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
             isLightBg: isLightBg,
           ),
           _buildTopNavTab(
-            'Party',
+            'party'.tr,
             2,
             isActive: _tabController.index == 2,
             primaryTextColor: primaryTextColor,
@@ -440,7 +467,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
             isLightBg: isLightBg,
           ),
           _buildTopNavTab(
-            'Live',
+            'live'.tr,
             3,
             isActive: _tabController.index == 3,
             primaryTextColor: primaryTextColor,
@@ -449,6 +476,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
           ),
         ],
       ),
+
       actions: [
         IconButton(
           icon: const Icon(Icons.note_alt_outlined, color: Colors.orangeAccent),
@@ -608,7 +636,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
             if (!widget.showAppBar)
               Container(
                 color: Colors.transparent,
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
                 child: Row(
                   children: [
                     const SizedBox(width: 12),
@@ -795,6 +823,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
         title: 'All Rooms',
         showTitle: false,
         isLoading: true,
+        isGrid: true,
         headerWidget: headerWidget,
       );
     }
@@ -806,6 +835,11 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
       if (_selectedCategory == 'Trending' || _selectedCategory == 'Trending 🔥') {
         final affinity = SocialAffinityService();
         filteredRooms = List<AudioRoomV2>.from(allRooms)..sort((a, b) {
+          final aPinned = a.isCurrentlyPinned;
+          final bPinned = b.isCurrentlyPinned;
+          if (aPinned && !bPinned) return -1;
+          if (!aPinned && bPinned) return 1;
+
           final scoreA = affinity.calculateBoostedScore(
             a.trendingScore,
             a.creatorId,
@@ -837,9 +871,22 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
           return scoreB.compareTo(scoreA);
         });
       } else if (_selectedCategory == 'All Rooms') {
-        filteredRooms = allRooms;
+        filteredRooms = List<AudioRoomV2>.from(allRooms)..sort((a, b) {
+          final aPinned = a.isCurrentlyPinned;
+          final bPinned = b.isCurrentlyPinned;
+          if (aPinned && !bPinned) return -1;
+          if (!aPinned && bPinned) return 1;
+          return b.participantCount.compareTo(a.participantCount);
+        });
       } else {
-        filteredRooms = allRooms.where((room) => room.category == _selectedCategory).toList();
+        filteredRooms = allRooms.where((room) => room.category == _selectedCategory).toList()
+          ..sort((a, b) {
+            final aPinned = a.isCurrentlyPinned;
+            final bPinned = b.isCurrentlyPinned;
+            if (aPinned && !bPinned) return -1;
+            if (!aPinned && bPinned) return 1;
+            return b.participantCount.compareTo(a.participantCount);
+          });
       }
 
       if (_selectedCountryCode != 'ALL') {
@@ -854,6 +901,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
         title: state.isSearching ? 'Search Results' : 'All Rooms',
         showTitle: false,
         showTotalCount: false,
+        isGrid: true,
         headerWidget: headerWidget,
         onRoomTap: _handleRoomTap,
         onJoinRoom: _handleJoinRoom,
@@ -873,6 +921,7 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
       rooms: const [],
       title: 'All Rooms',
       showTitle: false,
+      isGrid: true,
       headerWidget: headerWidget,
       emptyMessage: 'No rooms available',
     );
@@ -905,6 +954,11 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
       if (_selectedCategory == 'Trending' || _selectedCategory == 'Trending 🔥') {
         final affinity = SocialAffinityService();
         filteredRooms = List<AudioRoomV2>.from(audioRooms)..sort((a, b) {
+          final aPinned = a.isCurrentlyPinned;
+          final bPinned = b.isCurrentlyPinned;
+          if (aPinned && !bPinned) return -1;
+          if (!aPinned && bPinned) return 1;
+
           final scoreA = affinity.calculateBoostedScore(
             a.trendingScore,
             a.creatorId,
@@ -936,9 +990,22 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
           return scoreB.compareTo(scoreA);
         });
       } else if (_selectedCategory == 'All Rooms') {
-        filteredRooms = audioRooms;
+        filteredRooms = List<AudioRoomV2>.from(audioRooms)..sort((a, b) {
+          final aPinned = a.isCurrentlyPinned;
+          final bPinned = b.isCurrentlyPinned;
+          if (aPinned && !bPinned) return -1;
+          if (!aPinned && bPinned) return 1;
+          return b.participantCount.compareTo(a.participantCount);
+        });
       } else {
-        filteredRooms = audioRooms.where((room) => room.category == _selectedCategory).toList();
+        filteredRooms = audioRooms.where((room) => room.category == _selectedCategory).toList()
+          ..sort((a, b) {
+            final aPinned = a.isCurrentlyPinned;
+            final bPinned = b.isCurrentlyPinned;
+            if (aPinned && !bPinned) return -1;
+            if (!aPinned && bPinned) return 1;
+            return b.participantCount.compareTo(a.participantCount);
+          });
       }
 
       if (_selectedCountryCode != 'ALL') {
@@ -1448,31 +1515,57 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 8,
-                              backgroundImage: creatorImageUrl != null && creatorImageUrl.isNotEmpty
-                                  ? NetworkImage(creatorImageUrl)
-                                  : null,
-                              backgroundColor: Colors.purpleAccent.withValues(alpha: 0.3),
-                              child: (creatorImageUrl == null || creatorImageUrl.isEmpty)
-                                  ? const Icon(Icons.person, size: 6, color: Colors.white)
-                                  : null,
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                room.creatorName,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                  fontSize: 10,
+                        StreamBuilder<DocumentSnapshot>(
+                          stream: room.creatorId.isNotEmpty
+                              ? FirebaseFirestore.instance
+                                  .collection('Users')
+                                  .doc(room.creatorId)
+                                  .snapshots()
+                              : null,
+                          builder: (context, userSnap) {
+                            String displayName = room.creatorName;
+                            String? liveAvatar = creatorImageUrl;
+                            if (userSnap.hasData && userSnap.data!.exists) {
+                              final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                              if (uData != null) {
+                                if (uData['fullname'] != null &&
+                                    uData['fullname'].toString().trim().isNotEmpty) {
+                                  displayName = uData['fullname'].toString().trim();
+                                }
+                                if (uData['photoUrl'] != null &&
+                                    uData['photoUrl'].toString().trim().isNotEmpty) {
+                                  liveAvatar = uData['photoUrl'].toString().trim();
+                                }
+                              }
+                            }
+
+                            return Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 8,
+                                  backgroundImage: liveAvatar != null && liveAvatar.isNotEmpty
+                                      ? NetworkImage(liveAvatar)
+                                      : null,
+                                  backgroundColor: Colors.purpleAccent.withValues(alpha: 0.3),
+                                  child: (liveAvatar == null || liveAvatar.isEmpty)
+                                      ? const Icon(Icons.person, size: 6, color: Colors.white)
+                                      : null,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    displayName,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.8),
+                                      fontSize: 10,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ],
                     ),

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
 
 
+import 'package:chat_messenger/screens/room/seller_diamond_request_screen.dart';
+
 class SellerHistoryScreen extends StatefulWidget {
   final User currentUser;
 
@@ -97,6 +99,60 @@ class _SellerHistoryScreenState extends State<SellerHistoryScreen> {
         iconTheme: const IconThemeData(color: Colors.black),
         titleTextStyle: const TextStyle(
             color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => SellerDiamondRequestScreen(
+                        currentUser: widget.currentUser,
+                      ),
+                    ),
+                  );
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFC381F4), Color(0xFF8E44AD)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF8E44AD).withOpacity(0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DynamicDiamondIcon(width: 14, height: 14),
+                      SizedBox(width: 4),
+                      Text(
+                        'Stock & Top-Up',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       backgroundColor: Colors.grey.shade100,
       body: _isLoading

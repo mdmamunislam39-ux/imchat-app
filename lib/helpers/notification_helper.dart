@@ -10,6 +10,7 @@ import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/helpers/routes_helper.dart';
 import 'package:chat_messenger/routes/app_routes.dart';
 
+import 'package:chat_messenger/api/user_api.dart';
 import 'dialog_helper.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/audio_rooms_v2_integration.dart';
 
@@ -53,19 +54,37 @@ abstract class NotificationHelper {
         break;
 
       case 'message':
-        final String? senderId = payload['senderId'];
-        if (senderId != null) {
-          // Navigate immediately to avoid hang/loading screen
-          final User sender = User.fromMap({
+        final dynamic rawMsgCall = payload['call'];
+        final Map<String, dynamic> msgCallMap = rawMsgCall is Map
+            ? Map<String, dynamic>.from(rawMsgCall)
+            : (rawMsgCall is String && rawMsgCall.isNotEmpty
+                ? (jsonDecode(rawMsgCall) is Map ? Map<String, dynamic>.from(jsonDecode(rawMsgCall)) : {})
+                : {});
+        final String? senderId = payload['senderId'] ?? msgCallMap['senderId'];
+        if (senderId != null && senderId.isNotEmpty) {
+          User? sender;
+          try {
+            sender = await UserApi.getUser(senderId);
+          } catch (e) {
+            debugPrint('Error fetching user for message notification: $e');
+          }
+          sender ??= User.fromMap({
             'userId': senderId,
             'fullname': title.isNotEmpty ? title : 'User',
+            'photoUrl': payload['senderAvatar'] ?? '',
           });
-          RoutesHelper.toMessages(isGroup: false, user: sender);
+          await RoutesHelper.toMessages(isGroup: false, user: sender);
         }
         break;
 
       case 'group':
-        final String? groupId = payload['groupId'];
+        final dynamic rawGrpCall = payload['call'];
+        final Map<String, dynamic> grpCallMap = rawGrpCall is Map
+            ? Map<String, dynamic>.from(rawGrpCall)
+            : (rawGrpCall is String && rawGrpCall.isNotEmpty
+                ? (jsonDecode(rawGrpCall) is Map ? Map<String, dynamic>.from(jsonDecode(rawGrpCall)) : {})
+                : {});
+        final String? groupId = payload['groupId'] ?? grpCallMap['groupId'];
         if (groupId != null) {
           await RoutesHelper.toMessages(isGroup: true, groupId: groupId);
         }
@@ -106,10 +125,13 @@ abstract class NotificationHelper {
         break;
 
       case 'follower_room':
-        final Map<String, dynamic> callData = payload['call'] != null
-            ? (payload['call'] is String ? Map<String, dynamic>.from(jsonDecode(payload['call'])) : Map<String, dynamic>.from(payload['call']))
-            : {};
-        final String? roomId = callData['roomId'];
+        final dynamic rawCall = payload['call'];
+        final Map<String, dynamic> callData = rawCall is Map
+            ? Map<String, dynamic>.from(rawCall)
+            : (rawCall is String && rawCall.isNotEmpty
+                ? (jsonDecode(rawCall) is Map ? Map<String, dynamic>.from(jsonDecode(rawCall)) : {})
+                : {});
+        final String? roomId = callData['roomId'] ?? payload['roomId'];
         if (roomId != null && roomId.isNotEmpty) {
           // Navigate immediately to the room without dialog
           AudioRoomsV2Integration.joinRoomById(roomId);

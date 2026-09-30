@@ -8,9 +8,6 @@ import 'package:chat_messenger/helpers/mic_refill_helper.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/models/user.dart';
-import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_controller.dart';
-import 'package:chat_messenger/screens/audio_rooms_v2/repository/audio_rooms_repository.dart';
-import 'package:chat_messenger/models/audio_room_v2.dart';
 
 /// Service for managing store items and user purchases
 class StoreService {
@@ -949,28 +946,20 @@ class StoreService {
       if (itemType == 'avatarFrame' || itemType == 'frame') {
         final details = await getStoreItemDetails(itemId);
         final rawUrl = details?['fileUrl'] ??
+            details?['animationUrl'] ??
+            details?['frameUrl'] ??
+            details?['frameMediaUrl'] ??
+            details?['svgaUrl'] ??
+            details?['assetUrl'] ??
             details?['thumbnailUrl'] ??
             details?['imageUrl'] ??
             details?['image'];
         final String? resolvedUrl = rawUrl?.toString();
-        FrameHelper.setCachedUserFrame(
+        await FrameHelper.updateUserFrameRealtime(
           userId: userId,
           frameId: itemId,
           frameUrl: resolvedUrl,
         );
-        try {
-          if (Get.isRegistered<AuthController>()) {
-            final auth = AuthController.instance;
-            if (auth.currentUser.userId == userId) {
-              auth.currentFrameUrl.value = resolvedUrl ?? '';
-              final cust =
-                  auth.currentUser.customization ?? UserCustomization();
-              cust.selectedFrameId = itemId;
-              auth.currentUser.customization = cust;
-            }
-          }
-        } catch (_) {}
-        _syncFrameToActiveRoom(userId, itemId);
       }
 
       if (itemType == 'micRefill') {
@@ -980,7 +969,7 @@ class StoreService {
             details?['imageUrl'] ??
             details?['image'];
         final String? resolvedUrl = rawUrl?.toString();
-        MicRefillHelper.setCachedUserMicRefill(userId, resolvedUrl);
+        MicRefillHelper.setCachedUserMicRefill(userId, resolvedUrl, itemId);
         try {
           if (Get.isRegistered<AuthController>()) {
             final auth = AuthController.instance;
@@ -1080,21 +1069,11 @@ class StoreService {
       });
 
       if (itemType == 'avatarFrame' || itemType == 'frame') {
-        FrameHelper.setCachedUserFrame(
-            userId: userId, frameId: null, frameUrl: null);
-        try {
-          if (Get.isRegistered<AuthController>()) {
-            final auth = AuthController.instance;
-            if (auth.currentUser.userId == userId) {
-              auth.currentFrameUrl.value = '';
-              final cust =
-                  auth.currentUser.customization ?? UserCustomization();
-              cust.selectedFrameId = null;
-              auth.currentUser.customization = cust;
-            }
-          }
-        } catch (_) {}
-        _syncFrameToActiveRoom(userId, null);
+        await FrameHelper.updateUserFrameRealtime(
+          userId: userId,
+          frameId: null,
+          frameUrl: null,
+        );
       }
 
       if (itemType == 'micRefill') {
@@ -1121,34 +1100,135 @@ class StoreService {
     }
   }
 
-  /// Sync equipped or unequipped frame to active minimized audio room in real time
-  void _syncFrameToActiveRoom(String userId, String? frameId) {
+  /// Automatic Realtime Expiration Engine:
+  /// Cleans up expired items from user_store_items, decoration lists, badge lists,
+  /// and automatically unequips expired items currently in use by the user.
+  Future<void> checkAndCleanupExpiredUserItems(String userId) async {
+    if (userId.isEmpty) return;
     try {
-      if (Get.isRegistered<MinimizedRoomController>()) {
-        final minCtrl = MinimizedRoomController.instance;
-        if (minCtrl.hasMinimizedRoom && minCtrl.minimizedRoom != null) {
-          final room = minCtrl.minimizedRoom!;
-          final pIdx = room.participants.indexWhere((p) => p.userId == userId);
-          if (pIdx != -1) {
-            final updated = room.participants[pIdx].copyWith(frameId: frameId);
-            final newParticipants =
-                List<AudioRoomParticipant>.from(room.participants);
-            newParticipants[pIdx] = updated;
-            minCtrl.updateMinimizedRoom(
-                room.copyWith(participants: newParticipants));
+      final now = DateTime.now();
+      final snapshot = await _firestore
+          .collection(_userStoreItemsCollection)
+          .where('userId', isEqualTo: userId)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      final List<String> expiredDocIds = [];
+      final Set<String> expiredStoreItemIds = {};
+      final Set<String> validStoreItemIds = {};
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final storeItemId = data['storeItemId']?.toString();
+        final exp = data['expiresAt'] as Timestamp?;
+        if (exp != null && exp.toDate().isBefore(now)) {
+          expiredDocIds.add(doc.id);
+          if (storeItemId != null && storeItemId.isNotEmpty) {
+            expiredStoreItemIds.add(storeItemId);
           }
-          AudioRoomsRepository()
-              .updateParticipantFrameId(
-                roomId: room.id,
-                userId: userId,
-                frameId: frameId,
-              )
-              .catchError((e) =>
-                  debugPrint('Error syncing frame to minimized room: $e'));
+        } else if (storeItemId != null && storeItemId.isNotEmpty) {
+          validStoreItemIds.add(storeItemId);
+        }
+      }
+
+      // Remove items that have another active record (e.g. extended validity)
+      expiredStoreItemIds.removeWhere((id) => validStoreItemIds.contains(id));
+
+      // Batch deactivate expired items in user_store_items
+      if (expiredDocIds.isNotEmpty) {
+        final batch = _firestore.batch();
+        for (final docId in expiredDocIds) {
+          batch.update(_firestore.collection(_userStoreItemsCollection).doc(docId), {
+            'isActive': false,
+            'expiredAt': FieldValue.serverTimestamp(),
+          });
+        }
+        await batch.commit();
+        debugPrint('⏰ [StoreService] Deactivated ${expiredDocIds.length} expired items for user $userId');
+      }
+
+      // Check and unequip from user document if equipped item expired
+      final userDoc = await _firestore.collection('Users').doc(userId).get();
+      if (!userDoc.exists || userDoc.data() == null) return;
+
+      final userData = userDoc.data()!;
+      final cust = Map<String, dynamic>.from(userData['customization'] ?? {});
+      bool needsUserUpdate = false;
+
+      void checkAndUnequip(String key, String type) {
+        final currentEquipped = cust[key]?.toString();
+        if (currentEquipped != null && currentEquipped.isNotEmpty) {
+          if (expiredStoreItemIds.contains(currentEquipped) && !validStoreItemIds.contains(currentEquipped)) {
+            debugPrint('⏰ [StoreService] Auto-unequipping expired $type ($currentEquipped) for user $userId');
+            cust[key] = null;
+            needsUserUpdate = true;
+            if (type == 'frame' || type == 'avatarFrame') {
+              FrameHelper.updateUserFrameRealtime(userId: userId, frameId: null, frameUrl: null);
+            }
+          }
+        }
+      }
+
+      checkAndUnequip('selectedFrameId', 'avatarFrame');
+      checkAndUnequip('selectedBadgeId', 'badge');
+      checkAndUnequip('selectedEntryEffectId', 'entryEffect');
+      checkAndUnequip('selectedBackgroundThemeId', 'backgroundTheme');
+      checkAndUnequip('selectedRoomThemeId', 'roomTheme');
+      checkAndUnequip('selectedRoomProfileBackgroundId', 'roomProfileBackground');
+      checkAndUnequip('selectedShortProfileThemeId', 'shortProfileTheme');
+      checkAndUnequip('selectedRoomEntryId', 'roomEntry');
+      checkAndUnequip('selectedMicRefillId', 'micRefill');
+
+      // Nameplates check
+      if (cust['selectedNameplateIds'] is List) {
+        final list = List<String>.from(cust['selectedNameplateIds']);
+        final initialLen = list.length;
+        list.removeWhere((id) => expiredStoreItemIds.contains(id) && !validStoreItemIds.contains(id));
+        if (list.length != initialLen) {
+          cust['selectedNameplateIds'] = list;
+          cust['selectedNameplateId'] = list.isNotEmpty ? list.first : null;
+          needsUserUpdate = true;
+        }
+      }
+
+      // Clean expired IDs from owned lists
+      void cleanOwnedList(String key) {
+        if (cust[key] is List) {
+          final list = List<String>.from(cust[key]);
+          final initialLen = list.length;
+          list.removeWhere((id) => expiredStoreItemIds.contains(id) && !validStoreItemIds.contains(id));
+          if (list.length != initialLen) {
+            cust[key] = list;
+            needsUserUpdate = true;
+          }
+        }
+      }
+
+      cleanOwnedList('ownedFrames');
+      cleanOwnedList('ownedBadges');
+      cleanOwnedList('ownedEntryEffects');
+      cleanOwnedList('ownedBackgroundThemes');
+      cleanOwnedList('ownedRoomThemes');
+      cleanOwnedList('ownedRoomProfileBackgrounds');
+      cleanOwnedList('ownedShortProfileThemes');
+      cleanOwnedList('ownedRoomEntries');
+      cleanOwnedList('ownedNameplates');
+
+      if (needsUserUpdate) {
+        await _firestore.collection('Users').doc(userId).update({
+          'customization': cust,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        if (Get.isRegistered<AuthController>()) {
+          final auth = AuthController.instance;
+          if (auth.currentUser.userId == userId) {
+            auth.currentUser.customization = UserCustomization.fromMap(cust);
+          }
         }
       }
     } catch (e) {
-      debugPrint('⚠️ [StoreService] Error syncing frame to active room: $e');
+      debugPrint('⚠️ [StoreService] Error checking expired user items: $e');
     }
   }
 

@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:chat_messenger/api/contact_api.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/helpers/routes_helper.dart';
@@ -217,13 +218,14 @@ class _SellerListScreenState extends State<SellerListScreen> {
                                           ],
                                         ),
                                         const SizedBox(height: 4),
-                                        Text(
-                                          'ID: ${user.searchId}',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey.shade600,
-                                          ),
-                                        ),
+                                        UserIdBadgeWidget(
+                                           searchId: user.searchId,
+                                           badgeHeight: 14,
+                                           textStyle: TextStyle(
+                                             fontSize: 12,
+                                             color: Colors.grey.shade600,
+                                           ),
+                                         ),
                                         const SizedBox(height: 8),
                                         Row(
                                           children: [

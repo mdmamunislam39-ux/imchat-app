@@ -60,54 +60,49 @@ class CachedCircleAvatar extends StatelessWidget {
       return _buildAvatar(context, frameUrl);
     }
 
-    // 2. Check if current logged-in user and has live frame in AuthController
-    if (Get.isRegistered<AuthController>()) {
-      final auth = AuthController.instance;
-      if (userId != null && userId == auth.currentUser.userId) {
-        final liveUrl = auth.currentFrameUrl.value;
-        if (liveUrl.isNotEmpty) {
-          return _buildAvatar(context, liveUrl);
-        } else {
-          // Current user explicitly has NO frame equipped
-          return _buildAvatar(context, null);
-        }
+    // 2. Real-time frame streaming when userId is provided
+    if (userId != null && userId!.isNotEmpty) {
+      if (Get.isRegistered<AuthController>() && userId == AuthController.instance.currentUser.userId) {
+        return Obx(() {
+          final liveUrl = AuthController.instance.currentFrameUrl.value;
+          final cachedUrl = FrameHelper.getCachedUserFrameUrl(userId) ??
+              (frameId != null ? FrameHelper.getCachedFrameUrl(frameId) : null);
+          final initial = liveUrl.isNotEmpty ? liveUrl : cachedUrl;
+
+          return StreamBuilder<String?>(
+            stream: FrameHelper.streamUserFrame(userId!),
+            initialData: initial,
+            builder: (context, snapshot) {
+              final resolved = liveUrl.isNotEmpty
+                  ? liveUrl
+                  : (snapshot.hasData ? snapshot.data : null);
+              return _buildAvatar(context, resolved);
+            },
+          );
+        });
       }
-    }
 
-    // 2. Check synchronous memory cache
-    final String? cachedByFrameId = (frameId != null && frameId!.isNotEmpty)
-        ? FrameHelper.getCachedFrameUrl(frameId)
-        : null;
-    if (cachedByFrameId != null && cachedByFrameId.isNotEmpty) {
-      return _buildAvatar(context, cachedByFrameId);
-    }
+      final initialFrame = FrameHelper.getCachedUserFrameUrl(userId) ??
+          (frameId != null ? FrameHelper.getCachedFrameUrl(frameId) : null);
 
-    final String? cachedByUserId = (userId != null && userId!.isNotEmpty)
-        ? FrameHelper.getCachedUserFrameUrl(userId)
-        : null;
-    if (cachedByUserId != null && cachedByUserId.isNotEmpty) {
-      return _buildAvatar(context, cachedByUserId);
-    }
-
-    // 3. Resolve via frameId if provided
-    if (frameId != null && frameId!.isNotEmpty) {
-      return FutureBuilder<String?>(
-        future: FrameHelper.getFrameUrl(frameId),
-        initialData: cachedByFrameId,
+      return StreamBuilder<String?>(
+        stream: FrameHelper.streamUserFrame(userId!),
+        initialData: initialFrame,
         builder: (context, snapshot) {
-          final resolved = snapshot.data ?? cachedByFrameId;
+          final resolved = snapshot.data;
           return _buildAvatar(context, resolved);
         },
       );
     }
 
-    // 4. Resolve via userId if provided
-    if (userId != null && userId!.isNotEmpty) {
+    // 3. Fallback resolve via frameId if provided without userId
+    if (frameId != null && frameId!.isNotEmpty) {
+      final cachedByFrameId = FrameHelper.getCachedFrameUrl(frameId);
       return FutureBuilder<String?>(
-        future: FrameHelper.getFrameUrlFromUserId(userId),
-        initialData: cachedByUserId,
+        future: FrameHelper.getFrameUrl(frameId),
+        initialData: cachedByFrameId,
         builder: (context, snapshot) {
-          final resolved = snapshot.data ?? cachedByUserId;
+          final resolved = snapshot.data ?? cachedByFrameId;
           return _buildAvatar(context, resolved);
         },
       );
@@ -266,7 +261,7 @@ class CachedCircleAvatar extends StatelessWidget {
                 key: ValueKey(currentFrameUrl),
                 url: currentFrameUrl,
                 fit: BoxFit.contain,
-                isAlphaVideo: false,
+                isAlphaVideo: true,
               ),
             ),
           ),

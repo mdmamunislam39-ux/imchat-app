@@ -173,6 +173,7 @@ enum SeatColorMode {
   original,
   golden,
   purple,
+  cyberEmerald,
   dashedPink,
   dashedOrange,
 }
@@ -186,6 +187,8 @@ extension SeatColorModeExtension on SeatColorMode {
         return 'Golden';
       case SeatColorMode.purple:
         return 'Purple';
+      case SeatColorMode.cyberEmerald:
+        return 'Cyber Emerald';
       case SeatColorMode.dashedPink:
         return 'Dashed Pink';
       case SeatColorMode.dashedOrange:
@@ -562,6 +565,7 @@ class AudioRoomV2 extends Equatable {
   final int recentGiftsDiamonds;
   final String? countryCode;
   final bool isOfficial;
+  final Map<String, int> dailyUserReceivedBeans;
 
   const AudioRoomV2({
     required this.id,
@@ -622,6 +626,7 @@ class AudioRoomV2 extends Equatable {
     this.recentGiftsDiamonds = 0,
     this.countryCode,
     this.isOfficial = false,
+    this.dailyUserReceivedBeans = const {},
   });
 
   /// Create from Firestore document
@@ -750,6 +755,21 @@ class AudioRoomV2 extends Equatable {
         recentGiftsDiamonds: (data['recentGiftsDiamonds'] as num?)?.toInt() ?? 0,
         countryCode: data['countryCode'] ?? data['country'],
         isOfficial: _parseBool(data['isOfficial']),
+        dailyUserReceivedBeans: (data['userReceivedBeans_${RankingHelper.daily22CycleSuffix}'] is Map)
+            ? (data['userReceivedBeans_${RankingHelper.daily22CycleSuffix}'] as Map).map(
+                (key, value) => MapEntry(
+                  key.toString(),
+                  (value as num?)?.toInt() ?? 0,
+                ),
+              )
+            : ((data['dailyUserBeans'] is Map)
+                ? (data['dailyUserBeans'] as Map).map(
+                    (key, value) => MapEntry(
+                      key.toString(),
+                      (value as num?)?.toInt() ?? 0,
+                    ),
+                  )
+                : const {}),
       );
     } catch (e, stackTrace) {
       debugPrint('Error parsing AudioRoomV2 from Firestore: $e\n$stackTrace');
@@ -780,6 +800,7 @@ class AudioRoomV2 extends Equatable {
       'dailyRevenue': dailyRevenue,
       'weeklyRevenue': weeklyRevenue,
       'monthlyRevenue': monthlyRevenue,
+      'userReceivedBeans_${RankingHelper.daily22CycleSuffix}': dailyUserReceivedBeans,
       'contributors':
           contributors.map((key, value) => MapEntry(key, value.toJson())),
       'settings': settings.toJson(),
@@ -875,6 +896,7 @@ class AudioRoomV2 extends Equatable {
     int? recentGiftsDiamonds,
     String? countryCode,
     bool? isOfficial,
+    Map<String, int>? dailyUserReceivedBeans,
     int? onlineCount,
     int? uniqueJoiners10m,
     int? giftCoins10m,
@@ -942,6 +964,7 @@ class AudioRoomV2 extends Equatable {
       recentGiftsDiamonds: recentGiftsDiamonds ?? this.recentGiftsDiamonds,
       countryCode: countryCode ?? this.countryCode,
       isOfficial: isOfficial ?? this.isOfficial,
+      dailyUserReceivedBeans: dailyUserReceivedBeans ?? this.dailyUserReceivedBeans,
     );
   }
 
@@ -958,9 +981,47 @@ class AudioRoomV2 extends Equatable {
   /// Check if room is full
   bool get isFull => participantCount >= maxParticipants;
 
+  /// Check if room is currently pinned to top by admin
+  bool get isCurrentlyPinned {
+    if (!isPinned) return false;
+    if (pinnedUntil == null) return true;
+    return pinnedUntil!.isAfter(DateTime.now());
+  }
+
   /// Check if user is blocked
   bool isUserBlocked(String userId) =>
       settings.blockedUsers.any((b) => b.userId == userId);
+
+  /// Check if user was kicked/removed from room within 24 hours
+  bool isUserKickedRecently(String userId) {
+    try {
+      final userKicks =
+          removedUsers.where((u) => u['userId'] == userId).toList();
+      if (userKicks.isEmpty) return false;
+
+      DateTime parseTime(dynamic val) {
+        if (val == null) return DateTime.now();
+        if (val is Timestamp) return val.toDate();
+        if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
+        if (val is String) {
+          return DateTime.tryParse(val) ?? DateTime.now();
+        }
+        if (val is DateTime) return val;
+        return DateTime.now();
+      }
+
+      for (var kick in userKicks) {
+        final removedAt = parseTime(kick['removedAt']);
+        final now = DateTime.now();
+        if (now.difference(removedAt).inHours < 24) {
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Get seat information for a specific seat number
   SeatInfo? getSeatInfo(int seatNumber) {
@@ -1473,6 +1534,11 @@ class AudioRoomSettings extends Equatable {
   final String? lockedSeatDecorUrl;
   final String? hostSeatDecorUrl;
   final bool isLiveMultipleMode;
+  final bool isSeatAnimated;
+  final String? seatAnimationType;
+  final String? seatAnimationColor;
+  final double seatAnimationSpeed;
+  final String? roomLayoutType; // 'party' (default), 'pro', 'event'
 
   const AudioRoomSettings({
     this.allowRequestToSpeak = true,
@@ -1494,6 +1560,11 @@ class AudioRoomSettings extends Equatable {
     this.seatDecorUrl,
     this.lockedSeatDecorUrl,
     this.hostSeatDecorUrl,
+    this.isSeatAnimated = false,
+    this.seatAnimationType,
+    this.seatAnimationColor,
+    this.seatAnimationSpeed = 1.0,
+    this.roomLayoutType = 'party',
   });
 
   /// Create from JSON
@@ -1532,6 +1603,11 @@ class AudioRoomSettings extends Equatable {
         seatDecorUrl: json['seatDecorUrl'],
         lockedSeatDecorUrl: json['lockedSeatDecorUrl'],
         hostSeatDecorUrl: json['hostSeatDecorUrl'],
+        isSeatAnimated: _parseBool(json['isSeatAnimated']),
+        seatAnimationType: json['seatAnimationType']?.toString(),
+        seatAnimationColor: json['seatAnimationColor']?.toString(),
+        seatAnimationSpeed: (json['seatAnimationSpeed'] as num?)?.toDouble() ?? 1.0,
+        roomLayoutType: json['roomLayoutType']?.toString() ?? 'party',
       );
     } catch (e) {
       throw Exception('Error parsing AudioRoomSettings from JSON: $e');
@@ -1560,6 +1636,11 @@ class AudioRoomSettings extends Equatable {
       'seatDecorUrl': seatDecorUrl,
       'lockedSeatDecorUrl': lockedSeatDecorUrl,
       'hostSeatDecorUrl': hostSeatDecorUrl,
+      'isSeatAnimated': isSeatAnimated,
+      'seatAnimationType': seatAnimationType,
+      'seatAnimationColor': seatAnimationColor,
+      'seatAnimationSpeed': seatAnimationSpeed,
+      'roomLayoutType': roomLayoutType ?? 'party',
     };
   }
 
@@ -1584,6 +1665,11 @@ class AudioRoomSettings extends Equatable {
     String? seatDecorUrl,
     String? lockedSeatDecorUrl,
     String? hostSeatDecorUrl,
+    bool? isSeatAnimated,
+    String? seatAnimationType,
+    String? seatAnimationColor,
+    double? seatAnimationSpeed,
+    String? roomLayoutType,
     bool clearBackgroundImage = false,
     bool clearSeatDecor = false,
   }) {
@@ -1608,6 +1694,11 @@ class AudioRoomSettings extends Equatable {
       seatDecorUrl: clearSeatDecor ? null : (seatDecorUrl ?? this.seatDecorUrl),
       lockedSeatDecorUrl: clearSeatDecor ? null : (lockedSeatDecorUrl ?? this.lockedSeatDecorUrl),
       hostSeatDecorUrl: clearSeatDecor ? null : (hostSeatDecorUrl ?? this.hostSeatDecorUrl),
+      isSeatAnimated: isSeatAnimated ?? this.isSeatAnimated,
+      seatAnimationType: seatAnimationType ?? this.seatAnimationType,
+      seatAnimationColor: seatAnimationColor ?? this.seatAnimationColor,
+      seatAnimationSpeed: seatAnimationSpeed ?? this.seatAnimationSpeed,
+      roomLayoutType: roomLayoutType ?? this.roomLayoutType,
     );
   }
 
@@ -1632,5 +1723,10 @@ class AudioRoomSettings extends Equatable {
         seatDecorUrl,
         lockedSeatDecorUrl,
         hostSeatDecorUrl,
+        isSeatAnimated,
+        seatAnimationType,
+        seatAnimationColor,
+        seatAnimationSpeed,
+        roomLayoutType,
       ];
 }

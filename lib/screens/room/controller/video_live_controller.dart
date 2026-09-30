@@ -1,18 +1,33 @@
 import 'dart:async';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:chat_messenger/components/app_loading.dart';
 import 'package:chat_messenger/services/agora_service.dart';
 import 'package:chat_messenger/services/agora_token_service.dart';
+import 'package:chat_messenger/services/rtc_engine_manager.dart';
+import 'package:chat_messenger/services/livekit_service.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'package:livekit_client/livekit_client.dart' as lk;
+
 class VideoLiveController extends GetxController {
   final String roomId;
   final bool isBroadcaster;
   
   VideoLiveController({required this.roomId, required this.isBroadcaster});
+
+  bool get isLiveKit =>
+      Get.isRegistered<RtcEngineManager>() &&
+      Get.find<RtcEngineManager>().isLiveKitActive;
+
+  LiveKitService get livekitService =>
+      Get.isRegistered<LiveKitService>()
+          ? Get.find<LiveKitService>()
+          : Get.put(LiveKitService(), permanent: true);
 
   late RtcEngine engine;
   RxBool isJoined = false.obs;
@@ -35,7 +50,68 @@ class VideoLiveController extends GetxController {
       debugPrint('Error enabling wakelock in VideoLiveController: $e');
     }
     _fetchBroadcasterInfo();
-    _initAgora();
+    if (isLiveKit) {
+      _initLiveKit();
+    } else {
+      _initAgora();
+    }
+  }
+
+  Future<void> _initLiveKit() async {
+    try {
+      await [Permission.camera, Permission.microphone].request();
+      final myUid = AuthController.instance.currentUser.userId;
+      final myName = AuthController.instance.currentUser.fullname;
+      final url = Get.find<RtcEngineManager>().livekitServerUrl;
+
+      final token = await livekitService.generateToken(
+        roomName: 'live_$roomId',
+        identity: myUid,
+        userName: myName,
+      );
+
+      livekitService.onParticipantJoined = (participant) {
+        debugPrint('🟢 [LiveKit Video Live] Participant joined: ${participant.identity}');
+        isJoined.value = true;
+      };
+
+      livekitService.onParticipantLeft = (participant) {
+        debugPrint('🔴 [LiveKit Video Live] Participant left: ${participant.identity}');
+      };
+
+      livekitService.onTrackSubscribed = (pub, participant) {
+        debugPrint('📺 [LiveKit Video Live] Track subscribed: ${pub.kind}');
+        if (pub.kind == lk.TrackType.VIDEO) {
+          remoteCameraOff.value = false;
+        }
+      };
+
+      livekitService.onTrackUnsubscribed = (pub, participant) {
+        debugPrint('📺 [LiveKit Video Live] Track unsubscribed: ${pub.kind}');
+        if (pub.kind == lk.TrackType.VIDEO) {
+          remoteCameraOff.value = true;
+        }
+      };
+
+      final success = await livekitService.connectToRoom(
+        url: url,
+        token: token,
+        enableAudio: true,
+        enableVideo: isBroadcaster,
+        autoPublishMic: isBroadcaster,
+      );
+
+      if (success) {
+        isJoined.value = true;
+        debugPrint('🚀 [LiveKit Video Live] Joined successfully');
+      } else {
+        debugPrint('⚠️ [LiveKit Video Live] Failed to connect to LiveKit');
+        AppStyle().failedSnackBar(message: 'Failed to connect to LiveKit Live Streaming server');
+      }
+    } catch (e) {
+      debugPrint('❌ [LiveKit Video Live] Error: $e');
+      AppStyle().failedSnackBar(message: 'LiveKit Video Live Error: $e');
+    }
   }
 
   Future<void> _fetchBroadcasterInfo() async {
@@ -58,14 +134,22 @@ class VideoLiveController extends GetxController {
 
   @override
   void onClose() {
-    AgoraService().dispose();
-    if (isBroadcaster) {
-      FirebaseFirestore.instance.collection('voice_room_messages').doc(roomId).delete();
-    }
     try {
       WakelockPlus.disable();
     } catch (e) {
       debugPrint('Error disabling wakelock in VideoLiveController: $e');
+    }
+    if (isLiveKit) {
+      livekitService.leaveRoom();
+    } else {
+      try {
+        engine.leaveChannel();
+        engine.release();
+      } catch (_) {}
+      AgoraService().dispose();
+    }
+    if (isBroadcaster) {
+      FirebaseFirestore.instance.collection('voice_room_messages').doc(roomId).delete().catchError((_) {});
     }
     super.onClose();
   }
@@ -140,11 +224,19 @@ class VideoLiveController extends GetxController {
 
   void toggleCamera() {
     isCameraOff.value = !isCameraOff.value;
-    engine.muteLocalVideoStream(isCameraOff.value);
+    if (isLiveKit) {
+      livekitService.setCameraEnabled(!isCameraOff.value);
+    } else {
+      engine.muteLocalVideoStream(isCameraOff.value);
+    }
   }
 
   void toggleMic() {
     isMicOff.value = !isMicOff.value;
-    engine.muteLocalAudioStream(isMicOff.value);
+    if (isLiveKit) {
+      livekitService.setMicrophoneEnabled(!isMicOff.value);
+    } else {
+      engine.muteLocalAudioStream(isMicOff.value);
+    }
   }
 }

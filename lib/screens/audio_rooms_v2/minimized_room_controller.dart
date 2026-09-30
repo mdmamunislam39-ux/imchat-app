@@ -38,6 +38,12 @@ class MinimizedRoomController extends GetxController {
     if (joinTime != null) {
       _originalJoinTime = joinTime;
     }
+    try {
+      BackgroundService().startCallService(
+        title: 'VoiceRoom is running now',
+        content: 'click back to the VoiceRoom',
+      );
+    } catch (_) {}
     update();
     debugPrint('🔽 [MinimizedRoom] Room minimized: ${room.name}');
   }

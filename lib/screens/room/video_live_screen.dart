@@ -2,6 +2,7 @@ import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:chat_messenger/screens/room/controller/video_live_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
 
 class VideoLiveScreen extends StatelessWidget {
   final String roomId;
@@ -65,6 +66,15 @@ class VideoLiveScreen extends StatelessWidget {
             }
 
             if (isBroadcaster) {
+              if (controller.isLiveKit) {
+                return controller.livekitService.localVideoTrack.value != null
+                    ? lk.VideoTrackRenderer(
+                        controller.livekitService.localVideoTrack.value!,
+                      )
+                    : const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      );
+              }
               return AgoraVideoView(
                 controller: VideoViewController(
                   rtcEngine: controller.engine,
@@ -72,22 +82,37 @@ class VideoLiveScreen extends StatelessWidget {
                 ),
               );
             } else {
-              if (controller.remoteUids.isNotEmpty) {
-                // Show the first remote user (the broadcaster)
-                return AgoraVideoView(
-                  controller: VideoViewController.remote(
-                    rtcEngine: controller.engine,
-                    canvas: VideoCanvas(uid: controller.remoteUids.first),
-                    connection: RtcConnection(channelId: roomId),
-                  ),
-                );
+              if (controller.isLiveKit) {
+                if (controller.livekitService.remoteVideoTrack.value != null) {
+                  return lk.VideoTrackRenderer(
+                    controller.livekitService.remoteVideoTrack.value!,
+                  );
+                } else {
+                  return const Center(
+                    child: Text(
+                      'Waiting for broadcaster...',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                  );
+                }
               } else {
-                return const Center(
-                  child: Text(
-                    'Waiting for broadcaster...',
-                    style: TextStyle(color: Colors.white, fontSize: 18),
-                  ),
-                );
+                if (controller.remoteUids.isNotEmpty) {
+                  // Show the first remote user (the broadcaster)
+                  return AgoraVideoView(
+                    controller: VideoViewController.remote(
+                      rtcEngine: controller.engine,
+                      canvas: VideoCanvas(uid: controller.remoteUids.first),
+                      connection: RtcConnection(channelId: roomId),
+                    ),
+                  );
+                } else {
+                  return const Center(
+                    child: Text(
+                      'Waiting for broadcaster...',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                  );
+                }
               }
             }
           }),

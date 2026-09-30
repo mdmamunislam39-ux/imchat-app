@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/config/theme_config.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
@@ -167,6 +168,7 @@ class RoomInfoHeader extends StatelessWidget {
             ],
           ),
           
+          const SizedBox(height: 16),
           
           // Room description and host info
           Container(
@@ -183,79 +185,105 @@ class RoomInfoHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Host info
-                Row(
-                  children: [
-                    CachedCircleAvatar(
-                      imageUrl: room.creatorImageUrl ?? '',
-                      radius: 16,
-                      backgroundColor: primaryColor.withValues(alpha: 0.2),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
+                // Host info with Realtime Stream
+                StreamBuilder<DocumentSnapshot>(
+                  stream: room.creatorId.isNotEmpty
+                      ? FirebaseFirestore.instance
+                          .collection('Users')
+                          .doc(room.creatorId)
+                          .snapshots()
+                      : null,
+                  builder: (context, userSnap) {
+                    String hostName = room.creatorName;
+                    String hostImage = room.creatorImageUrl ?? '';
+                    if (userSnap.hasData && userSnap.data!.exists) {
+                      final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                      if (uData != null) {
+                        if (uData['fullname'] != null &&
+                            uData['fullname'].toString().trim().isNotEmpty) {
+                          hostName = uData['fullname'].toString().trim();
+                        }
+                        if (uData['photoUrl'] != null &&
+                            uData['photoUrl'].toString().trim().isNotEmpty) {
+                          hostImage = uData['photoUrl'].toString().trim();
+                        }
+                      }
+                    }
+
+                    return Row(
+                      children: [
+                        CachedCircleAvatar(
+                          imageUrl: hostImage,
+                          radius: 16,
+                          backgroundColor: primaryColor.withValues(alpha: 0.2),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                room.creatorName,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.amber,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text(
-                                  'HOST',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
+                              Row(
+                                children: [
+                                  Text(
+                                    hostName,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.amber,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Text(
+                                      'HOST',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Text(
+                                'Room Creator',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                  fontSize: 12,
                                 ),
                               ),
                             ],
                           ),
-                          Text(
-                            'Room Creator',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.7),
-                              fontSize: 12,
+                        ),
+                        
+                        // Change background button (host only)
+                        if (onChangeBackground != null)
+                          GestureDetector(
+                            onTap: onChangeBackground,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                Icons.image,
+                                color: Colors.white.withValues(alpha: 0.8),
+                                size: 18,
+                              ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                    
-                    // Change background button (host only)
-                    if (onChangeBackground != null)
-                      GestureDetector(
-                        onTap: onChangeBackground,
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            Icons.image,
-                            color: Colors.white.withValues(alpha: 0.8),
-                            size: 18,
-                          ),
-                        ),
-                      ),
-                  ],
+                      ],
+                    );
+                  },
                 ),
                 
                 if (room.description.isNotEmpty) ...[

@@ -194,6 +194,25 @@ class AgoraTokenService {
     _tokenCache[key] = response;
   }
 
+  /// Pre-caches a token received directly from Push Notification, Firestore, or Call payload.
+  void cachePreGeneratedToken({
+    required String channelName,
+    required String token,
+    int uid = 0,
+    String role = 'publisher',
+  }) {
+    if (token.isEmpty) return;
+    final key = _createCacheKey(channelName, uid, role);
+    final response = TokenResponse(
+      token: token,
+      channelName: channelName,
+      uid: uid,
+      expiresAt: DateTime.now().add(const Duration(hours: 24)),
+    );
+    _cacheToken(key, response);
+    _logDebug('⚡ Cached pre-generated token for channel: $channelName (0ms latency)');
+  }
+
   // ===========================================================================
   // Server Request Layer
   // ===========================================================================

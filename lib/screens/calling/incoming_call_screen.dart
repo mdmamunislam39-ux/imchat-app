@@ -17,6 +17,9 @@ import 'package:get_storage/get_storage.dart';
 import 'package:flutter/services.dart';
 import 'package:chat_messenger/main.dart';
 
+import 'package:chat_messenger/services/agora_token_service.dart';
+import 'package:chat_messenger/services/agora_service.dart';
+
 import '../../components/app_loading.dart';
 import '../../components/circle_button.dart';
 
@@ -31,6 +34,7 @@ class IncommingCallScreen extends StatefulWidget {
 
 class _IncommingCallScreenState extends State<IncommingCallScreen>
     with SingleTickerProviderStateMixin {
+  // Animation controller
   late AnimationController _controller;
   late Animation<double> _animation;
   bool isMinimized = false;
@@ -99,6 +103,23 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
       // asAlarm: true, // Android only - all APIs
     );
 
+    // Pre-warm Agora RTC Engine & Token in background while ringing (0ms latency upon Accept)
+    try {
+      final token = widget.call.agoraToken;
+      if (token != null && token.isNotEmpty) {
+        AgoraTokenService.instance.cachePreGeneratedToken(
+          channelName: widget.call.callerId,
+          token: token,
+        );
+      } else {
+        AgoraTokenService.instance.generateToken(
+          channelName: widget.call.callerId,
+          uid: 0,
+        ).catchError((_) => null);
+      }
+      AgoraService().initialize().catchError((_) => false);
+    } catch (_) {}
+
     // Create an animation controller that loops
     _controller = AnimationController(
       vsync: this,
@@ -112,6 +133,11 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
 
     // Start 45-second timeout timer
     _timeoutTimer = Timer(const Duration(seconds: 45), _handleTimeout);
+
+    // Turn screen on and show over lock screen only while incoming call screen is active
+    const MethodChannel('com.imchatapp/app_visibility')
+        .invokeMethod('wakeScreen')
+        .catchError((_) {});
 
     super.initState();
   }
@@ -147,6 +173,9 @@ class _IncommingCallScreenState extends State<IncommingCallScreen>
     FlutterRingtonePlayer().stop();
     _controller.dispose();
     callSubscription.cancel();
+    const MethodChannel('com.imchatapp/app_visibility')
+        .invokeMethod('clearWakeScreen')
+        .catchError((_) {});
     super.dispose();
   }
 

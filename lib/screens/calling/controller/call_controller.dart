@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
 
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:chat_messenger/components/app_loading.dart';
@@ -15,6 +16,9 @@ import 'package:chat_messenger/models/call.dart';
 import 'package:chat_messenger/services/background_service.dart';
 import 'package:chat_messenger/services/agora_token_service.dart';
 import 'package:chat_messenger/services/agora_service.dart';
+import 'package:chat_messenger/services/rtc_engine_manager.dart';
+import 'package:chat_messenger/services/livekit_service.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:chat_messenger/main.dart';
 import 'package:chat_messenger/routes/app_routes.dart';
@@ -25,6 +29,16 @@ class CallController extends GetxController {
 
   // Constructor
   CallController({required this.call});
+
+  // Dual-RTC Engine selector
+  bool get isLiveKit =>
+      Get.isRegistered<RtcEngineManager>() &&
+      Get.find<RtcEngineManager>().isLiveKitActive;
+
+  LiveKitService get livekitService =>
+      Get.isRegistered<LiveKitService>()
+          ? Get.find<LiveKitService>()
+          : Get.put(LiveKitService(), permanent: true);
 
   // Vars
   Timer? _timer;
@@ -68,11 +82,24 @@ class CallController extends GetxController {
         }
         // Get the 'state' field from Firestore document
         String state = snapshot.data()?['state'] ?? '';
+        final bool isAlreadyRunning = seconds.value > 0 || isLocalUserJoined.value || remoteUid.value != null;
         if (state == 'decline') {
+          if (isAlreadyRunning) {
+            debugPrint('Ignoring decline event: call is already active/connected locally');
+            return;
+          }
           onEndCall(endReason: 'rejected');
         } else if (state == 'missed') {
+          if (isAlreadyRunning) {
+            debugPrint('Ignoring missed event: call is already active/connected locally');
+            return;
+          }
           onEndCall(endReason: 'missed');
         } else if (state == 'cancel') {
+          if (isAlreadyRunning) {
+            debugPrint('Ignoring cancel event: call is already active/connected locally');
+            return;
+          }
           onEndCall(endReason: 'canceled');
         } else if (state == 'ended') {
           onEndCall(endReason: (seconds.value > 0 || remoteUid.value != null) ? 'completed' : 'ended');
@@ -104,7 +131,11 @@ class CallController extends GetxController {
 
   @override
   void onInit() {
-    _initAgora();
+    if (isLiveKit) {
+      _initLiveKitCall();
+    } else {
+      _initAgora();
+    }
     _listenToCallState();
     _startAutoEndCallTimer();
     fetchDocumentField();
@@ -115,18 +146,22 @@ class CallController extends GetxController {
 
   @override
   void onClose() {
-    try {
-      if (_eventHandler != null) {
-        engine.unregisterEventHandler(_eventHandler!);
+    if (isLiveKit) {
+      livekitService.leaveRoom();
+    } else {
+      try {
+        if (_eventHandler != null) {
+          engine.unregisterEventHandler(_eventHandler!);
+        }
+      } catch (e) {
+        debugPrint('Engine skip unregister');
       }
-    } catch (e) {
-      debugPrint('Engine skip unregister');
-    }
-    // Restore the shared AgoraService event handler that was overridden
-    try {
-      Get.find<AgoraService>().setupEventHandlers();
-    } catch (e) {
-      debugPrint('Error restoring AgoraService event handlers: $e');
+      // Restore the shared AgoraService event handler that was overridden
+      try {
+        Get.find<AgoraService>().setupEventHandlers();
+      } catch (e) {
+        debugPrint('Error restoring AgoraService event handlers: $e');
+      }
     }
     _timer = null;
     _stopRingtone();
@@ -143,188 +178,260 @@ class CallController extends GetxController {
     super.onClose();
   }
 
-  Future<void> _initAgora() async {
+  /// Initialize LiveKit WebRTC Call Session
+  Future<void> _initLiveKitCall() async {
     try {
-      // retrieve permissions safely (check isGranted first so background doesn't fail)
-      bool permissionsGranted = false;
-      bool micGranted = await Permission.microphone.isGranted;
-      bool camGranted = call.isVideo ? await Permission.camera.isGranted : true;
+      final bool micGranted = await Permission.microphone.isGranted;
+      final bool camGranted = call.isVideo ? await Permission.camera.isGranted : true;
 
       if (!micGranted || !camGranted) {
         if (call.isVideo) {
-          Map<Permission, PermissionStatus> statuses =
-              await [Permission.microphone, Permission.camera].request();
-          micGranted = statuses[Permission.microphone]?.isGranted ?? false;
-          camGranted = statuses[Permission.camera]?.isGranted ?? false;
+          await [Permission.microphone, Permission.camera].request();
         } else {
-          final status = await Permission.microphone.request();
-          micGranted = status.isGranted;
+          await Permission.microphone.request();
         }
       }
-      permissionsGranted = micGranted && (call.isVideo ? camGranted : true);
 
-      if (permissionsGranted) {
-        // Permissions granted, proceed with video call
-        // Play the ringtone sound ASAP.
+      if (call.isCaller) {
         _playRingtone();
+      }
 
-        final agoraService = AgoraService();
-        agoraService.setChannelMode(
-            call.isVideo ? AgoraChannelMode.videoCall : AgoraChannelMode.audioCall);
-        if (agoraService.isConnected || agoraService.isConnecting) {
-          try {
-            await agoraService.engine?.leaveChannel();
-          } catch (_) {}
+      final myUid = AuthController.instance.currentUser.userId;
+      final myName = AuthController.instance.currentUser.fullname;
+      final roomName = call.callerId;
+      final url = Get.find<RtcEngineManager>().livekitServerUrl;
+
+      final token = await livekitService.generateToken(
+        roomName: roomName,
+        identity: myUid,
+        userName: myName,
+      );
+
+      livekitService.onParticipantJoined = (participant) {
+        debugPrint('🟢 [LiveKit Call] Remote participant joined: ${participant.identity}');
+        remoteUid.value = 1;
+        isLocalUserJoined.value = true;
+        _startTimer();
+        _stopRingtone();
+        _cancelAutoEndCallTimer();
+      };
+
+      livekitService.onParticipantLeft = (participant) {
+        debugPrint('🔴 [LiveKit Call] Remote participant left');
+        remoteUid.value = null;
+        _timer?.cancel();
+        onEndCall(endReason: (seconds.value > 0) ? 'completed' : 'ended');
+      };
+
+      livekitService.onTrackSubscribed = (pub, participant) {
+        if (pub.kind == lk.TrackType.VIDEO) {
+          isRemoteVideoMuted.value = false;
         }
-        await agoraService.initialize();
+      };
 
-        engine = agoraService.engine!;
-
-        _eventHandler = RtcEngineEventHandler(
-          onRemoteVideoStateChanged: (connection, uid, state, reason, elapsed) {
-            debugPrint(
-                "Remote video state changed: uid: $uid, state: $state, reason: $reason");
-            if (state == RemoteVideoState.remoteVideoStateStopped) {
-              isRemoteVideoMuted.value = true;
-            } else if (state == RemoteVideoState.remoteVideoStateDecoding) {
-              isRemoteVideoMuted.value = false;
-            }
-          },
-          onJoinChannelSuccess: (RtcConnection connection, int elapsed) async {
-            debugPrint("local user ${connection.localUid} joined");
-            isLocalUserJoined.value = true;
-
-            // Ensure audio is properly routed and unmuted
-            await engine.enableAudio();
-            await engine.enableLocalAudio(true);
-            await engine.muteLocalAudioStream(false);
-            await engine.muteAllRemoteAudioStreams(false);
-            await engine.setEnableSpeakerphone(speaker.value);
-
-            // Start background service to ensure call continuity when minimized
-            try {
-              BackgroundService().startService();
-            } catch (e) {
-              debugPrint('Error starting background service: $e');
-            }
-          },
-          onUserJoined: (RtcConnection connection, int uid, int elapsed) {
-            debugPrint("remote user $uid joined");
-            remoteUid.value = uid;
-            _startTimer();
-            _stopRingtone();
-            _cancelAutoEndCallTimer();
-          },
-          onUserOffline: (RtcConnection connection, int uid,
-              UserOfflineReasonType reason) {
-            debugPrint("remote user $uid left channel");
-            remoteUid.value = null;
-            _timer?.cancel();
-            onEndCall(endReason: (seconds.value > 0) ? 'completed' : 'ended');
-          },
-          onTokenPrivilegeWillExpire: (RtcConnection connection, String token) async {
-            debugPrint(
-                '[onTokenPrivilegeWillExpire] conn:${connection.toJson()}, token: $token');
-            try {
-              final renewed = await AgoraTokenService.instance.refreshToken(
-                channelName: call.callerId,
-                uid: 0,
-                currentToken: token,
-              );
-              if (renewed != null && renewed.token.isNotEmpty) {
-                await engine.renewToken(renewed.token);
-                debugPrint('[onTokenPrivilegeWillExpire] Call token renewed successfully');
-              }
-            } catch (e) {
-              debugPrint('[onTokenPrivilegeWillExpire] Failed to renew call token: $e');
-            }
-          },
-          onRequestToken: (RtcConnection connection) async {
-            debugPrint('[onRequestToken] Call token requested, renewing...');
-            try {
-              final renewed = await AgoraTokenService.instance.refreshToken(
-                channelName: call.callerId,
-                uid: 0,
-                currentToken: '',
-              );
-              if (renewed != null && renewed.token.isNotEmpty) {
-                await engine.renewToken(renewed.token);
-                debugPrint('[onRequestToken] Call token renewed successfully');
-              }
-            } catch (e) {
-              debugPrint('[onRequestToken] Failed to renew call token: $e');
-            }
-          },
-        );
-
-        engine.registerEventHandler(_eventHandler!);
-
-        await engine.setClientRole(role: ClientRoleType.clientRoleBroadcaster);
-        // Check the call type
-        if (call.isVideo) {
-          await engine.enableVideo();
-
-          // Optimize for poor network conditions
-          await engine.setVideoEncoderConfiguration(
-            const VideoEncoderConfiguration(
-              dimensions: VideoDimensions(width: 480, height: 360),
-              frameRate: 15,
-              bitrate: 400,
-              degradationPreference: DegradationPreference.maintainFramerate,
-            ),
-          );
-
-          await engine.startPreview();
-
-        } else {
-          await engine.enableAudio();
+      livekitService.onTrackUnsubscribed = (pub, participant) {
+        if (pub.kind == lk.TrackType.VIDEO) {
+          isRemoteVideoMuted.value = true;
         }
+      };
 
-        // Generate dynamic token
-        final tokenResponse = await AgoraTokenService.instance.generateToken(
-          channelName: call.callerId,
-          uid: 0,
-        );
-        final tokenToUse = tokenResponse?.token ?? '';
+      final success = await livekitService.connectToRoom(
+        url: url,
+        token: token,
+        enableAudio: true,
+        enableVideo: call.isVideo,
+        autoPublishMic: true,
+      );
 
-        await engine.enableAudio();
-        await engine.enableLocalAudio(true);
-        await engine.muteLocalAudioStream(false);
+      if (success) {
+        isLocalUserJoined.value = true;
         mute.value = false;
+        if (livekitService.remoteParticipants.isNotEmpty) {
+          remoteUid.value = 1;
+          _startTimer();
+          _stopRingtone();
+          _cancelAutoEndCallTimer();
+        }
+        // Start background service to ensure call continuity when minimized
+        try {
+          BackgroundService().startService();
+        } catch (e) {
+          debugPrint('Error starting background service: $e');
+        }
+        debugPrint('🚀 [LiveKit Call] Successfully joined call room $roomName');
+      } else {
+        debugPrint('⚠️ [LiveKit Call] Failed to join LiveKit room');
+        AppStyle().failedSnackBar(message: 'Failed to connect to LiveKit WebRTC server');
+        onEndCall(endReason: 'failed');
+      }
+    } catch (e) {
+      debugPrint('❌ [LiveKit Call] Error: $e');
+      AppStyle().failedSnackBar(message: 'LiveKit Call Error: $e');
+      onEndCall(endReason: 'failed');
+    }
+  }
 
-        await engine.joinChannel(
-          token: tokenToUse,
-          channelId: call.callerId,
-          uid: 0,
-          options: ChannelMediaOptions(
-            channelProfile: ChannelProfileType.channelProfileCommunication,
-            clientRoleType: ClientRoleType.clientRoleBroadcaster,
-            autoSubscribeAudio: true,
-            autoSubscribeVideo: call.isVideo,
-            publishMicrophoneTrack: true,
-            publishCameraTrack: call.isVideo,
+  Future<void> _initAgora() async {
+    try {
+      // retrieve permissions safely (check isGranted first so background doesn't fail)
+      final bool micGranted = await Permission.microphone.isGranted;
+      final bool camGranted = call.isVideo ? await Permission.camera.isGranted : true;
+
+      if (!micGranted || !camGranted) {
+        if (call.isVideo) {
+          await [Permission.microphone, Permission.camera].request();
+        } else {
+          await Permission.microphone.request();
+        }
+      }
+
+      // Parallelize token generation/retrieval with Agora engine initialization
+      final Future<String> tokenFuture = (call.agoraToken != null && call.agoraToken!.isNotEmpty)
+          ? Future.value(call.agoraToken!)
+          : AgoraTokenService.instance.generateToken(
+              channelName: call.callerId,
+              uid: 0,
+            ).then((r) => r?.token ?? '').catchError((_) => '');
+
+      if (call.isCaller) {
+        _playRingtone();
+      }
+
+      final agoraService = AgoraService();
+      agoraService.setChannelMode(
+          call.isVideo ? AgoraChannelMode.videoCall : AgoraChannelMode.audioCall);
+      if (agoraService.isConnected || agoraService.isConnecting) {
+        try {
+          await agoraService.engine?.leaveChannel();
+        } catch (_) {}
+      }
+      await agoraService.initialize();
+
+      engine = agoraService.engine!;
+
+      _eventHandler = RtcEngineEventHandler(
+        onRemoteVideoStateChanged: (connection, uid, state, reason, elapsed) {
+          debugPrint(
+              "Remote video state changed: uid: $uid, state: $state, reason: $reason");
+          if (state == RemoteVideoState.remoteVideoStateStopped) {
+            isRemoteVideoMuted.value = true;
+          } else if (state == RemoteVideoState.remoteVideoStateDecoding) {
+            isRemoteVideoMuted.value = false;
+          }
+        },
+        onJoinChannelSuccess: (RtcConnection connection, int elapsed) async {
+          debugPrint("local user ${connection.localUid} joined");
+          isLocalUserJoined.value = true;
+
+          // Ensure audio is properly routed and unmuted
+          await engine.enableAudio();
+          await engine.enableLocalAudio(true);
+          await engine.muteLocalAudioStream(false);
+          await engine.muteAllRemoteAudioStreams(false);
+          await engine.setEnableSpeakerphone(speaker.value);
+
+          // Start background service to ensure call continuity when minimized
+          try {
+            BackgroundService().startService();
+          } catch (e) {
+            debugPrint('Error starting background service: $e');
+          }
+        },
+        onUserJoined: (RtcConnection connection, int uid, int elapsed) {
+          debugPrint("remote user $uid joined");
+          remoteUid.value = uid;
+          _startTimer();
+          _stopRingtone();
+          _cancelAutoEndCallTimer();
+        },
+        onUserOffline: (RtcConnection connection, int uid,
+            UserOfflineReasonType reason) {
+          debugPrint("remote user $uid left channel");
+          remoteUid.value = null;
+          _timer?.cancel();
+          onEndCall(endReason: (seconds.value > 0) ? 'completed' : 'ended');
+        },
+        onTokenPrivilegeWillExpire: (RtcConnection connection, String token) async {
+          debugPrint(
+              '[onTokenPrivilegeWillExpire] conn:${connection.toJson()}, token: $token');
+          try {
+            final renewed = await AgoraTokenService.instance.refreshToken(
+              channelName: call.callerId,
+              uid: 0,
+              currentToken: token,
+            );
+            if (renewed != null && renewed.token.isNotEmpty) {
+              await engine.renewToken(renewed.token);
+              debugPrint('[onTokenPrivilegeWillExpire] Call token renewed successfully');
+            }
+          } catch (e) {
+            debugPrint('[onTokenPrivilegeWillExpire] Failed to renew call token: $e');
+          }
+        },
+        onRequestToken: (RtcConnection connection) async {
+          debugPrint('[onRequestToken] Call token requested, renewing...');
+          try {
+            final renewed = await AgoraTokenService.instance.refreshToken(
+              channelName: call.callerId,
+              uid: 0,
+              currentToken: '',
+            );
+            if (renewed != null && renewed.token.isNotEmpty) {
+              await engine.renewToken(renewed.token);
+              debugPrint('[onRequestToken] Call token renewed successfully');
+            }
+          } catch (e) {
+            debugPrint('[onRequestToken] Failed to renew call token: $e');
+          }
+        },
+      );
+
+      engine.registerEventHandler(_eventHandler!);
+
+      await engine.setClientRole(role: ClientRoleType.clientRoleBroadcaster);
+      // Check the call type
+      if (call.isVideo) {
+        await engine.enableVideo();
+
+        // Optimize for poor network conditions
+        await engine.setVideoEncoderConfiguration(
+          const VideoEncoderConfiguration(
+            dimensions: VideoDimensions(width: 480, height: 360),
+            frameRate: 15,
+            bitrate: 400,
+            degradationPreference: DegradationPreference.maintainFramerate,
           ),
         );
-      } else {
-        // Permissions not granted, handle accordingly
-        AppStyle().failedSnackBar(
-            message: 'Please allow camera and microphone permission');
 
-        // End the call automatically if permissions are denied so the app doesn't hang
-        Future.delayed(const Duration(seconds: 4), () {
-          if (!_isCallEnded && !isLocalUserJoined.value) {
-            onEndCall();
-          }
-        });
+        await engine.startPreview();
+      } else {
+        await engine.enableAudio();
       }
+
+      // Await the parallelized token response (typically 0ms cache hit)
+      final tokenToUse = await tokenFuture;
+
+      await engine.enableAudio();
+      await engine.enableLocalAudio(true);
+      await engine.muteLocalAudioStream(false);
+      mute.value = false;
+
+      await engine.joinChannel(
+        token: tokenToUse,
+        channelId: call.callerId,
+        uid: 0,
+        options: ChannelMediaOptions(
+          channelProfile: ChannelProfileType.channelProfileCommunication,
+          clientRoleType: ClientRoleType.clientRoleBroadcaster,
+          autoSubscribeAudio: true,
+          autoSubscribeVideo: call.isVideo,
+          publishMicrophoneTrack: true,
+          publishCameraTrack: call.isVideo,
+        ),
+      );
     } catch (e) {
       debugPrint('❌ [CallController] _initAgora failed: $e');
       AppStyle().failedSnackBar(message: 'Call initialization failed: $e');
-      Future.delayed(const Duration(seconds: 3), () {
-        if (!_isCallEnded && !isLocalUserJoined.value) {
-          onEndCall();
-        }
-      });
     }
   }
 
@@ -367,37 +474,62 @@ class CallController extends GetxController {
   // Toggle phone speaker
   void onToggleSpeaker() {
     final bool newValue = speaker.value = !speaker.value;
-    engine.setEnableSpeakerphone(newValue);
-    // engine.stopCameraCapture(VideoSourceType.videoSourceCamera);
+    if (!isLiveKit) {
+      try {
+        engine.setEnableSpeakerphone(newValue);
+      } catch (e) {
+        debugPrint('Agora speaker error: $e');
+      }
+    }
   }
 
-  //camera on and off
+  // Camera on and off
   void toggleCamera() {
-    // final bool newValue = isCameraOn.value = !isCameraOn.value;
-    // setState(() {
-    isCameraOn.value = !isCameraOn.value; // Toggle camera state
-    // });
-
-    if (isCameraOn.value) {
-      engine.enableLocalVideo(true); // Turn the camera on
+    isCameraOn.value = !isCameraOn.value;
+    if (isLiveKit) {
+      livekitService.setCameraEnabled(isCameraOn.value);
     } else {
-      engine.enableLocalVideo(false); // Turn the camera off
+      try {
+        if (isCameraOn.value) {
+          engine.enableLocalVideo(true);
+        } else {
+          engine.enableLocalVideo(false);
+        }
+      } catch (e) {
+        debugPrint('Agora camera error: $e');
+      }
     }
   }
 
   // Toggle mute
   void onToggleMute() async {
     final bool newValue = mute.value = !mute.value;
-    await engine.muteLocalAudioStream(newValue);
-    await engine.updateChannelMediaOptions(
-      ChannelMediaOptions(publishMicrophoneTrack: !newValue),
-    );
+    if (isLiveKit) {
+      await livekitService.setMicrophoneEnabled(!newValue);
+    } else {
+      try {
+        await engine.muteLocalAudioStream(newValue);
+        await engine.updateChannelMediaOptions(
+          ChannelMediaOptions(publishMicrophoneTrack: !newValue),
+        );
+      } catch (e) {
+        debugPrint('Agora mute error: $e');
+      }
+    }
   }
 
   // Switch Camera -> front/rear
   void onSwitchCamera() {
     switchCamera.value = !switchCamera.value;
-    engine.switchCamera();
+    if (isLiveKit) {
+      livekitService.switchCamera();
+    } else {
+      try {
+        engine.switchCamera();
+      } catch (e) {
+        debugPrint('Agora switchCamera error: $e');
+      }
+    }
   }
 
   // Count the call duration
@@ -496,13 +628,17 @@ class CallController extends GetxController {
 
       // Explicitly leave channel and restore global AgoraService event handlers
       try {
-        if (_eventHandler != null) {
-          engine.unregisterEventHandler(_eventHandler!);
+        if (isLiveKit) {
+          await livekitService.leaveRoom();
+        } else {
+          if (_eventHandler != null) {
+            engine.unregisterEventHandler(_eventHandler!);
+          }
+          await engine.leaveChannel().catchError((_) {});
+          AgoraService().setupEventHandlers();
         }
-        await engine.leaveChannel().catchError((_) {});
-        AgoraService().setupEventHandlers();
       } catch (e) {
-        debugPrint('Engine leaveChannel error: $e');
+        debugPrint('RTC leaveChannel error: $e');
       }
 
       FlutterCallkitIncoming.endAllCalls().catchError((_) {});

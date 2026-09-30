@@ -4,6 +4,8 @@ import 'package:get/get.dart';
 import '../../../AdminPane/models/gift.dart';
 import '../../../AdminPane/services/gift_service.dart';
 import '../../../controllers/auth_controller.dart';
+import '../../../screens/room/wallet_screen.dart';
+import '../../../services/wallet_service.dart';
 import '../../../services/emoji_chat_service.dart';
 
 class ComboBannerData {
@@ -96,16 +98,38 @@ class GiftComboController extends GetxController {
 
     final quantity = activeQuantity.value;
     final totalCost = gift.credits * quantity * activeReceivers.length;
-    final userBalance = AuthController.instance.currentUser.diamonds;
 
-    if (userBalance < totalCost) {
+    // Optimistic balance check & deduction to prevent race conditions during rapid taps
+    final hasEnoughBalance = AuthController.instance.deductDiamonds(totalCost);
+
+    if (!hasEnoughBalance) {
+      // Dismiss combo button immediately so user cannot keep clicking without diamonds
+      dismissComboButton();
+
+      final user = AuthController.instance.currentUser;
       Get.snackbar(
         'Insufficient Diamonds',
-        'You need $totalCost diamonds to send this combo.',
+        'You need $totalCost diamonds to send this combo. Please recharge.',
         snackPosition: SnackPosition.TOP,
         backgroundColor: Colors.red.withValues(alpha: 0.9),
         colorText: Colors.white,
-        duration: const Duration(seconds: 2),
+        duration: const Duration(seconds: 4),
+        mainButton: TextButton(
+          onPressed: () {
+            Get.to(() => DiamondRechargePage(
+                  diamondBalance: user.diamonds,
+                  walletService: WalletService(),
+                  userId: user.userId,
+                ));
+          },
+          child: const Text(
+            'Recharge',
+            style: TextStyle(
+              color: Colors.yellowAccent,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
       );
       return;
     }
@@ -126,7 +150,7 @@ class GiftComboController extends GetxController {
     _updateBannerData();
 
     try {
-      // Fire and forget background transaction write
+      // Background transaction write
       _giftService.sendGifts(
         giftId: gift.id,
         giftName: gift.name,
@@ -143,9 +167,11 @@ class GiftComboController extends GetxController {
         isComboHit: true,
       ).catchError((e) {
         debugPrint('❌ [GiftCombo] Error sending combo gift: $e');
+        AuthController.instance.refundDiamonds(totalCost);
       });
     } catch (e) {
       debugPrint('❌ [GiftCombo] Error sending combo hit: $e');
+      AuthController.instance.refundDiamonds(totalCost);
     }
   }
 

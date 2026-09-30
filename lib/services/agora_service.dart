@@ -362,10 +362,8 @@ class AgoraService with WidgetsBindingObserver {
           String content;
           switch (_channelMode) {
             case AgoraChannelMode.audioRoom:
-              title = 'Audio Room Active';
-              content = _isSeated
-                  ? (_isMuted ? 'Microphone muted' : 'Speaking in room')
-                  : 'Listening in room';
+              title = 'VoiceRoom is running now';
+              content = 'click back to the VoiceRoom';
               break;
             case AgoraChannelMode.audioCall:
               title = 'Audio Call Active';
@@ -1446,10 +1444,6 @@ class AgoraService with WidgetsBindingObserver {
           return false;
         }
 
-        if (_isMuted == muted) {
-          return true;
-        }
-
         if (!muted) {
           final permission = await _requestMicrophonePermission();
           if (!permission) {
@@ -1474,6 +1468,7 @@ class AgoraService with WidgetsBindingObserver {
         _isMuted = muted;
 
         if (muted) {
+          await _enableLocalAudio(false);
           await _setRecordingVolume(_mutedRecordingVolume);
           await _muteLocalStream(true);
           await _updateMediaOptions(

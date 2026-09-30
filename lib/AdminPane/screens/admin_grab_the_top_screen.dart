@@ -124,11 +124,55 @@ class _AdminGrabTheTopScreenState extends State<AdminGrabTheTopScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Gift Selector Dropdown / Auto-fill
+                    StreamBuilder<QuerySnapshot>(
+                      stream: _firestore.collection('gift').snapshots(),
+                      builder: (context, giftSnap) {
+                        if (giftSnap.hasData && giftSnap.data!.docs.isNotEmpty) {
+                          final gifts = giftSnap.data!.docs;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2A1B3D),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.3)),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                dropdownColor: const Color(0xFF1E142B),
+                                hint: const Text('🎁 Select Existing Gift (Auto-fill)', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                                items: gifts.map((doc) {
+                                  final data = doc.data() as Map<String, dynamic>;
+                                  final name = data['name']?.toString() ?? doc.id;
+                                  final credits = data['credits'] ?? 0;
+                                  return DropdownMenuItem<String>(
+                                    value: doc.id,
+                                    child: Text('$name ($credits 💎)', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                                  );
+                                }).toList(),
+                                onChanged: (selectedId) {
+                                  if (selectedId == null) return;
+                                  final selectedDoc = gifts.firstWhere((d) => d.id == selectedId);
+                                  final data = selectedDoc.data() as Map<String, dynamic>;
+                                  setDialogState(() {
+                                    giftNameController.text = data['name']?.toString() ?? selectedId;
+                                    giftIdController.text = selectedId;
+                                  });
+                                },
+                              ),
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    ),
                     TextField(
                       controller: giftNameController,
                       style: const TextStyle(color: Colors.white),
                       decoration: const InputDecoration(
-                        labelText: 'Gift Name (Keyword/Match)',
+                        labelText: 'Gift Name (Required)',
                         labelStyle: TextStyle(color: Colors.white70),
                         enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.purpleAccent)),
                       ),
@@ -138,7 +182,7 @@ class _AdminGrabTheTopScreenState extends State<AdminGrabTheTopScreen> {
                       controller: giftIdController,
                       style: const TextStyle(color: Colors.white),
                       decoration: const InputDecoration(
-                        labelText: 'Gift ID (Optional exact match)',
+                        labelText: 'Gift ID (Optional / Auto-filled)',
                         labelStyle: TextStyle(color: Colors.white70),
                         enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
                       ),
@@ -184,7 +228,7 @@ class _AdminGrabTheTopScreenState extends State<AdminGrabTheTopScreen> {
                     SwitchListTile(
                       title: const Text('Rule Active', style: TextStyle(color: Colors.white)),
                       value: isActive,
-                      activeColor: Colors.purpleAccent,
+                      activeThumbColor: Colors.purpleAccent,
                       onChanged: (val) => setDialogState(() => isActive = val),
                     ),
                   ],
@@ -316,7 +360,7 @@ class _AdminGrabTheTopScreenState extends State<AdminGrabTheTopScreen> {
                               ),
                               Switch(
                                 value: _isFeatureEnabled,
-                                activeColor: Colors.purpleAccent,
+                                activeThumbColor: Colors.purpleAccent,
                                 onChanged: (val) => setState(() => _isFeatureEnabled = val),
                               ),
                             ],

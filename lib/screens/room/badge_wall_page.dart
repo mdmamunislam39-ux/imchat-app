@@ -304,6 +304,7 @@ class _BadgeWallPageState extends State<BadgeWallPage> {
   void initState() {
     super.initState();
     _userOwnedBadges = List<Map<String, dynamic>>.from(widget.badgeItems);
+    _storeService.checkAndCleanupExpiredUserItems(widget.userID);
     _loadUserProfile();
     _loadAllCatalogBadges();
     _subscribeToBadgesLive();
@@ -588,6 +589,19 @@ class _BadgeWallPageState extends State<BadgeWallPage> {
             }
           }
 
+          // Filter out expired items
+          final now = DateTime.now();
+          loadedBadges.removeWhere((item) {
+            final exp = item['expiresAt'];
+            if (exp is Timestamp) {
+              final expDate = exp.toDate();
+              if (expDate.year < 2090 && expDate.isBefore(now)) {
+                return true;
+              }
+            }
+            return false;
+          });
+
           // Deduplicate
           final Map<String, Map<String, dynamic>> dedup = {};
           for (final entry in loadedBadges) {
@@ -626,12 +640,11 @@ class _BadgeWallPageState extends State<BadgeWallPage> {
             }
           }
 
-          final now = DateTime.now();
           final List<Map<String, dynamic>> activeBadges =
               dedup.values.where((item) {
             final exp = item['expiresAt'] as Timestamp?;
             if (exp == null) return true;
-            return exp.toDate().isAfter(now);
+            return exp.toDate().year >= 2090 || exp.toDate().isAfter(now);
           }).toList();
 
           if (mounted) {

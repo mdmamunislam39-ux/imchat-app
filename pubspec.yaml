@@ -5,7 +5,7 @@ description: Flutter Chat Messenger
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
 # The following defines the version and build number for your application.
-version: 1.0.6+7
+version: 1.0.6+8
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -76,6 +76,8 @@ dependencies:
   sign_in_with_apple: ^7.0.1
   crypto: ^3.0.5
   agora_rtc_engine: ^6.5.3
+  livekit_client: ^2.3.1
+  socket_io_client: ^3.0.2
   flutter_ringtone_player: any
   video_editor: ^3.0.0
   fraction: ^5.0.3
@@ -94,6 +96,7 @@ dependencies:
   wechat_assets_picker: ^9.4.0
   flutter_contacts_service: ^0.2.0
   x_overlay: ^1.0.0
+  in_app_update: ^4.2.4
   # BLoC for Audio Rooms v2
   flutter_bloc: ^9.1.1
   equatable: ^2.0.7

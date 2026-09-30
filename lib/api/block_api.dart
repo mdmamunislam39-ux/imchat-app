@@ -81,4 +81,13 @@ abstract class BlockApi {
       return false;
     }
   }
+
+  // Stream of blocked user IDs
+  static Stream<List<String>> getBlockedUserIds(String currentUserId) {
+    return _firestore
+        .collection('Users/$currentUserId/BlockedUsers')
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => doc.id).toList());
+  }
 }
+

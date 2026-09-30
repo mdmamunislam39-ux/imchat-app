@@ -57,5 +57,7 @@ scratch/
 *.pem
 debug_room_rest.js
 functions/debug_room.js
+.env
+*.env
 
 

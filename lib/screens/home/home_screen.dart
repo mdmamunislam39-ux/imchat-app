@@ -273,6 +273,9 @@ import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chat_messenger/screens/room/wallet_screen.dart';
 import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
+import 'package:chat_messenger/services/in_app_update_service.dart';
+import 'package:firebase_auth/firebase_auth.dart' as auth;
+import 'package:chat_messenger/screens/settings/update_phone_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, this.passController, this.routeVideo});
@@ -453,8 +456,8 @@ class _HomeScreenState extends State<HomeScreen>
     // Update user presence
     UserApi.updateUserPresenceInRealtimeDb();
 
-    // Commented out to prevent the update dialog during development
-    // getAppVersion();
+    // Check for Google Play In-App Updates
+    InAppUpdateService.checkForUpdate(isImmediate: false);
 
     _listenToCallState();
 
@@ -1039,8 +1042,83 @@ class _HomeScreenState extends State<HomeScreen>
                     : null,
               ),
               child: SafeArea(
-                child: TabBarView(
-                  controller: _tabController,
+                child: Column(
+                  children: [
+                    // Phone binding recommendation banner for Google users
+                    Obx(() {
+                      final user = AuthController.instance.currentUser;
+                      final bool isGoogleUser = user.loginProvider == LoginProvider.google ||
+                          (auth.FirebaseAuth.instance.currentUser?.providerData
+                                  .any((p) => p.providerId == 'google.com') ??
+                              false);
+                      final bool hasPhone = user.number.trim().isNotEmpty ||
+                          (auth.FirebaseAuth.instance.currentUser?.providerData
+                                  .any((p) => p.providerId == 'phone') ??
+                              false);
+
+                      if (isGoogleUser && !hasPhone) {
+                        return Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFF9800), Color(0xFFFF5722)],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.orange.withValues(alpha: 0.3),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.phone_android_rounded,
+                                  color: Colors.white, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Bind your phone number to secure your account and enable phone login.'
+                                      .tr,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              InkWell(
+                                onTap: () =>
+                                    Get.to(() => const UpdatePhoneScreen()),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    'Bind Now'.tr,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFFFF5722),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    }),
+                    Expanded(
+                      child: TabBarView(
+                        controller: _tabController,
                   children: [
                     // Chats Screen
                     Column(
@@ -1054,51 +1132,14 @@ class _HomeScreenState extends State<HomeScreen>
                                 onTap: () {
                                   Get.to(() => const AddStoryScreen());
                                 },
-                                child: _buildStoryItem(
-                                    "Add a story", Icons.camera_alt)),
+                                  child: _buildStoryItem(
+                                      "add_a_story".tr, Icons.camera_alt)),
                           ),
                           Expanded(
                               child: SizedBox(
                                   height: 100, child: StoriesScreen())),
                         ],
                       ),
-                      // const HomeEventBanner(), // Removed as requested: Events should not show here by default
-                      // if (box.read('callIsActive') == true)
-                      //   InkWell(
-                      //     onTap: () {
-                      // Call? getCallFromStorage() {
-                      //   final Map<String, dynamic>? storedCallData = box
-                      //       .read('call'); // Retrieve the map from storage
-                      //   if (storedCallData != null) {
-                      //     return Call.fromMap(
-                      //         data:
-                      //             storedCallData); // Convert the map back to a Call object
-                      //   }
-                      //   return null; // Return null if no call data is found
-                      // }
-
-                      // void fetchCallDetails() {
-                      //   Call? savedCall = getCallFromStorage();
-                      //   if (savedCall != null) {
-                      //     debugPrint(
-                      //         'Retrieved Call: ${savedCall.callerName} is calling ${savedCall.receiverName}');
-                      //   } else {
-                      //     debugPrint('No call details found in storage');
-                      //   }
-                      // }
-
-                      // Get.toNamed(AppRoutes.voiceCall, arguments: {
-                      //   'call': box.read('call'),
-                      // });
-                      // fetchCallDetails();
-                      //   },
-                      //   child: Container(
-                      //     height: 25,
-                      //     width: double.maxFinite,
-                      //     color: Colors.green,
-                      //     child: Text('Tap to return call'),
-                      //   ),
-                      // ),
                       if (groupcallState.value == 'running')
                         Container(
                           height: 40,
@@ -1117,7 +1158,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 SizedBox(
                                   width: 15,
                                 ),
-                                Text('Tap to return call'),
+                                Text('tap_to_return_call'.tr),
                                 CallTimerForGroupCall(),
                               ],
                             ),
@@ -1133,10 +1174,10 @@ class _HomeScreenState extends State<HomeScreen>
                           .isVoiceRoomEnabled
                           .value
                       ? const AudioRoomsV2Screen(showAppBar: false)
-                      : const Center(
+                      : Center(
                           child: Text(
-                            'Voice Rooms are currently disabled by the Admin',
-                            style: TextStyle(fontSize: 16, color: Colors.grey),
+                            'voice_rooms_disabled_by_admin'.tr,
+                            style: const TextStyle(fontSize: 16, color: Colors.grey),
                           ),
                         )),
 
@@ -1149,11 +1190,14 @@ class _HomeScreenState extends State<HomeScreen>
                       Expanded(child: const ContactsScreen()),
                       bottomBar()
                     ],
-                  )
+                  ),
                 ],
               ),
             ),
-          ),
+          ],
+        ),
+      ),
+    ),
           floatingActionButton: (widget.routeVideo == 'video' &&
                   widget.passController != null)
                 ? SizedBox(
@@ -1171,10 +1215,8 @@ class _HomeScreenState extends State<HomeScreen>
                               rtcEngine: widget.passController!.engine,
                               canvas: VideoCanvas(
                                 uid: widget.passController!.remoteUid.value,
-                                // uid: controller.remoteUid.value,
                               ),
                               connection: RtcConnection(
-                                  // channelId: call.callerId
                                   channelId: widget.passController?.call.effectiveChannelName ?? 'abcd1'),
                             ),
                           ),
@@ -1204,8 +1246,6 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   )
                 : Obx(() {
-                    //  _listenToCallState();
-
                     if (callState.value == 'calling') {
                       if (call.receiverId == currentUer.userId) {
                         return Padding(
@@ -1214,8 +1254,8 @@ class _HomeScreenState extends State<HomeScreen>
                               onPressed: () {
                                 Get.to(() => IncommingCallScreen(call: call));
                               },
-                              label: Text('Tap to view Call',
-                                  style: TextStyle(color: Colors.white))),
+                              label: Text('tap_to_view_call'.tr,
+                                  style: const TextStyle(color: Colors.white))),
                         );
                       } else {
                         return Padding(
@@ -1228,8 +1268,8 @@ class _HomeScreenState extends State<HomeScreen>
                                   Get.to(() => VoiceCallScreen(call: call));
                                 }
                               },
-                              label: Text('Call Ringing',
-                                  style: TextStyle(color: Colors.white))),
+                              label: Text('call_ringing'.tr,
+                                  style: const TextStyle(color: Colors.white))),
                         );
                       }
                     } else if (callState.value == 'running' &&
@@ -1250,8 +1290,8 @@ class _HomeScreenState extends State<HomeScreen>
                               children: [
                                 CallTimer(),
                                 Text(
-                                  'Call Active',
-                                  style: TextStyle(color: Colors.white),
+                                  'call_active'.tr,
+                                  style: const TextStyle(color: Colors.white),
                                 ),
                               ],
                             )),
@@ -1321,7 +1361,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       SizedBox(
                                         width: 10,
                                       ),
-                                      Text('Audio Rooms v2')
+                                      Text('Audio Rooms v2'.tr)
                                     ],
                                   )),
                               IconButton(
@@ -1337,7 +1377,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       SizedBox(
                                         width: 10,
                                       ),
-                                      Text('New Group')
+                                      Text('New Group'.tr)
                                     ],
                                   )),
                               IconButton(
@@ -1353,7 +1393,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       SizedBox(
                                         width: 10,
                                       ),
-                                      Text('Add Friends')
+                                      Text('Add Friends'.tr)
                                     ],
                                   )),
                               IconButton(
@@ -1370,7 +1410,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       SizedBox(
                                         width: 10,
                                       ),
-                                      Text('My Friends')
+                                      Text('My Friends'.tr)
                                     ],
                                   )),
                               IconButton(
@@ -1386,7 +1426,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       SizedBox(
                                         width: 10,
                                       ),
-                                      Text('More')
+                                      Text('More'.tr)
                                     ],
                                   )),
                             ],

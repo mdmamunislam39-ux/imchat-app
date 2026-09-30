@@ -79,6 +79,7 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
             _userSvipValidUntilMonth = svipMonth;
             _userVipValidUntil = vipValid;
           });
+          SvipService.checkAndCleanupExpiredVipAndSvip(widget.currentUser.userId, data);
         }
       }
     });
@@ -228,8 +229,8 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
               ],
             ),
             content: Text(
-              'SVIP Level increases exclusively through valid Seller Page recharges.\n\n'
-              'Current Eligible Seller Recharge: $_currentMonthlyRecharge / $target Diamonds.\n\n'
+              'SVIP Level increases through valid Online Recharge and Diamond Seller recharges.\n\n'
+              'Current Monthly Recharge: $_currentMonthlyRecharge / $target Diamonds.\n\n'
               'Note: Diamonds from Rewards, Events, Bonuses, or Games add to your Wallet balance, but do not contribute to SVIP level progression.',
               style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
             ),
@@ -246,7 +247,7 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('SVIP rewards and levels are automatically applied by backend upon valid Seller Recharge!'),
+          content: Text('SVIP rewards and levels are automatically applied upon valid Online or Seller Recharge!'),
           backgroundColor: Colors.green,
         ),
       );
@@ -1017,12 +1018,20 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
     if (!widget.isSvip) {
       // VIP Purchase Layout
       String expiryText = '';
-      if (_userActiveVipLevel > 0 && _userVipValidUntil != null) {
-        if (_userVipValidUntil!.isAfter(DateTime.now())) {
-          final diff = _userVipValidUntil!.difference(DateTime.now()).inDays;
-          expiryText = diff > 0 ? 'Active ($diff days left)' : 'Expires today';
+      final isUnlimited = _userVipValidUntil != null && _userVipValidUntil!.year >= 2090;
+      final isVipActive = SvipService.isVipActive(_userActiveVipLevel, _userVipValidUntil);
+      if (_userActiveVipLevel > 0) {
+        if (isUnlimited) {
+          expiryText = 'Active (Permanent)';
+        } else if (_userVipValidUntil != null) {
+          if (_userVipValidUntil!.isAfter(DateTime.now())) {
+            final diff = _userVipValidUntil!.difference(DateTime.now()).inDays;
+            expiryText = diff > 0 ? 'Active ($diff days left)' : 'Expires today';
+          } else {
+            expiryText = 'Expired';
+          }
         } else {
-          expiryText = 'Expired';
+          expiryText = 'Active';
         }
       } else {
         expiryText = 'Inactive';
@@ -1068,9 +1077,7 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
                   Text(
                     'Status: $expiryText',
                     style: TextStyle(
-                      color: _userActiveVipLevel > 0 && (_userVipValidUntil?.isAfter(DateTime.now()) ?? false)
-                          ? Colors.greenAccent
-                          : Colors.redAccent,
+                      color: isVipActive ? Colors.greenAccent : Colors.redAccent,
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
@@ -1171,7 +1178,7 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
                 Row(
                   children: [
                     Text(
-                      'Seller Recharge: $_currentMonthlyRecharge',
+                      'Monthly Recharge: $_currentMonthlyRecharge',
                       style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(width: 3),
@@ -1284,30 +1291,36 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
         final dynamic currentVipValidUntilRaw = userData['vipValidUntil'];
         final int currentVipLevel = userData['activeVipLevel'] as int? ?? 0;
         
-        DateTime currentExpiry;
-        if (currentVipLevel == levelNum && currentVipValidUntilRaw != null) {
-          DateTime? parsedDate;
-          if (currentVipValidUntilRaw is Timestamp) {
-            parsedDate = currentVipValidUntilRaw.toDate();
-          } else if (currentVipValidUntilRaw is String) {
-            parsedDate = DateTime.tryParse(currentVipValidUntilRaw);
-          }
-          
-          if (parsedDate != null && parsedDate.isAfter(DateTime.now())) {
-            currentExpiry = parsedDate;
+        DateTime newExpiry;
+        if (days == -1) {
+          // Unlimited / Permanent VIP (year 2099)
+          newExpiry = DateTime(2099, 12, 31);
+        } else {
+          DateTime currentExpiry;
+          if (currentVipLevel == levelNum && currentVipValidUntilRaw != null) {
+            DateTime? parsedDate;
+            if (currentVipValidUntilRaw is Timestamp) {
+              parsedDate = currentVipValidUntilRaw.toDate();
+            } else if (currentVipValidUntilRaw is String) {
+              parsedDate = DateTime.tryParse(currentVipValidUntilRaw);
+            }
+            
+            if (parsedDate != null && parsedDate.isAfter(DateTime.now()) && parsedDate.year < 2090) {
+              currentExpiry = parsedDate;
+            } else {
+              currentExpiry = DateTime.now();
+            }
           } else {
             currentExpiry = DateTime.now();
           }
-        } else {
-          currentExpiry = DateTime.now();
+          newExpiry = currentExpiry.add(Duration(days: days));
         }
-        
-        final DateTime newExpiry = currentExpiry.add(Duration(days: days));
         
         transaction.update(userRef, {
           'diamonds': FieldValue.increment(-cost),
           'activeVipLevel': levelNum,
           'vipValidUntil': Timestamp.fromDate(newExpiry),
+          'vipValidUntilMonth': days == -1 ? 'unlimited' : '',
         });
         
         Map<String, dynamic> custData = userData['customization'] ?? {};
@@ -1352,6 +1365,8 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
         if (nameplateUrl.isNotEmpty) {
           final nameplateStoreId = 'vip_${levelId}_nameplate';
           custData['selectedNameplateId'] = nameplateStoreId;
+          custData['selectedNameplateUrl'] = nameplateUrl;
+          custData['selectedNameplate'] = nameplateUrl;
           final currentNameplateIds = List<String>.from(custData['selectedNameplateIds'] ?? []);
           if (!currentNameplateIds.contains(nameplateStoreId)) {
             currentNameplateIds.add(nameplateStoreId);
@@ -1383,8 +1398,14 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
               'userId': widget.currentUser.userId,
               'storeItemId': storeItemId,
               'storeItemName': item['name'],
+              'name': item['name'],
               'itemType': item['type'],
+              'type': item['type'],
               'imageUrl': url,
+              'fileUrl': url,
+              'thumbnailUrl': url,
+              'image': url,
+              'pngUrl': url,
               'assignedAt': FieldValue.serverTimestamp(),
               'expiresAt': Timestamp.fromDate(newExpiry),
               'isActive': true,
@@ -1428,6 +1449,7 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
     final int p7 = _getPrice(selectedLevel, 'price7Days', 50);
     final int p15 = _getPrice(selectedLevel, 'price15Days', 100);
     final int p30 = _getPrice(selectedLevel, 'price30Days', 180);
+    final int pUnlimited = _getPrice(selectedLevel, 'priceUnlimited', p30 * 4);
     
     showModalBottomSheet(
       context: context,
@@ -1439,51 +1461,58 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(20.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Purchase VIP $levelNum',
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    Row(
-                      children: [
-                        Text(
-                          'Your Balance: $_userDiamonds',
-                          style: const TextStyle(color: Colors.yellow, fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 4),
-                        const DynamicDiamondIcon(width: 16, height: 16),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                _buildPurchaseOptionTile('1 Day', p1, () {
-                  Navigator.pop(context);
-                  _purchaseVip(selectedLevel, 1, p1);
-                }),
-                const SizedBox(height: 12),
-                _buildPurchaseOptionTile('7 Days', p7, () {
-                  Navigator.pop(context);
-                  _purchaseVip(selectedLevel, 7, p7);
-                }),
-                const SizedBox(height: 12),
-                _buildPurchaseOptionTile('15 Days', p15, () {
-                  Navigator.pop(context);
-                  _purchaseVip(selectedLevel, 15, p15);
-                }),
-                const SizedBox(height: 12),
-                _buildPurchaseOptionTile('30 Days', p30, () {
-                  Navigator.pop(context);
-                  _purchaseVip(selectedLevel, 30, p30);
-                }),
-                const SizedBox(height: 20),
-              ],
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Purchase VIP $levelNum',
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      Row(
+                        children: [
+                          Text(
+                            'Your Balance: $_userDiamonds',
+                            style: const TextStyle(color: Colors.yellow, fontSize: 14, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(width: 4),
+                          const DynamicDiamondIcon(width: 16, height: 16),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  _buildPurchaseOptionTile('1 Day', p1, () {
+                    Navigator.pop(context);
+                    _purchaseVip(selectedLevel, 1, p1);
+                  }),
+                  const SizedBox(height: 12),
+                  _buildPurchaseOptionTile('7 Days', p7, () {
+                    Navigator.pop(context);
+                    _purchaseVip(selectedLevel, 7, p7);
+                  }),
+                  const SizedBox(height: 12),
+                  _buildPurchaseOptionTile('15 Days', p15, () {
+                    Navigator.pop(context);
+                    _purchaseVip(selectedLevel, 15, p15);
+                  }),
+                  const SizedBox(height: 12),
+                  _buildPurchaseOptionTile('30 Days', p30, () {
+                    Navigator.pop(context);
+                    _purchaseVip(selectedLevel, 30, p30);
+                  }),
+                  const SizedBox(height: 12),
+                  _buildPurchaseOptionTile('Unlimited (Permanent)', pUnlimited, () {
+                    Navigator.pop(context);
+                    _purchaseVip(selectedLevel, -1, pUnlimited);
+                  }),
+                  const SizedBox(height: 20),
+                ],
+              ),
             ),
           ),
         );

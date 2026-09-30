@@ -1,6 +1,12 @@
 import 'package:chat_messenger/services/store_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:get/get.dart';
+import 'package:chat_messenger/controllers/auth_controller.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_controller.dart';
+import 'package:chat_messenger/models/audio_room_v2.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/repository/audio_rooms_repository.dart';
+import 'package:chat_messenger/models/user.dart';
 
 class FrameHelper {
   // Static in-memory caches for instantaneous frame rendering
@@ -28,6 +34,62 @@ class FrameHelper {
   static String? getCachedUserFrameId(String? userId) {
     if (userId == null || userId.isEmpty) return null;
     return _userIdToFrameIdCache[userId];
+  }
+
+  /// Real-time instantaneous update that immediately reflects on UI, AuthController,
+  /// Minimized Audio Room floating player, and Firestore room seats
+  static Future<void> updateUserFrameRealtime({
+    required String userId,
+    required String? frameId,
+    String? frameUrl,
+  }) async {
+    if (userId.isEmpty) return;
+
+    // 1. Resolve frameUrl if missing
+    String? resolvedUrl = frameUrl;
+    if (frameId != null && frameId.isNotEmpty && (resolvedUrl == null || resolvedUrl.isEmpty)) {
+      resolvedUrl = await getFrameUrl(frameId);
+    }
+
+    // 2. Immediate memory cache update
+    setCachedUserFrame(userId: userId, frameId: frameId, frameUrl: resolvedUrl);
+
+    // 3. Update AuthController if current logged in user
+    try {
+      if (Get.isRegistered<AuthController>()) {
+        final auth = AuthController.instance;
+        if (auth.currentUser.userId == userId) {
+          auth.currentFrameUrl.value = resolvedUrl ?? '';
+          final cust = auth.currentUser.customization ?? UserCustomization();
+          cust.selectedFrameId = frameId;
+          auth.currentUser.customization = cust;
+        }
+      }
+    } catch (_) {}
+
+    // 4. Sync immediately to minimized floating room & active audio room repository
+    try {
+      if (Get.isRegistered<MinimizedRoomController>()) {
+        final minCtrl = MinimizedRoomController.instance;
+        if (minCtrl.hasMinimizedRoom && minCtrl.minimizedRoom != null) {
+          final room = minCtrl.minimizedRoom!;
+          final pIdx = room.participants.indexWhere((p) => p.userId == userId);
+          if (pIdx != -1) {
+            final updated = room.participants[pIdx].copyWith(frameId: frameId);
+            final newParticipants = List<AudioRoomParticipant>.from(room.participants);
+            newParticipants[pIdx] = updated;
+            minCtrl.updateMinimizedRoom(room.copyWith(participants: newParticipants));
+          }
+          AudioRoomsRepository().updateParticipantFrameId(
+            roomId: room.id,
+            userId: userId,
+            frameId: frameId,
+          ).catchError((e) => debugPrint('Error syncing frame to minimized room: $e'));
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [FrameHelper] Error syncing frame to active room: $e');
+    }
   }
 
   /// Manually populate or update cache (e.g. upon equipping in store or receiving user updates)
@@ -77,6 +139,37 @@ class FrameHelper {
     _inFlightUserId.clear();
   }
 
+  /// Real-time stream of avatar frame URL from Firestore for ANY user
+  static Stream<String?> streamUserFrame(String userId) {
+    if (userId.isEmpty) return Stream.value(null);
+
+    return FirebaseFirestore.instance
+        .collection('Users')
+        .doc(userId)
+        .snapshots()
+        .asyncMap((snapshot) async {
+      if (!snapshot.exists) {
+        setCachedUserFrame(userId: userId, frameId: null, frameUrl: null);
+        return null;
+      }
+
+      final userData = snapshot.data();
+      final customization = userData?['customization'] as Map<String, dynamic>?;
+      final selectedFrameId = (customization?['selectedFrameId'] ??
+          userData?['selectedFrameId'] ??
+          userData?['userCustomization']?['selectedFrameId']) as String?;
+
+      if (selectedFrameId == null || selectedFrameId.isEmpty) {
+        setCachedUserFrame(userId: userId, frameId: null, frameUrl: null);
+        return null;
+      }
+
+      final url = await getFrameUrl(selectedFrameId);
+      setCachedUserFrame(userId: userId, frameId: selectedFrameId, frameUrl: url);
+      return url;
+    });
+  }
+
   /// Fetch frame URL for a specific frameId with in-flight deduplication and memory cache
   static Future<String?> getFrameUrl(String? frameId) async {
     if (frameId == null || frameId.isEmpty) {
@@ -112,6 +205,12 @@ class FrameHelper {
       final item = await _storeService.getStoreItemDetails(frameId);
       if (item != null) {
         final url = item['fileUrl'] ??
+            item['animationUrl'] ??
+            item['frameUrl'] ??
+            item['frameMediaUrl'] ??
+            item['svgaUrl'] ??
+            item['assetUrl'] ??
+            item['mediaUrl'] ??
             item['thumbnailUrl'] ??
             item['imageUrl'] ??
             item['image'] ??
@@ -131,7 +230,16 @@ class FrameHelper {
 
       if (snap.docs.isNotEmpty) {
         final data = snap.docs.first.data();
-        final url = (data['fileUrl'] ?? data['imageUrl'] ?? data['thumbnailUrl'] ?? '') as String;
+        final url = (data['fileUrl'] ??
+                data['animationUrl'] ??
+                data['frameUrl'] ??
+                data['frameMediaUrl'] ??
+                data['svgaUrl'] ??
+                data['assetUrl'] ??
+                data['imageUrl'] ??
+                data['thumbnailUrl'] ??
+                '')
+            .toString();
         if (url.isNotEmpty) {
           _frameIdToUrlCache[frameId] = url;
           return url;

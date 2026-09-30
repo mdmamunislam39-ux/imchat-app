@@ -4,8 +4,11 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/services/global_settings_service.dart';
 
-/// Admin screen to dynamically configure Agora RTC App ID & App Certificate
-/// Stored in Firestore: global_settings/app_settings
+/// Admin screen to dynamically configure Dual-Engine RTC:
+/// 1. Master Engine Switch (Agora vs. LiveKit VPS)
+/// 2. LiveKit VPS Server (URL, API Key, API Secret, Auto Failover)
+/// 3. Agora RTC (App ID & App Certificate)
+/// Stored in Firestore: global_settings/app_settings & global_settings/server_config
 class AdminAgoraSettingsScreen extends StatefulWidget {
   const AdminAgoraSettingsScreen({super.key});
 
@@ -21,12 +24,23 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
   static const String _defaultAppId = 'c74eafbb98784225bae6be9b7e7f6225';
   static const String _defaultCertificate = 'eb4c5875fba74804b9d348882d7365f0';
 
+  // Engine Switch State ('AGORA' or 'LIVEKIT')
+  String _activeEngine = 'AGORA';
+  bool _autoFailoverToAgora = true;
+
+  // Agora Controllers
   final TextEditingController _appIdController = TextEditingController();
   final TextEditingController _certificateController = TextEditingController();
 
+  // LiveKit Controllers
+  final TextEditingController _livekitUrlController = TextEditingController();
+  final TextEditingController _livekitKeyController = TextEditingController();
+  final TextEditingController _livekitSecretController = TextEditingController();
+
   bool _isLoading = true;
   bool _isSaving = false;
-  bool _obscureCert = true;
+  bool _obscureAgoraCert = true;
+  bool _obscureLivekitSecret = true;
 
   @override
   void initState() {
@@ -38,26 +52,64 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
   void dispose() {
     _appIdController.dispose();
     _certificateController.dispose();
+    _livekitUrlController.dispose();
+    _livekitKeyController.dispose();
+    _livekitSecretController.dispose();
     super.dispose();
   }
 
   Future<void> _loadCurrentSettings() async {
     setState(() => _isLoading = true);
     try {
-      final doc = await _firestore.collection('global_settings').doc('app_settings').get();
-      if (doc.exists && doc.data() != null) {
-        final data = doc.data()!;
+      // 1. Load app_settings
+      final appDoc = await _firestore.collection('global_settings').doc('app_settings').get();
+      if (appDoc.exists && appDoc.data() != null) {
+        final data = appDoc.data()!;
         _appIdController.text = (data['agoraAppId'] ?? _defaultAppId).toString().trim();
         final cert = data['agoraAppCertificate'] ?? data['agoraCertificate'] ?? _defaultCertificate;
         _certificateController.text = cert.toString().trim();
+
+        if (data.containsKey('activeRtcEngine') && data['activeRtcEngine'] != null) {
+          _activeEngine = data['activeRtcEngine'].toString().trim().toUpperCase();
+        }
+        if (data.containsKey('livekitServerUrl') && data['livekitServerUrl'] != null) {
+          _livekitUrlController.text = data['livekitServerUrl'].toString().trim();
+        }
+        if (data.containsKey('livekitApiKey') && data['livekitApiKey'] != null) {
+          _livekitKeyController.text = data['livekitApiKey'].toString().trim();
+        }
+        if (data.containsKey('livekitApiSecret') && data['livekitApiSecret'] != null) {
+          _livekitSecretController.text = data['livekitApiSecret'].toString().trim();
+        }
+        if (data.containsKey('autoFailoverRtcToAgora') && data['autoFailoverRtcToAgora'] != null) {
+          _autoFailoverToAgora = data['autoFailoverRtcToAgora'] == true;
+        }
       } else {
         if (Get.isRegistered<GlobalSettingsService>()) {
           final settings = Get.find<GlobalSettingsService>();
           _appIdController.text = settings.agoraAppId.value;
           _certificateController.text = settings.agoraCertificate.value;
+          _activeEngine = settings.activeRtcEngine.value;
+          _livekitUrlController.text = settings.livekitServerUrl.value;
+          _livekitKeyController.text = settings.livekitApiKey.value;
+          _livekitSecretController.text = settings.livekitApiSecret.value;
+          _autoFailoverToAgora = settings.autoFailoverRtcToAgora.value;
         } else {
           _appIdController.text = _defaultAppId;
           _certificateController.text = _defaultCertificate;
+          _activeEngine = 'AGORA';
+        }
+      }
+
+      // 2. Load server_config (if exists, fallback / cross-check)
+      final serverDoc = await _firestore.collection('global_settings').doc('server_config').get();
+      if (serverDoc.exists && serverDoc.data() != null) {
+        final sData = serverDoc.data()!;
+        if (_livekitUrlController.text.isEmpty && sData['vpsRtcEndpoint'] != null) {
+          _livekitUrlController.text = sData['vpsRtcEndpoint'].toString().trim();
+        }
+        if (_livekitKeyController.text.isEmpty && sData['vpsRtcAuthToken'] != null) {
+          _livekitKeyController.text = sData['vpsRtcAuthToken'].toString().trim();
         }
       }
     } catch (e) {
@@ -74,15 +126,19 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
 
     final trimmedAppId = _appIdController.text.trim();
     final trimmedCert = _certificateController.text.trim();
+    final trimmedLivekitUrl = _livekitUrlController.text.trim();
+    final trimmedLivekitKey = _livekitKeyController.text.trim();
+    final trimmedLivekitSecret = _livekitSecretController.text.trim();
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E142B),
-        title: const Text('Update Agora Credentials?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: const Text(
-          'Changing Agora App ID or Certificate affects all active voice rooms, audio calls, and video calls in real-time.\n\nMake sure the credentials are correct from your Agora Console.',
-          style: TextStyle(color: Colors.white70, fontSize: 14),
+        title: const Text('Update RTC Streaming Settings?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          'Active Engine will be set to: ${_activeEngine == 'LIVEKIT' ? 'LiveKit (VPS WebRTC)' : 'Agora RTC Cloud'}\n\n'
+          'This will instantly take effect across all mobile client apps in real-time.',
+          style: const TextStyle(color: Colors.white70, fontSize: 14),
         ),
         actions: [
           TextButton(
@@ -102,24 +158,41 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
 
     setState(() => _isSaving = true);
     try {
-      await _firestore.collection('global_settings').doc('app_settings').set({
+      final payload = {
+        'activeRtcEngine': _activeEngine,
         'agoraAppId': trimmedAppId,
         'agoraAppCertificate': trimmedCert,
         'agoraCertificate': trimmedCert,
-        'agoraUpdatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+        'livekitServerUrl': trimmedLivekitUrl,
+        'livekitApiKey': trimmedLivekitKey,
+        'livekitApiSecret': trimmedLivekitSecret,
+        'autoFailoverRtcToAgora': _autoFailoverToAgora,
+        'vpsRtcEndpoint': trimmedLivekitUrl,
+        'vpsRtcAuthToken': trimmedLivekitKey,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      // Write to all documents for unified sync across App and Backend VPS
+      await _firestore.collection('global_settings').doc('app_settings').set(payload, SetOptions(merge: true));
+      await _firestore.collection('global_settings').doc('server_config').set(payload, SetOptions(merge: true));
+      await _firestore.collection('system_configs').doc('rtc_engine_settings').set(payload, SetOptions(merge: true));
 
       // Update in-memory reactive values
       if (Get.isRegistered<GlobalSettingsService>()) {
         final settings = Get.find<GlobalSettingsService>();
+        settings.activeRtcEngine.value = _activeEngine;
         settings.agoraAppId.value = trimmedAppId;
         settings.agoraCertificate.value = trimmedCert;
+        settings.livekitServerUrl.value = trimmedLivekitUrl;
+        settings.livekitApiKey.value = trimmedLivekitKey;
+        settings.livekitApiSecret.value = trimmedLivekitSecret;
+        settings.autoFailoverRtcToAgora.value = _autoFailoverToAgora;
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Agora credentials saved! Live sync updated.'),
+            content: Text('RTC Engine settings saved! Live sync updated.'),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
           ),
@@ -147,7 +220,7 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
         backgroundColor: const Color(0xFF1E142B),
         title: const Text('Reset to Defaults?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         content: const Text(
-          'This will restore the original default Agora App ID and Certificate.',
+          'This will restore default Agora settings and set Active Engine to Agora Cloud.',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -167,6 +240,7 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
     if (confirm == true) {
       _appIdController.text = _defaultAppId;
       _certificateController.text = _defaultCertificate;
+      _activeEngine = 'AGORA';
       await _saveSettings();
     }
   }
@@ -180,7 +254,7 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
         title: const Text(
-          'Agora RTC Settings',
+          'RTC Engine & Streaming Settings',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
         ),
         actions: [
@@ -204,11 +278,89 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
                     _buildInfoCard(),
                     const SizedBox(height: 24),
 
-                    // App ID Section
-                    _buildSectionHeader('Agora App ID', Icons.vpn_key_rounded),
+                    // MASTER RTC ENGINE SELECTOR
+                    _buildSectionHeader('Active RTC Streaming Engine', Icons.tune_rounded),
                     const SizedBox(height: 8),
                     const Text(
-                      'Unique project identifier from Agora.io Console. Required for both client and server connection.',
+                      'Choose which WebRTC engine powers all live audio rooms, video rooms, and 1-on-1 calls.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 14),
+                    _buildEngineSwitch(),
+                    const SizedBox(height: 28),
+
+                    // LIVEKIT / VPS CONFIGURATION SECTION
+                    _buildSectionHeader('LiveKit / VPS WebRTC Server', Icons.dns_rounded),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Configure your self-hosted LiveKit instance on VPS for zero-cost per-minute unlimited streaming.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _livekitUrlController,
+                      style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
+                      decoration: _inputDecoration(
+                        hintText: 'wss://livekit.yourdomain.com',
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.link, color: Colors.white54, size: 20),
+                          tooltip: 'Server WebSocket URL',
+                          onPressed: () {},
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // LiveKit API Key & Secret
+                    TextFormField(
+                      controller: _livekitKeyController,
+                      style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
+                      decoration: _inputDecoration(
+                        hintText: 'LiveKit API Key (e.g. devkey / APIName)',
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: _livekitSecretController,
+                      obscureText: _obscureLivekitSecret,
+                      style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
+                      decoration: _inputDecoration(
+                        hintText: 'LiveKit API Secret',
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscureLivekitSecret ? Icons.visibility_off : Icons.visibility,
+                            color: Colors.white54,
+                            size: 20,
+                          ),
+                          onPressed: () => setState(() => _obscureLivekitSecret = !_obscureLivekitSecret),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Failover switch
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      activeThumbColor: Colors.purpleAccent,
+                      title: const Text(
+                        'Auto-Failover to Agora if VPS is offline',
+                        style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Automatically routes calls to Agora if VPS LiveKit connection fails.',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                      value: _autoFailoverToAgora,
+                      onChanged: (val) => setState(() => _autoFailoverToAgora = val),
+                    ),
+
+                    const SizedBox(height: 28),
+
+                    // AGORA CONFIGURATION SECTION
+                    _buildSectionHeader('Agora RTC Cloud Engine', Icons.cloud_done_rounded),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Primary cloud RTC engine and instant backup fallback. Configured from Agora.io Console.',
                       style: TextStyle(color: Colors.white54, fontSize: 12),
                     ),
                     const SizedBox(height: 12),
@@ -216,7 +368,7 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
                       controller: _appIdController,
                       style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
                       decoration: _inputDecoration(
-                        hintText: 'e.g. c74eafbb98784225bae6be9b7e7f6225',
+                        hintText: 'Agora App ID (32 hex characters)',
                         suffixIcon: IconButton(
                           icon: const Icon(Icons.copy, color: Colors.white54, size: 20),
                           tooltip: 'Copy App ID',
@@ -232,40 +384,29 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
                         if (val == null || val.trim().isEmpty) {
                           return 'Agora App ID cannot be empty';
                         }
-                        if (val.trim().length < 16) {
-                          return 'App ID seems too short (usually 32 hex characters)';
-                        }
                         return null;
                       },
                     ),
 
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 14),
 
-                    // App Certificate Section
-                    _buildSectionHeader('Agora App Certificate', Icons.security_rounded),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Secret primary certificate from Agora.io Console. Used by Firebase Cloud Functions to sign secure RTC tokens.',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    const SizedBox(height: 12),
+                    // Agora App Certificate
                     TextFormField(
                       controller: _certificateController,
-                      obscureText: _obscureCert,
+                      obscureText: _obscureAgoraCert,
                       style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
                       decoration: _inputDecoration(
-                        hintText: 'e.g. eb4c5875fba74804b9d348882d7365f0',
+                        hintText: 'Agora App Certificate',
                         suffixIcon: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
                               icon: Icon(
-                                _obscureCert ? Icons.visibility_off : Icons.visibility,
+                                _obscureAgoraCert ? Icons.visibility_off : Icons.visibility,
                                 color: Colors.white54,
                                 size: 20,
                               ),
-                              tooltip: _obscureCert ? 'Show Certificate' : 'Hide Certificate',
-                              onPressed: () => setState(() => _obscureCert = !_obscureCert),
+                              onPressed: () => setState(() => _obscureAgoraCert = !_obscureAgoraCert),
                             ),
                             IconButton(
                               icon: const Icon(Icons.copy, color: Colors.white54, size: 20),
@@ -283,9 +424,6 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
                       validator: (val) {
                         if (val == null || val.trim().isEmpty) {
                           return 'Agora App Certificate cannot be empty';
-                        }
-                        if (val.trim().length < 16) {
-                          return 'Certificate seems too short (usually 32 hex characters)';
                         }
                         return null;
                       },
@@ -313,7 +451,7 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
                               )
                             : const Icon(Icons.save_rounded),
                         label: Text(
-                          _isSaving ? 'Saving Changes...' : 'Save & Sync Agora Settings',
+                          _isSaving ? 'Saving Changes...' : 'Save & Sync RTC Settings',
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -333,13 +471,83 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
                         ),
                         onPressed: _isSaving ? null : _resetToDefaults,
                         icon: const Icon(Icons.restore, size: 18),
-                        label: const Text('Reset to Default Project Credentials'),
+                        label: const Text('Reset to Default Agora Settings'),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _buildEngineSwitch() {
+    final isAgora = _activeEngine == 'AGORA';
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A2E),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      padding: const EdgeInsets.all(6),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: () => setState(() => _activeEngine = 'AGORA'),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: isAgora ? Colors.purpleAccent : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.cloud_done_rounded, color: isAgora ? Colors.white : Colors.white54, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Agora Cloud',
+                      style: TextStyle(
+                        color: isAgora ? Colors.white : Colors.white54,
+                        fontWeight: isAgora ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: () => setState(() => _activeEngine = 'LIVEKIT'),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: !isAgora ? Colors.purpleAccent : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.dns_rounded, color: !isAgora ? Colors.white : Colors.white54, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'LiveKit (VPS)',
+                      style: TextStyle(
+                        color: !isAgora ? Colors.white : Colors.white54,
+                        fontWeight: !isAgora ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -368,12 +576,12 @@ class _AdminAgoraSettingsScreenState extends State<AdminAgoraSettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Real-Time Live Sync Active',
+                  'Dual-Engine Real-Time Sync Active',
                   style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Changes made here update Firestore immediately. Firebase Cloud Functions dynamically signs RTC tokens with these credentials with 0ms audio latency.',
+                  'Easily switch between Agora Cloud and self-hosted VPS LiveKit at any time. Changes sync instantly across all user devices.',
                   style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.4),
                 ),
               ],

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
+import 'package:chat_messenger/helpers/ranking_helper.dart';
 
 enum LoginProvider { email, google, apple }
 
@@ -40,7 +41,9 @@ class User {
   int beans;
   String userType; // regular, host, seller, admin
   List<String> roles; // Supports multiple roles simultaneously
-  bool isAgency;
+  bool isAgency = false;
+  bool isSeller = false;
+  bool isHost = false;
   String? agencyId;
   String? agencyName;
   String? familyId;
@@ -81,6 +84,12 @@ class User {
   // Real-time Ban Enforcement
   UserBanStatus? banStatus;
 
+  // Privacy Settings
+  UserPrivacySettings? privacySettings;
+
+  // Account Binding
+  bool googleLinked;
+
   User({
     this.userId = '',
     this.fullname = '',
@@ -88,6 +97,7 @@ class User {
     this.number = '',
     this.photoUrl = '',
     this.email = '',
+    this.googleLinked = false,
     this.bio = '',
     this.gender = '',
     this.birthday = '',
@@ -118,6 +128,8 @@ class User {
     this.userType = 'regular',
     this.roles = const [],
     this.isAgency = false,
+    this.isSeller = false,
+    this.isHost = false,
     this.agencyId,
     this.agencyName,
     this.familyId,
@@ -141,6 +153,7 @@ class User {
     this.vipValidUntilMonth = '',
     this.vipValidUntil,
     this.banStatus,
+    this.privacySettings,
   });
 
   // Get User first name
@@ -156,29 +169,32 @@ class User {
       userId: data['userId'] ?? data['id'] ?? '',
       fullname: data['fullname'] ?? data['name'] ?? '',
     //  username: data['username'] ?? '',
-      number: data['number']??'',
-      photoUrl: data['photoUrl'] ?? data['imageUrl'] ?? data['profileImageUrl'] ?? '',
-      email: data['email'] ?? '',
+      number: data['number'] ?? data['phone_number'] ?? '',
+      photoUrl: data['photoUrl'] ?? data['photo_url'] ?? data['imageUrl'] ?? data['profileImageUrl'] ?? '',
+      email: data['email'] ?? data['user_email'] ?? '',
+      googleLinked: data['google_linked'] == true || data['googleLinked'] == true,
       bio: data['bio'] ?? '',
       gender: data['gender'] ?? '',
-      birthday: data['birthday'] ?? '',
+      birthday: data['birthday'] ?? data['birthdate'] ?? '',
       country: data['country'] ?? '',
       homePageBackground: data['homePageBackground'] ?? '',
       homePageBackgrounds: data['homePageBackgrounds'] != null ? List<String>.from(data['homePageBackgrounds']) : [],
-      isOnline: data['isOnline'] ?? false,
+      isOnline: data['isOnline'] ?? data['is_online'] ?? false,
       lastActive: data['lastActive'] is int
           ? DateTime.fromMillisecondsSinceEpoch(data['lastActive'])
           : (data['lastActive'] is Timestamp
               ? (data['lastActive'] as Timestamp).toDate()
-              : null),
-      deviceToken: data['deviceToken'] ?? '',
+              : (data['last_seen'] != null
+                  ? DateTime.tryParse(data['last_seen'].toString())
+                  : null)),
+      deviceToken: data['deviceToken'] ?? data['fcm_token'] ?? data['fcmToken'] ?? '',
       status: data['status'] ?? '',
       loginProvider: LoginProvider.values
               .firstWhereOrNull((el) => el.name == data['loginProvider']) ??
           LoginProvider.email,
-      isTyping: data['isTyping'] ?? false,
+      isTyping: data['isTyping'] == true,
       typingTo: data['typingTo'] ?? '',
-      isRecording: data['isRecording'] ?? false,
+      isRecording: data['isRecording'] == true,
       recordingTo: data['recordingTo'] ?? '',
       mutedGroups: List.from(data['mutedGroups'] ?? []),
       createdAt: data['createdAt'] is Timestamp
@@ -186,7 +202,7 @@ class User {
           : (data['createdAt'] is int
               ? DateTime.fromMillisecondsSinceEpoch(data['createdAt'])
               : null),
-      isVerified: data['isVerified']??false,
+      isVerified: data['isVerified'] == true,
       level: data['level'] ?? '',
       searchId: data['searchId'] ?? '',
       following: data['following'] is int ? data['following'] : (data['following'] is num ? (data['following'] as num).toInt() : (data['following'] is String ? int.tryParse(data['following']) ?? 0 : 0)),
@@ -198,10 +214,18 @@ class User {
       beans: (data['beans'] as num?)?.toInt() ?? 0,
       userType: data['isOfficialChannel'] == true ? 'channel' : (data['userType'] ?? 'regular'),
       roles: data['roles'] != null ? List<String>.from(data['roles']) : [data['isOfficialChannel'] == true ? 'channel' : (data['userType'] ?? 'regular')],
-      isAgency: data['isAgency'] ?? 
+      isAgency: (data['isAgency'] == true) || 
                 (data['roles'] != null 
                     ? List<String>.from(data['roles']).contains('agency') 
                     : (data['userType'] == 'agency' || data['userType'] == 'agency_owner')),
+      isSeller: (data['isSeller'] == true) || 
+                (data['roles'] != null 
+                    ? List<String>.from(data['roles']).contains('seller') 
+                    : data['userType'] == 'seller'),
+      isHost: (data['isHost'] == true) || 
+              (data['roles'] != null 
+                  ? List<String>.from(data['roles']).contains('host') 
+                  : (data['userType'] == 'host' || (data['agencyId'] != null && data['agencyId'].toString().isNotEmpty && data['userType'] != 'agency' && data['isAgency'] != true))),
       agencyId: data['agencyId'],
       agencyName: data['agencyName'],
       familyId: data['familyId'],
@@ -212,8 +236,15 @@ class User {
       sendingLevel: data['sendingLevel'] != null ? UserLevel.fromMap(Map<String, dynamic>.from(data['sendingLevel'])) : null,
       receivingLevel: data['receivingLevel'] != null ? UserLevel.fromMap(Map<String, dynamic>.from(data['receivingLevel'])) : null,
       roomLevel: data['roomLevel'] != null ? UserLevel.fromMap(Map<String, dynamic>.from(data['roomLevel'])) : null,
-      customization: data['customization'] != null ? UserCustomization.fromMap(Map<String, dynamic>.from(data['customization'])) : null,
-      activityStats: data['activityStats'] != null ? UserActivityStats.fromMap(Map<String, dynamic>.from(data['activityStats'])) : null,
+      customization: data['customization'] != null 
+          ? UserCustomization.fromMap(Map<String, dynamic>.from(data['customization'])) 
+          : (data.containsKey('active_frame_id') || data.containsKey('active_badge_id') ? UserCustomization.fromMap(data) : null),
+      activityStats: UserActivityStats.fromMap(
+        data['activityStats'] is Map<String, dynamic>
+            ? Map<String, dynamic>.from(data['activityStats'])
+            : <String, dynamic>{},
+        parentData: data,
+      ),
       punishments: data['punishments'] != null 
           ? (data['punishments'] as List).map((p) => UserPunishment.fromMap(Map<String, dynamic>.from(p))).toList()
           : [],
@@ -231,6 +262,7 @@ class User {
               : DateTime.tryParse(data['vipValidUntil'].toString())) 
           : null,
       banStatus: data['banStatus'] != null ? UserBanStatus.fromMap(Map<String, dynamic>.from(data['banStatus'])) : null,
+      privacySettings: data['privacySettings'] != null ? UserPrivacySettings.fromMap(Map<String, dynamic>.from(data['privacySettings'])) : UserPrivacySettings(),
     );
   }
 
@@ -242,6 +274,7 @@ class User {
       'number': number,
       'photoUrl': photoUrl,
       'email': email,
+      'google_linked': googleLinked,
       'bio': bio,
       'gender': gender,
       'birthday': birthday,
@@ -268,6 +301,8 @@ class User {
       'userType': userType,
       'roles': roles.isNotEmpty ? roles : [userType],
       'isAgency': isAgency,
+      'isSeller': isSeller,
+      'isHost': isHost,
       'agencyId': agencyId,
       'agencyName': agencyName,
       'familyId': familyId,
@@ -291,6 +326,7 @@ class User {
       'vipValidUntilMonth': vipValidUntilMonth,
       'vipValidUntil': vipValidUntil != null ? Timestamp.fromDate(vipValidUntil!) : null,
       'banStatus': banStatus?.toMap(),
+      'privacySettings': (privacySettings ?? UserPrivacySettings()).toMap(),
     };
   }
 }
@@ -439,17 +475,17 @@ class UserCustomization {
     }
 
     return UserCustomization(
-      selectedBadgeId: data['selectedBadgeId'] as String?,
-      selectedFrameId: data['selectedFrameId'] as String?,
-      selectedEntryEffectId: data['selectedEntryEffectId'] as String?,
+      selectedBadgeId: (data['selectedBadgeId'] ?? data['active_badge_id']) as String?,
+      selectedFrameId: (data['selectedFrameId'] ?? data['active_frame_id']) as String?,
+      selectedEntryEffectId: (data['selectedEntryEffectId'] ?? data['active_entrance_id']) as String?,
       selectedBackgroundThemeId: data['selectedBackgroundThemeId'] as String?,
-      selectedRoomThemeId: data['selectedRoomThemeId'] as String?,
+      selectedRoomThemeId: (data['selectedRoomThemeId'] ?? data['active_theme_id']) as String?,
       selectedNameplateId: nameplateId ?? (nameplateIds.isNotEmpty ? nameplateIds.first : null),
       selectedNameplateIds: nameplateIds,
       selectedMicRefillId: data['selectedMicRefillId'] as String?,
       selectedRoomProfileBackgroundId: data['selectedRoomProfileBackgroundId'] as String?,
       selectedShortProfileThemeId: data['selectedShortProfileThemeId'] as String?,
-      selectedRoomEntryId: data['selectedRoomEntryId'] as String?,
+      selectedRoomEntryId: (data['selectedRoomEntryId'] ?? data['active_bubble_id']) as String?,
       ownedBadges: (data['ownedBadges'] as List?)?.whereType<String>().toList() ?? [],
       ownedFrames: (data['ownedFrames'] as List?)?.whereType<String>().toList() ?? [],
       ownedEntryEffects: (data['ownedEntryEffects'] as List?)?.whereType<String>().toList() ?? [],
@@ -513,18 +549,59 @@ class UserActivityStats {
     required this.lastUpdated,
   });
 
-  factory UserActivityStats.fromMap(Map<String, dynamic> data) {
+  factory UserActivityStats.fromMap(Map<String, dynamic> data, {Map<String, dynamic>? parentData}) {
+    final root = parentData ?? data;
+
+    // Strictly read current active time-cycle keys (prevent stale legacy fields from past weeks/days)
+    final int dailyReceived = (root['dailyDiamondsReceived_${RankingHelper.dailySuffix}'] as num?)?.toInt() ??
+        (root['dailyDiamondsReceived_${RankingHelper.daily22CycleSuffix}'] as num?)?.toInt() ??
+        0;
+
+    final int weeklyReceived = (root['weeklyDiamondsReceived_${RankingHelper.mondayWeeklySuffix}'] as num?)?.toInt() ??
+        (root['weeklyDiamondsReceived_${RankingHelper.weeklySuffix}'] as num?)?.toInt() ??
+        0;
+
+    final int monthlyReceived = (root['monthlyDiamondsReceived_${RankingHelper.monthlySuffix}'] as num?)?.toInt() ??
+        0;
+
+    final int dailySent = (root['dailyDiamondsSent_${RankingHelper.dailySuffix}'] as num?)?.toInt() ??
+        0;
+
+    final int weeklySent = (root['weeklyDiamondsSent_${RankingHelper.weeklySuffix}'] as num?)?.toInt() ??
+        0;
+
+    final int monthlySent = (root['monthlyDiamondsSent_${RankingHelper.monthlySuffix}'] as num?)?.toInt() ??
+        0;
+
+    final int dailyMins = (root['dailyVoiceRoomMinutes_${RankingHelper.dailySuffix}'] as num?)?.toInt() ??
+        (data['dailyVoiceRoomMinutes'] as num?)?.toInt() ??
+        0;
+
+    final int weeklyMins = (root['weeklyVoiceRoomMinutes_${RankingHelper.mondayWeeklySuffix}'] as num?)?.toInt() ??
+        (root['weeklyVoiceRoomMinutes_${RankingHelper.weeklySuffix}'] as num?)?.toInt() ??
+        (data['weeklyVoiceRoomMinutes'] as num?)?.toInt() ??
+        0;
+
+    final int monthlyMins = (root['monthlyVoiceRoomMinutes_${RankingHelper.monthlySuffix}'] as num?)?.toInt() ??
+        (data['monthlyVoiceRoomMinutes'] as num?)?.toInt() ??
+        0;
+
+    final dynamic rawLastUpdated = data['lastUpdated'] ?? root['updatedAt'] ?? root['lastActive'];
+    final DateTime lastUp = rawLastUpdated is Timestamp
+        ? rawLastUpdated.toDate()
+        : (rawLastUpdated is DateTime ? rawLastUpdated : DateTime.now());
+
     return UserActivityStats(
-      dailyDiamondsSent: data['dailyDiamondsSent'] ?? 0,
-      dailyDiamondsReceived: data['dailyDiamondsReceived'] ?? 0,
-      weeklyDiamondsSent: data['weeklyDiamondsSent'] ?? 0,
-      weeklyDiamondsReceived: data['weeklyDiamondsReceived'] ?? 0,
-      monthlyDiamondsSent: data['monthlyDiamondsSent'] ?? 0,
-      monthlyDiamondsReceived: data['monthlyDiamondsReceived'] ?? 0,
-      dailyVoiceRoomMinutes: data['dailyVoiceRoomMinutes'] ?? 0,
-      weeklyVoiceRoomMinutes: data['weeklyVoiceRoomMinutes'] ?? 0,
-      monthlyVoiceRoomMinutes: data['monthlyVoiceRoomMinutes'] ?? 0,
-      lastUpdated: data['lastUpdated']?.toDate() ?? DateTime.now(),
+      dailyDiamondsSent: dailySent,
+      dailyDiamondsReceived: dailyReceived,
+      weeklyDiamondsSent: weeklySent,
+      weeklyDiamondsReceived: weeklyReceived,
+      monthlyDiamondsSent: monthlySent,
+      monthlyDiamondsReceived: monthlyReceived,
+      dailyVoiceRoomMinutes: dailyMins,
+      weeklyVoiceRoomMinutes: weeklyMins,
+      monthlyVoiceRoomMinutes: monthlyMins,
+      lastUpdated: lastUp,
     );
   }
 
@@ -587,3 +664,81 @@ class UserPunishment {
     };
   }
 }
+
+class UserPrivacySettings {
+  final bool showOnlineStatus;
+  final bool hideRoomPresence;
+  final bool showLastSeen;
+  final bool hideWealthLevel;
+  final bool hideGiftWall;
+  final bool hideLocation;
+  final String whoCanMessage; // 'everyone', 'friends', 'nobody'
+  final String whoCanCall; // 'everyone', 'friends', 'nobody'
+  final bool allowRoomInvites;
+
+  UserPrivacySettings({
+    this.showOnlineStatus = true,
+    this.hideRoomPresence = false,
+    this.showLastSeen = true,
+    this.hideWealthLevel = false,
+    this.hideGiftWall = false,
+    this.hideLocation = false,
+    this.whoCanMessage = 'everyone',
+    this.whoCanCall = 'everyone',
+    this.allowRoomInvites = true,
+  });
+
+  factory UserPrivacySettings.fromMap(Map<String, dynamic>? map) {
+    if (map == null) return UserPrivacySettings();
+    return UserPrivacySettings(
+      showOnlineStatus: map['showOnlineStatus'] ?? true,
+      hideRoomPresence: map['hideRoomPresence'] ?? false,
+      showLastSeen: map['showLastSeen'] ?? true,
+      hideWealthLevel: map['hideWealthLevel'] ?? false,
+      hideGiftWall: map['hideGiftWall'] ?? false,
+      hideLocation: map['hideLocation'] ?? false,
+      whoCanMessage: map['whoCanMessage'] ?? 'everyone',
+      whoCanCall: map['whoCanCall'] ?? 'everyone',
+      allowRoomInvites: map['allowRoomInvites'] ?? true,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'showOnlineStatus': showOnlineStatus,
+      'hideRoomPresence': hideRoomPresence,
+      'showLastSeen': showLastSeen,
+      'hideWealthLevel': hideWealthLevel,
+      'hideGiftWall': hideGiftWall,
+      'hideLocation': hideLocation,
+      'whoCanMessage': whoCanMessage,
+      'whoCanCall': whoCanCall,
+      'allowRoomInvites': allowRoomInvites,
+    };
+  }
+
+  UserPrivacySettings copyWith({
+    bool? showOnlineStatus,
+    bool? hideRoomPresence,
+    bool? showLastSeen,
+    bool? hideWealthLevel,
+    bool? hideGiftWall,
+    bool? hideLocation,
+    String? whoCanMessage,
+    String? whoCanCall,
+    bool? allowRoomInvites,
+  }) {
+    return UserPrivacySettings(
+      showOnlineStatus: showOnlineStatus ?? this.showOnlineStatus,
+      hideRoomPresence: hideRoomPresence ?? this.hideRoomPresence,
+      showLastSeen: showLastSeen ?? this.showLastSeen,
+      hideWealthLevel: hideWealthLevel ?? this.hideWealthLevel,
+      hideGiftWall: hideGiftWall ?? this.hideGiftWall,
+      hideLocation: hideLocation ?? this.hideLocation,
+      whoCanMessage: whoCanMessage ?? this.whoCanMessage,
+      whoCanCall: whoCanCall ?? this.whoCanCall,
+      allowRoomInvites: allowRoomInvites ?? this.allowRoomInvites,
+    );
+  }
+}
+

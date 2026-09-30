@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:get_storage/get_storage.dart';
@@ -9,16 +10,15 @@ class SplashController extends GetxController {
   final auth = Get.put(AuthController(), permanent: true);
 
   @override
-  void onInit() async {
+  void onInit() {
     super.onInit();
-    // Future.delayed(Duration(seconds: 3),(){
-    //      Get.to(()=> PhoneVerificationScreen());
-    // });
     _loadData();
     _getAppVersion();
 
-    // Check leaderboards (Frontend Temporary Approach)
-    Get.put(LeaderboardService()).checkAndResetLeaderboards();
+    // Check leaderboards in background without delaying splash navigation
+    unawaited(Future(() {
+      Get.put(LeaderboardService()).checkAndResetLeaderboards();
+    }));
   }
 
   Future<void> _loadData() async {

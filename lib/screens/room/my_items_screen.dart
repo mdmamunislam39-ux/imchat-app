@@ -8,7 +8,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:chat_messenger/components/cached_circle_avatar.dart';
 
 /// Screen showing all purchased/owned items with equip/unequip functionality.
 class MyItemsScreen extends StatefulWidget {
@@ -177,6 +177,7 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
   @override
   void initState() {
     super.initState();
+    widget.storeService.checkAndCleanupExpiredUserItems(widget.currentUser.userId);
     _listenToOwnedItems();
     _realtimeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) {
@@ -219,7 +220,25 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
   void _showLivePreview(BuildContext context, Map<String, dynamic> item, String type) {
     final name = item['name'] as String? ?? item['storeItemName'] as String? ?? 'Unknown';
     final description = item['description'] as String? ?? '';
-    final fileUrl = (item['fileUrl'] ?? item['thumbnailUrl'] ?? item['imageUrl'] ?? item['image'] ?? '') as String;
+    final fileUrl = (item['fileUrl'] ??
+            item['animationUrl'] ??
+            item['frameUrl'] ??
+            item['frameMediaUrl'] ??
+            item['svgaUrl'] ??
+            item['assetUrl'] ??
+            item['mediaUrl'] ??
+            item['thumbnailUrl'] ??
+            item['imageUrl'] ??
+            item['image'] ??
+            '')
+        .toString();
+
+    final normalizedType = (item['type'] ?? item['category'] ?? type).toString().toLowerCase();
+    final bool isFrame = normalizedType == 'avatarframe' ||
+        normalizedType == 'frame' ||
+        normalizedType == 'frames' ||
+        normalizedType == 'avatar_frame';
+    final bool isMicRefill = normalizedType == 'micrefill' || normalizedType == 'mic_refill';
 
     showModalBottomSheet(
       context: context,
@@ -336,32 +355,43 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
                             ),
                           ),
                         ),
-                        if (type == 'avatarFrame' || type == 'frame' || type == 'micRefill')
+                        if (isFrame || isMicRefill)
                           Stack(
                             alignment: Alignment.center,
                             children: [
-                              CircleAvatar(
-                                radius: 48,
+                                if (isMicRefill)
+                                  SizedBox(
+                                    width: 150,
+                                    height: 150,
+                                    child: UniversalAssetWidget(
+                                      key: ValueKey(fileUrl),
+                                      url: fileUrl,
+                                      fit: BoxFit.contain,
+                                      isAlphaVideo: true,
+                                    ),
+                                  ),
+                              CachedCircleAvatar(
+                                imageUrl: widget.currentUser.photoUrl,
+                                radius: 42,
+                                userId: widget.currentUser.userId,
+                                frameId: isMicRefill
+                                    ? widget.currentUser.customization?.selectedFrameId
+                                    : null,
+                                showFrame: isMicRefill,
+                                isOnline: widget.currentUser.isOnline,
                                 backgroundColor: Colors.teal.shade800,
-                                backgroundImage: (widget.currentUser.photoUrl.isNotEmpty &&
-                                        widget.currentUser.photoUrl.startsWith('http'))
-                                    ? CachedNetworkImageProvider(widget.currentUser.photoUrl)
-                                    : null,
-                                child: (widget.currentUser.photoUrl.isEmpty ||
-                                        !widget.currentUser.photoUrl.startsWith('http'))
-                                    ? const Icon(Icons.person, size: 55, color: Colors.white70)
-                                    : null,
                               ),
-                              SizedBox(
-                                width: type == 'micRefill' ? 210 : 135,
-                                height: type == 'micRefill' ? 210 : 135,
-                                child: UniversalAssetWidget(
-                                  key: ValueKey(fileUrl),
-                                  url: fileUrl,
-                                  fit: BoxFit.contain,
-                                  isAlphaVideo: false,
+                              if (isFrame)
+                                SizedBox(
+                                  width: 125,
+                                  height: 125,
+                                  child: UniversalAssetWidget(
+                                    key: ValueKey(fileUrl),
+                                    url: fileUrl,
+                                    fit: BoxFit.contain,
+                                    isAlphaVideo: true,
+                                  ),
                                 ),
-                              ),
                             ],
                           )
                         else if (type == 'badge')
@@ -757,16 +787,30 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
     String? imageUrl;
     if (details != null) {
       imageUrl = (details['thumbnailUrl'] ??
-          details['fileUrl'] ??
-          details['imageUrl'] ??
-          details['image'] ??
-          details['icon']) as String?;
+              details['fileUrl'] ??
+              details['animationUrl'] ??
+              details['frameUrl'] ??
+              details['frameMediaUrl'] ??
+              details['svgaUrl'] ??
+              details['assetUrl'] ??
+              details['mediaUrl'] ??
+              details['imageUrl'] ??
+              details['image'] ??
+              details['icon'])
+          ?.toString();
     }
     imageUrl ??= (ownedItem['thumbnailUrl'] ??
-        ownedItem['fileUrl'] ??
-        ownedItem['imageUrl'] ??
-        ownedItem['image'] ??
-        ownedItem['icon']) as String?;
+            ownedItem['fileUrl'] ??
+            ownedItem['animationUrl'] ??
+            ownedItem['frameUrl'] ??
+            ownedItem['frameMediaUrl'] ??
+            ownedItem['svgaUrl'] ??
+            ownedItem['assetUrl'] ??
+            ownedItem['mediaUrl'] ??
+            ownedItem['imageUrl'] ??
+            ownedItem['image'] ??
+            ownedItem['icon'])
+        ?.toString();
     if (imageUrl != null && !imageUrl.startsWith('http')) {
       imageUrl = null;
     }
@@ -821,20 +865,20 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
                                     ? Stack(
                                         alignment: Alignment.center,
                                         children: [
-                                          CircleAvatar(
-                                            radius: 28,
-                                            backgroundColor: Colors.teal.shade800,
-                                            child: const Icon(Icons.person, size: 30, color: Colors.white70),
-                                          ),
                                           SizedBox(
-                                            width: 100,
-                                            height: 100,
+                                            width: 68,
+                                            height: 68,
                                             child: UniversalAssetWidget(
                                               key: ValueKey(imageUrl),
                                               url: imageUrl,
                                               fit: BoxFit.contain,
                                               isAlphaVideo: false,
                                             ),
+                                          ),
+                                          CircleAvatar(
+                                            radius: 22,
+                                            backgroundColor: Colors.teal.shade800,
+                                            child: const Icon(Icons.mic, size: 22, color: Colors.white70),
                                           ),
                                         ],
                                       )

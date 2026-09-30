@@ -1,4 +1,6 @@
+import 'package:chat_messenger/api/auth_api.dart';
 import 'package:chat_messenger/components/app_loading.dart';
+import 'package:chat_messenger/components/svg_icon.dart';
 import 'package:chat_messenger/screens/auth/signin/controller/signin_controller.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 import 'package:flutter/material.dart';
@@ -338,7 +340,81 @@ class PhoneVerificationScreen extends GetView<SignInController> {
                       color: Colors.white.withValues(alpha: 0.4),
                     ),
                   ),
-                  SizedBox(height: size.height * 0.05),
+                  const SizedBox(height: 30),
+
+                  // Divider
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Divider(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          thickness: 1,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'OR',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.5),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Divider(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          thickness: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // Google Login Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: OutlinedButton(
+                      onPressed: () async {
+                        await AuthApi.signInWithGoogle();
+                      },
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.white.withValues(alpha: 0.08),
+                        side: BorderSide(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          width: 1.2,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SvgIcon(
+                            'assets/icons/google_login.svg',
+                            width: 24,
+                            height: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Continue with Google',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  SizedBox(height: size.height * 0.04),
                 ],
               ),
             ),

@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
@@ -118,12 +119,13 @@ class ProfileViewScreen extends StatelessWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            user.searchId.isNotEmpty ? 'ID: ${user.searchId}' : 'ID: ${user.userId}',
-                            style: Theme.of(context)
+                          UserIdBadgeWidget(
+                            searchId: user.searchId.isNotEmpty ? user.searchId : user.userId,
+                            textStyle: Theme.of(context)
                                 .textTheme
                                 .titleLarge!
-                                .copyWith(color: greyColor),
+                                .copyWith(color: Colors.white),
+                            showCopyIcon: false,
                           ),
                           const SizedBox(width: 6),
                           GestureDetector(
@@ -222,7 +224,7 @@ class ProfileViewScreen extends StatelessWidget {
                                 ),
                                  const SizedBox(width: 12),
                                  Text(
-                                   'Room Profile',
+                                   'room_profile'.tr,
                                    style: TextStyle(
                                      fontSize: 16,
                                      fontWeight: FontWeight.w600,
@@ -254,7 +256,7 @@ class ProfileViewScreen extends StatelessWidget {
                                  ),
                                  const Spacer(),
                                  Text(
-                                   'See more',
+                                   'see_more'.tr,
                                    style: TextStyle(
                                      fontSize: 14,
                                      color: Colors.grey[500],
@@ -434,3 +436,4 @@ class ProfileViewScreen extends StatelessWidget {
     );
   }
 }
+

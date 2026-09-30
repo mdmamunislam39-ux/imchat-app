@@ -57,17 +57,25 @@ class AudioRoomsLoaded extends AudioRoomsState {
   /// Get active rooms
   List<AudioRoomV2> get activeRooms => rooms.where((room) => room.isActive).toList();
 
-  /// Get popular rooms (sorted by participant count)
+  /// Get popular rooms (pinned first, then sorted by participant count)
   List<AudioRoomV2> get popularRooms {
     final sortedRooms = List<AudioRoomV2>.from(activeRooms);
-    sortedRooms.sort((a, b) => b.participantCount.compareTo(a.participantCount));
+    sortedRooms.sort((a, b) {
+      if (a.isCurrentlyPinned && !b.isCurrentlyPinned) return -1;
+      if (!a.isCurrentlyPinned && b.isCurrentlyPinned) return 1;
+      return b.participantCount.compareTo(a.participantCount);
+    });
     return sortedRooms;
   }
 
-  /// Get recent rooms (sorted by creation date)
+  /// Get recent rooms (pinned first, then sorted by creation date)
   List<AudioRoomV2> get recentRooms {
     final sortedRooms = List<AudioRoomV2>.from(activeRooms);
-    sortedRooms.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    sortedRooms.sort((a, b) {
+      if (a.isCurrentlyPinned && !b.isCurrentlyPinned) return -1;
+      if (!a.isCurrentlyPinned && b.isCurrentlyPinned) return 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     return sortedRooms;
   }
 

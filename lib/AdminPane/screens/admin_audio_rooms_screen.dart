@@ -5,6 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
+import 'package:chat_messenger/helpers/country_helper.dart';
 
 class AdminAudioRoomsScreen extends StatefulWidget {
   const AdminAudioRoomsScreen({super.key});
@@ -17,11 +18,14 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _descController = TextEditingController();
+  final TextEditingController _globalRulesController = TextEditingController();
 
   AudioRoomV2? _currentRoom;
   bool _isLoading = false;
+  bool _isSavingGlobalRules = false;
   String _selectedCategory = 'Event';
   final List<String> _categories = ['Event', 'Game', 'PK', 'All Rooms'];
+  String _selectedCountryCode = 'BD';
 
   // Pinning
   bool _isPinned = false;
@@ -39,10 +43,60 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
   File? _selectedCoverFile;
 
   @override
+  void initState() {
+    super.initState();
+    _loadGlobalRules();
+  }
+
+  Future<void> _loadGlobalRules() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('system_configs')
+          .doc('audio_room_rules')
+          .get();
+      if (doc.exists && doc.data() != null) {
+        final rules = doc.data()!['rulesText'] as String?;
+        if (rules != null && rules.isNotEmpty) {
+          _globalRulesController.text = rules;
+        } else {
+          _globalRulesController.text =
+              "There are a lot of very interested friends here. Let's chat together.";
+        }
+      } else {
+        _globalRulesController.text =
+            "There are a lot of very interested friends here. Let's chat together.";
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Error loading global rules: $e');
+    }
+  }
+
+  Future<void> _saveGlobalRules() async {
+    setState(() => _isSavingGlobalRules = true);
+    try {
+      final text = _globalRulesController.text.trim();
+      await FirebaseFirestore.instance
+          .collection('system_configs')
+          .doc('audio_room_rules')
+          .set({
+        'rulesText': text,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      _showSnackBar('Global Audio Room Rules saved successfully!');
+    } catch (e) {
+      _showSnackBar('Error saving global rules: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isSavingGlobalRules = false);
+    }
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     _nameController.dispose();
     _descController.dispose();
+    _globalRulesController.dispose();
     super.dispose();
   }
 
@@ -75,11 +129,21 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
       }
 
       final room = AudioRoomV2.fromFirestore(doc);
+      String initialCountry = room.countryCode ?? '';
+      if (initialCountry.isEmpty && room.creatorCountry != null && room.creatorCountry!.isNotEmpty) {
+        initialCountry = CountryHelper.detectCountryCodeFromPhoneOrUser(countryStr: room.creatorCountry);
+      }
+      if (initialCountry.isEmpty && room.creatorPhone != null && room.creatorPhone!.isNotEmpty) {
+        initialCountry = CountryHelper.detectCountryCodeFromPhoneOrUser(phone: room.creatorPhone);
+      }
+      if (initialCountry.isEmpty) initialCountry = 'BD';
+
       setState(() {
         _currentRoom = room;
         _nameController.text = room.name;
         _descController.text = room.description;
         _selectedCategory = _categories.contains(room.category) ? room.category : 'Event';
+        _selectedCountryCode = initialCountry.toUpperCase();
         _isPinned = room.isPinned;
         _pinnedUntil = room.pinnedUntil;
         _frameUntil = room.roomFrameUntil;
@@ -199,10 +263,13 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
         _pinnedUntil = DateTime.now().add(const Duration(days: 1));
       }
 
+      final countryData = CountryHelper.getCountryData(_selectedCountryCode);
       final updates = {
         'name': _nameController.text.trim(),
         'description': _descController.text.trim(),
         'category': _selectedCategory,
+        'countryCode': _selectedCountryCode,
+        'creatorCountry': countryData.name,
         'imageUrl': coverUrl,
         'isPinned': _isPinned,
         'pinnedUntil': _pinnedUntil != null ? Timestamp.fromDate(_pinnedUntil!) : FieldValue.delete(),
@@ -240,6 +307,8 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildSearchBar(),
+                  const SizedBox(height: 20),
+                  _buildGlobalRulesSection(),
                   const SizedBox(height: 24),
                   if (_currentRoom != null) ...[
                     _buildSectionHeader('Room Information'),
@@ -362,6 +431,34 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
           ),
           const SizedBox(height: 12),
           _buildTextField(_descController, 'Room Description', maxLines: 3),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: CountryHelper.getAllCountries().any((c) => c.code == _selectedCountryCode)
+                ? _selectedCountryCode
+                : 'BD',
+            dropdownColor: const Color(0xFF0F172A),
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: 'Room Country / Location',
+              labelStyle: const TextStyle(color: Colors.white70),
+              filled: true,
+              fillColor: Colors.black26,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+            ),
+            items: CountryHelper.getAllCountries().map((c) {
+              return DropdownMenuItem(
+                value: c.code,
+                child: Row(
+                  children: [
+                    Text(c.flag, style: const TextStyle(fontSize: 16)),
+                    const SizedBox(width: 8),
+                    Text('${c.name} (${c.code})', style: const TextStyle(color: Colors.white)),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: (v) => setState(() => _selectedCountryCode = v ?? 'BD'),
+          ),
         ],
       ),
     );
@@ -487,6 +584,84 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
                 onPressed: _pickBanDateTime,
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlobalRulesSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white10),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.gavel_rounded, color: Color(0xFF00E5FF), size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Global Voice Room Rules (সকল রুমের রুলস)',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'এই রুলসটি সকল ভয়েস রুমে Pro Mode এবং Party Mode-এ প্রদর্শিত হবে। শুধুমাত্র অ্যাডমিন এটি পরিবর্তন করতে পারবেন।',
+            style: TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _globalRulesController,
+            maxLines: 3,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'Enter global voice room rules here...',
+              hintStyle: const TextStyle(color: Colors.white38),
+              filled: true,
+              fillColor: Colors.black26,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton.icon(
+              onPressed: _isSavingGlobalRules ? null : _saveGlobalRules,
+              icon: _isSavingGlobalRules
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.save, size: 18),
+              label: const Text('Save Global Rules'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00BCD4),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

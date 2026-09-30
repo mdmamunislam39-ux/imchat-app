@@ -45,7 +45,7 @@ class MessageScreen extends StatelessWidget {
 
     // Init controllers
     final MessageController controller = Get.put(
-      MessageController(isGroup: isGroup, user: user),
+      MessageController(isGroup: isGroup, user: user, groupId: groupId),
       tag: tag,
     );
     Get.put(BlockController(user?.userId), tag: tag);
@@ -110,13 +110,15 @@ class MessageScreen extends StatelessWidget {
                     child: _buildMessagesList(controller, wallpaperPath),
                   ),
                 ),
-                // <--- ChatInput --->
-                if (user == null || (user!.userType != 'channel' && user!.userId != 'official_team'))
+                // <--- ChatInput or Read-Only Notice --->
+                if (!_isOfficialChat)
                   ChatInputField(
                     controller: controller,
                     user: user,
                     group: controller.selectedGroup,
-                  ),
+                  )
+                else
+                  _buildReadOnlyNotice(context),
               ],
             ),
           );
@@ -127,14 +129,53 @@ class MessageScreen extends StatelessWidget {
     );
   }
 
+  bool get _isOfficialChat =>
+      !isGroup &&
+      user != null &&
+      (user!.userId == 'official_team' ||
+          user!.userId.startsWith('official_channel_') ||
+          user!.userType == 'channel');
+
+  Widget _buildReadOnlyNotice(BuildContext context) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: isDarkMode ? const Color(0xFF1E1E24) : const Color(0xFFF7F7F8),
+        border: Border(
+          top: BorderSide(
+            color: isDarkMode
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.06),
+            width: 1,
+          ),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      child: SafeArea(
+        top: false,
+        child: Text(
+          'official_messages_read_only'.tr,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 13.5,
+            height: 1.35,
+            color: isDarkMode ? Colors.white54 : const Color(0xFF8E8E93),
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMessagesList(MessageController controller, String? wallpaperPath) {
     // Get selected group instance
     Group? group = controller.selectedGroup;
 
     return Obx(
       () {
-        // Check error
-        if (controller.isLoading.value) {
+        // Show loader while initial loading and messages are empty
+        if (controller.messages.isEmpty && (!controller.isInitialDataSettled.value || controller.isLoading.value)) {
           return const Center(child: LoadingIndicator(size: 35));
         } else if (controller.messages.isEmpty) {
           return NoData(
@@ -194,6 +235,20 @@ class MessageScreen extends StatelessWidget {
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Show top loading indicator when fetching older messages
+                  if (index == messages.length - 1)
+                    Obx(() => controller.isLoadingMore.value
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                          )
+                        : const SizedBox.shrink()),
                   // Show Group Date time
                   dateSeparator,
                   // Show encrypted notice
@@ -202,7 +257,7 @@ class MessageScreen extends StatelessWidget {
                   // Bubble message
                   GestureDetector(
                     onLongPress: () {
-                      if (message.type == MessageType.groupUpdate || (user != null && (user!.userId == 'official_team' || user!.userType == 'channel'))) {
+                      if (message.type == MessageType.groupUpdate || _isOfficialChat) {
                         return;
                       }
                       selectedMessage.value = message;
@@ -228,7 +283,7 @@ class MessageScreen extends StatelessWidget {
                                   ? null
                                   : () => RoutesHelper.toProfileView(
                                       senderUser, isGroup),
-                              onReplyMessage: (message.isDeleted || (user != null && (user!.userId == 'official_team' || user!.userId.startsWith('official_channel_'))))
+                              onReplyMessage: (message.isDeleted || _isOfficialChat)
                                   ? null
                                   : () => controller.replyToMessage(message),
                             ),

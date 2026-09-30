@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -583,9 +584,10 @@ class _IntimacyListPageState extends State<IntimacyListPage>
                     ),
                     if (otherSearchId.isNotEmpty) ...[
                       const SizedBox(height: 2),
-                      Text(
-                        'ID: $otherSearchId',
-                        style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+                      UserIdBadgeWidget(
+                        searchId: otherSearchId,
+                        badgeHeight: 13,
+                        textStyle: TextStyle(color: Colors.grey.shade400, fontSize: 11),
                       ),
                     ],
                     const SizedBox(height: 6),

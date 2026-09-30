@@ -79,9 +79,14 @@ class RoleService extends GetxController {
   final RxBool isSuperAdmin = false.obs;
   final RxMap<String, dynamic> superAdminPermissions = <String, dynamic>{}.obs;
 
+  // Real-time Seller state
+  final RxBool isSellerActive = false.obs;
+
   StreamSubscription<DocumentSnapshot>? _roleSubscription;
   StreamSubscription<QuerySnapshot>? _superAdminSubscription;
+  StreamSubscription<QuerySnapshot>? _sellerSubscription;
   String? _currentSuperAdminUserId;
+  String? _currentSellerUserId;
 
   /// Start listening for real-time role updates for a user
   void listenToUserRole(String userId) {
@@ -91,6 +96,7 @@ class RoleService extends GetxController {
       userRole.value = AppRoles.regular;
       userPermissions.value = [];
       _stopSuperAdminListener();
+      _stopSellerListener();
       return;
     }
 
@@ -98,6 +104,9 @@ class RoleService extends GetxController {
 
     // Start super admin permissions listener for the user immediately
     _listenToSuperAdminPermissions(userId);
+
+    // Start seller active status listener for the user immediately
+    _listenToSellerStatus(userId);
 
     _roleSubscription = _firestore
         .collection('Users')
@@ -118,6 +127,12 @@ class RoleService extends GetxController {
       // If userType or role is admin, guarantee AppRoles.admin is in the roles list
       if (rawRole == AppRoles.admin && !rawRoles.contains(AppRoles.admin)) {
         rawRoles.add(AppRoles.admin);
+      }
+      if ((data['isAgency'] == true || rawRole == AppRoles.agency || rawRole == 'agency_owner') && !rawRoles.contains(AppRoles.agency)) {
+        rawRoles.add(AppRoles.agency);
+      }
+      if ((data['isHost'] == true || rawRole == AppRoles.host || (data['agencyId'] != null && data['agencyId'].toString().isNotEmpty && rawRole != AppRoles.agency && data['isAgency'] != true)) && !rawRoles.contains(AppRoles.host)) {
+        rawRoles.add(AppRoles.host);
       }
       
       // Fallback to rawRole if roles list is empty
@@ -192,11 +207,46 @@ class RoleService extends GetxController {
     _clearSuperAdminState();
   }
 
+  void _listenToSellerStatus(String userId) {
+    if (_currentSellerUserId == userId && _sellerSubscription != null) {
+      return; // Already listening to this user's seller doc
+    }
+
+    _currentSellerUserId = userId;
+    _sellerSubscription?.cancel();
+    _sellerSubscription = _firestore
+        .collection('sellers')
+        .where('userId', isEqualTo: userId)
+        .limit(1)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.docs.isNotEmpty) {
+        final data = snapshot.docs.first.data();
+        final isActive = data['isActive'] ?? true;
+        isSellerActive.value = (isActive == true);
+        debugPrint('🛒 [RoleService] Realtime seller status updated: isActive=${isSellerActive.value} for userId: $userId');
+      } else {
+        isSellerActive.value = false;
+      }
+    }, onError: (e) {
+      debugPrint('❌ [RoleService] Error listening to seller status: $e');
+      isSellerActive.value = false;
+    });
+  }
+
+  void _stopSellerListener() {
+    _sellerSubscription?.cancel();
+    _sellerSubscription = null;
+    _currentSellerUserId = null;
+    isSellerActive.value = false;
+  }
+
   /// Stop listening
   void stopListening() {
     _roleSubscription?.cancel();
     _roleSubscription = null;
     _stopSuperAdminListener();
+    _stopSellerListener();
   }
 
   @override
@@ -221,7 +271,7 @@ class RoleService extends GetxController {
   bool get isHost => userRoles.contains(AppRoles.host);
   bool get isRegular => userRoles.contains(AppRoles.regular) && userRoles.length == 1;
   bool get isAgency => userRoles.contains(AppRoles.agency);
-  bool get isSeller => userRoles.contains(AppRoles.seller);
+  bool get isSeller => isSellerActive.value || (userRoles.contains(AppRoles.seller) && isSellerActive.value);
 
   bool hasSuperAdminPermission(String moduleName) {
     if (!isSuperAdmin.value) return false;
@@ -252,6 +302,7 @@ class RoleService extends GetxController {
         'roleAssignedBy': assignedByUserId,
         'roleAssignedAt': FieldValue.serverTimestamp(),
         'isAgency': newRoles.contains(AppRoles.agency),
+        'isHost': newRoles.contains(AppRoles.host),
       });
 
       // Log role assignment

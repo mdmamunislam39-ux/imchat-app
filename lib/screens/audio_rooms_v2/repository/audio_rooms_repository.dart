@@ -9,7 +9,9 @@ import 'package:chat_messenger/services/entrance_effect_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:chat_messenger/helpers/ranking_helper.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
+import 'package:chat_messenger/helpers/country_helper.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/ludo/ludo_models.dart';
+import 'package:chat_messenger/services/backend_engine_manager.dart';
 
 /// Repository for managing Audio Rooms v2 data
 class AudioRoomsRepository {
@@ -48,10 +50,9 @@ class AudioRoomsRepository {
           .where((room) => !room.isGroupRoom && !room.isPrivate)
           .toList();
 
-      final now = DateTime.now();
       rooms.sort((a, b) {
-        final aPinned = a.isPinned && a.pinnedUntil != null && a.pinnedUntil!.isAfter(now);
-        final bPinned = b.isPinned && b.pinnedUntil != null && b.pinnedUntil!.isAfter(now);
+        final aPinned = a.isCurrentlyPinned;
+        final bPinned = b.isCurrentlyPinned;
         if (aPinned && !bPinned) return -1;
         if (!aPinned && bPinned) return 1;
         return b.createdAt.compareTo(a.createdAt);
@@ -97,7 +98,7 @@ class AudioRoomsRepository {
       final updates = <String, dynamic>{
         'isLudoActive': isActive,
       };
-      
+
       if (isActive) {
         final initialState = LudoGameState.initial(maxPlayers: maxPlayers ?? 2);
         final ludoState = initialState.copyWith(
@@ -116,7 +117,7 @@ class AudioRoomsRepository {
             .ref('rooms/$roomId/ludo/state')
             .set(ludoState);
       }
-      
+
       await _roomsCollection.doc(roomId).update(updates);
     } catch (e) {
       debugPrint('Error updating Ludo state: $e');
@@ -134,7 +135,7 @@ class AudioRoomsRepository {
       final updates = <String, dynamic>{
         'isCarromActive': isActive,
       };
-      
+
       if (isActive && maxPlayers != null) {
         // Initialize the Carrom game state
         final carromState = {
@@ -157,7 +158,7 @@ class AudioRoomsRepository {
             .ref('rooms/$roomId/carrom/state')
             .set(carromState);
       }
-      
+
       await _roomsCollection.doc(roomId).update(updates);
     } catch (e) {
       debugPrint('Error updating Carrom state: $e');
@@ -274,6 +275,23 @@ class AudioRoomsRepository {
     }
   }
 
+  /// Fetch default decoration settings configured in Admin Panel
+  Future<Map<String, dynamic>?> getDefaultRoomDecorations() async {
+    try {
+      final doc = await _firestore
+          .collection('system_configs')
+          .doc('room_creation_decoration')
+          .get()
+          .timeout(const Duration(seconds: 2));
+      if (doc.exists && doc.data() != null) {
+        return doc.data();
+      }
+    } catch (e) {
+      debugPrint('Note: Could not fetch default room decoration config: $e');
+    }
+    return null;
+  }
+
   /// Create new audio room
   Future<AudioRoomV2> createRoom({
     required String name,
@@ -294,7 +312,23 @@ class AudioRoomsRepository {
 
       final currentUser = AuthController.instance.currentUser;
       final effectivePhone = creatorPhone ?? currentUser.number;
-      final effectiveCountry = creatorCountry ?? currentUser.country;
+      String effectiveCountry = (creatorCountry != null && creatorCountry.trim().isNotEmpty)
+          ? creatorCountry.trim()
+          : currentUser.country.trim();
+
+      if (effectiveCountry.isEmpty || effectiveCountry.toLowerCase() == 'select') {
+        try {
+          final detected = await CountryHelper.detectDeviceCountry(userPhone: effectivePhone);
+          effectiveCountry = detected.name;
+        } catch (_) {
+          effectiveCountry = 'Bangladesh';
+        }
+      }
+
+      final String effectiveCountryCode = CountryHelper.detectCountryCodeFromPhoneOrUser(
+        countryStr: effectiveCountry,
+        phone: effectivePhone,
+      );
 
       // Generate unique 7-8 digit numeric Room ID
       String roomId = '';
@@ -310,7 +344,7 @@ class AudioRoomsRepository {
         exists = doc.exists;
       }
 
-      debugPrint('🏠 [AudioRooms] Generated numeric Room ID: $roomId');
+      debugPrint('🏠 [AudioRooms] Generated numeric Room ID: $roomId (Country: $effectiveCountry - $effectiveCountryCode)');
 
       // Create initial seat configuration based on room mode
       final roomSettings = settings ?? const AudioRoomSettings();
@@ -325,17 +359,80 @@ class AudioRoomsRepository {
         ));
       }
 
+      final defaultImageUrl = (creatorImageUrl != null && creatorImageUrl.isNotEmpty)
+          ? creatorImageUrl
+          : (currentUser.photoUrl.isNotEmpty ? currentUser.photoUrl : null);
+
+      // Fetch dynamic default room decorations from admin panel
+      final defaultDecor = await getDefaultRoomDecorations();
+
+      String? effectiveBgUrl = roomSettings.backgroundImageUrl;
+      String? effectiveSeatDecorUrl = roomSettings.seatDecorUrl;
+      String? effectiveLockedSeatDecorUrl = roomSettings.lockedSeatDecorUrl;
+      bool effectiveSeatAnimated = roomSettings.isSeatAnimated;
+      String? effectiveAnimationType = roomSettings.seatAnimationType;
+      String? effectiveAnimationColor = roomSettings.seatAnimationColor;
+      double effectiveAnimationSpeed = roomSettings.seatAnimationSpeed;
+      SeatColorMode effectiveSeatColorMode = roomSettings.seatColorMode;
+
+      if (defaultDecor != null) {
+        final bool enableBg = defaultDecor['enableDefaultBackground'] ?? defaultDecor['enableBackground'] ?? true;
+        final String? bgUrl = defaultDecor['defaultBackgroundImageUrl'] ?? defaultDecor['backgroundTheme']?['imageUrl'];
+        if (enableBg && bgUrl != null && bgUrl.isNotEmpty && (effectiveBgUrl == null || effectiveBgUrl.isEmpty)) {
+          effectiveBgUrl = bgUrl;
+        }
+
+        final bool enableSeat = defaultDecor['enableDefaultSeatDecor'] ?? defaultDecor['enableSeatDecor'] ?? true;
+        final String? seatUrl = defaultDecor['defaultSeatDecorUrl'] ?? defaultDecor['seatDecor']?['seatDecorUrl'];
+        final String? lockedSeatUrl = defaultDecor['defaultLockedSeatDecorUrl'] ?? defaultDecor['seatDecor']?['lockedSeatDecorUrl'];
+        if (enableSeat && seatUrl != null && seatUrl.isNotEmpty && (effectiveSeatDecorUrl == null || effectiveSeatDecorUrl.isEmpty)) {
+          effectiveSeatDecorUrl = seatUrl;
+          effectiveLockedSeatDecorUrl = lockedSeatUrl ?? seatUrl;
+          effectiveSeatAnimated = defaultDecor['enableSeatAnimation'] ?? defaultDecor['seatDecor']?['isAnimated'] ?? true;
+          effectiveAnimationType = defaultDecor['seatAnimationType'] ?? defaultDecor['seatDecor']?['animationType'] ?? 'rotatingRing';
+          effectiveAnimationColor = defaultDecor['seatAnimationColor'] ?? defaultDecor['seatDecor']?['animationColor'] ?? 'cyan';
+          effectiveAnimationSpeed = (defaultDecor['seatAnimationSpeed'] ?? defaultDecor['seatDecor']?['animationSpeed'] ?? 1.0).toDouble();
+
+          final modeStr = defaultDecor['defaultSeatColorMode'] ?? defaultDecor['seatDecor']?['seatColorMode'];
+          if (modeStr != null) {
+            effectiveSeatColorMode = SeatColorModeExtension.fromJson(modeStr.toString());
+          }
+        }
+      }
+
+      String? effectiveRoomImage = imageFile != null ? null : defaultImageUrl;
+      if (effectiveRoomImage == null && defaultDecor != null) {
+        final bool enableProfile = defaultDecor['enableDefaultRoomProfilePic'] ?? defaultDecor['enableRoomProfilePic'] ?? true;
+        final String? profileUrl = defaultDecor['defaultRoomProfilePicUrl'] ?? defaultDecor['roomProfilePic']?['imageUrl'];
+        if (enableProfile && profileUrl != null && profileUrl.isNotEmpty) {
+          effectiveRoomImage = profileUrl;
+        }
+      }
+
+      final effectiveSettings = roomSettings.copyWith(
+        seatConfiguration: initialSeats,
+        backgroundImageUrl: effectiveBgUrl,
+        seatDecorUrl: effectiveSeatDecorUrl,
+        lockedSeatDecorUrl: effectiveLockedSeatDecorUrl,
+        isSeatAnimated: effectiveSeatAnimated,
+        seatAnimationType: effectiveAnimationType,
+        seatAnimationColor: effectiveAnimationColor,
+        seatAnimationSpeed: effectiveAnimationSpeed,
+        seatColorMode: effectiveSeatColorMode,
+      );
+
       // Create room immediately without waiting for image upload
       final room = AudioRoomV2(
         id: roomId,
         name: name,
         description: description,
-        imageUrl: null, // Will be updated after upload
+        imageUrl: effectiveRoomImage,
         creatorId: creatorId,
         creatorName: creatorName,
         creatorImageUrl: creatorImageUrl,
         creatorPhone: effectivePhone,
         creatorCountry: effectiveCountry,
+        countryCode: effectiveCountryCode,
         participants: [
           AudioRoomParticipant(
             userId: creatorId,
@@ -351,7 +448,7 @@ class AudioRoomsRepository {
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
-        settings: roomSettings.copyWith(seatConfiguration: initialSeats),
+        settings: effectiveSettings,
         joinedUserIds: [creatorId],
         category: category ?? 'Game',
         roomLink: 'https://invite.imchatapp.com/room/$roomId',
@@ -367,12 +464,14 @@ class AudioRoomsRepository {
 
       // Set Realtime Database presence for auto-exit for creator
       try {
-        final databaseRef = FirebaseDatabase.instance.ref('audio_room_presence/$roomId/$creatorId');
+        final databaseRef = FirebaseDatabase.instance
+            .ref('audio_room_presence/$roomId/$creatorId');
         await databaseRef.set({
           'joinedAt': ServerValue.timestamp,
         });
         await databaseRef.onDisconnect().remove();
-        debugPrint('🔌 [AudioRooms] Set RTDB presence onDisconnect for creator $creatorId');
+        debugPrint(
+            '🔌 [AudioRooms] Set RTDB presence onDisconnect for creator $creatorId');
       } catch (e) {
         debugPrint('⚠️ [AudioRooms] Failed to set RTDB presence on create: $e');
       }
@@ -433,52 +532,14 @@ class AudioRoomsRepository {
           room.allowedUserIds.isNotEmpty &&
           !room.allowedUserIds.contains(userId) &&
           room.creatorId != userId) {
-        throw Exception('This is a private room. Only group members are allowed to join.');
+        throw Exception(
+            'This is a private room. Only group members are allowed to join.');
       }
 
       // Check if user was kicked recently (within 24 hours)
-      try {
-        final removedUserList = room.removedUsers.where((u) => u['userId'] == userId).toList();
-        if (removedUserList.isNotEmpty) {
-           removedUserList.sort((a, b) {
-             DateTime parseTime(dynamic val) {
-               if (val == null) return DateTime.now();
-               if (val is Timestamp) return val.toDate();
-               if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
-               if (val is String) return DateTime.tryParse(val) ?? DateTime.now();
-               if (val is DateTime) return val;
-               return DateTime.now();
-             }
-             final aTime = parseTime(a['removedAt']);
-             final bTime = parseTime(b['removedAt']);
-             return bTime.compareTo(aTime);
-           });
-           
-           final mostRecentKick = removedUserList.first;
-           DateTime? removedAt;
-           final val = mostRecentKick['removedAt'];
-           if (val != null) {
-              if (val is Timestamp) {
-                removedAt = val.toDate();
-              } else if (val is int) {
-                removedAt = DateTime.fromMillisecondsSinceEpoch(val);
-              } else if (val is String) {
-                removedAt = DateTime.tryParse(val);
-              } else if (val is DateTime) {
-                removedAt = val;
-              }
-            }
-           
-           if (removedAt != null) {
-             final now = DateTime.now();
-             if (now.difference(removedAt).inHours < 24) {
-               throw Exception('You have been removed from this room and cannot join for 24 hours.');
-             }
-           }
-        }
-      } catch (e) {
-         if (e.toString().contains('cannot join for 24 hours')) rethrow;
-         // Ignore parsing errors
+      if (room.isUserKickedRecently(userId)) {
+        throw Exception(
+            'You have been removed from this room and cannot join for 24 hours.');
       }
 
       // Check if user is already in room
@@ -494,14 +555,16 @@ class AudioRoomsRepository {
 
           // Check if owner needs to be added to joinedUserIds
           final isCreator = room.isCreator(userId);
-          List<String> updatedJoinedUserIds = List<String>.from(room.joinedUserIds);
+          List<String> updatedJoinedUserIds =
+              List<String>.from(room.joinedUserIds);
           bool joinedIdsChanged = false;
           if (isCreator && !updatedJoinedUserIds.contains(userId)) {
             updatedJoinedUserIds.add(userId);
             joinedIdsChanged = true;
           }
 
-          Map<String, DateTime> updatedLastActive = Map<String, DateTime>.from(room.membersLastActive);
+          Map<String, DateTime> updatedLastActive =
+              Map<String, DateTime>.from(room.membersLastActive);
           updatedLastActive[userId] = DateTime.now();
 
           // Check auto-sit logic for Owner/Admin on rejoin
@@ -512,11 +575,14 @@ class AudioRoomsRepository {
           bool newIsMuted = existingParticipant.isMuted;
           AudioRoomSettings updatedSettingsForRejoin = room.settings;
 
-          if (!existingParticipant.isSeated && (isCreator || room.settings.adminIds.contains(userId))) {
+          if (!existingParticipant.isSeated &&
+              (isCreator || room.settings.adminIds.contains(userId))) {
             final seat1 = room.settings.seatConfiguration.firstWhere(
                 (s) => s.seatNumber == 1,
                 orElse: () => SeatInfo(seatNumber: 1, isLocked: false));
-            final bool isSeat1Vacant = (seat1.occupiedBy == null || seat1.occupiedBy!.isEmpty || seat1.occupiedBy == userId);
+            final bool isSeat1Vacant = (seat1.occupiedBy == null ||
+                seat1.occupiedBy!.isEmpty ||
+                seat1.occupiedBy == userId);
             if (isSeat1Vacant) {
               autoSitRejoin = true;
               newSeatNumber = 1;
@@ -524,14 +590,19 @@ class AudioRoomsRepository {
               newIsSpeaker = true;
               newIsMuted = false;
 
-              final updatedSeats = List<SeatInfo>.from(room.settings.seatConfiguration);
-              final seatIndex = updatedSeats.indexWhere((s) => s.seatNumber == 1);
+              final updatedSeats =
+                  List<SeatInfo>.from(room.settings.seatConfiguration);
+              final seatIndex =
+                  updatedSeats.indexWhere((s) => s.seatNumber == 1);
               if (seatIndex != -1) {
-                updatedSeats[seatIndex] = updatedSeats[seatIndex].copyWith(occupiedBy: userId, isLocked: false);
+                updatedSeats[seatIndex] = updatedSeats[seatIndex]
+                    .copyWith(occupiedBy: userId, isLocked: false);
               } else {
-                updatedSeats.add(SeatInfo(seatNumber: 1, isLocked: false, occupiedBy: userId));
+                updatedSeats.add(SeatInfo(
+                    seatNumber: 1, isLocked: false, occupiedBy: userId));
               }
-              updatedSettingsForRejoin = updatedSettingsForRejoin.copyWith(seatConfiguration: updatedSeats);
+              updatedSettingsForRejoin = updatedSettingsForRejoin.copyWith(
+                  seatConfiguration: updatedSeats);
             }
           }
 
@@ -541,7 +612,8 @@ class AudioRoomsRepository {
               existingParticipant.userName != userName ||
               joinedIdsChanged ||
               autoSitRejoin ||
-              true) { // always update to keep last active precise
+              true) {
+            // always update to keep last active precise
             final updatedParticipant = existingParticipant.copyWith(
               userName: userName,
               userImageUrl: userImageUrl,
@@ -584,14 +656,16 @@ class AudioRoomsRepository {
       // New participants join as viewers (unseated) — unless they are owner/admin and seat 1 is empty
       final isPersistentAdmin = room.settings.adminIds.contains(userId);
       final isCreator = room.isCreator(userId);
-      
+
       bool autoSit = false;
       int? seatNumber;
       if (isCreator || isPersistentAdmin) {
         final seat1 = room.settings.seatConfiguration.firstWhere(
             (s) => s.seatNumber == 1,
             orElse: () => SeatInfo(seatNumber: 1, isLocked: false));
-        final bool isSeat1Vacant = (seat1.occupiedBy == null || seat1.occupiedBy!.isEmpty || seat1.occupiedBy == userId);
+        final bool isSeat1Vacant = (seat1.occupiedBy == null ||
+            seat1.occupiedBy!.isEmpty ||
+            seat1.occupiedBy == userId);
         if (isSeat1Vacant) {
           autoSit = true;
           seatNumber = 1;
@@ -616,14 +690,18 @@ class AudioRoomsRepository {
 
       AudioRoomSettings updatedSettings = room.settings;
       if (autoSit) {
-        final updatedSeats = List<SeatInfo>.from(room.settings.seatConfiguration);
+        final updatedSeats =
+            List<SeatInfo>.from(room.settings.seatConfiguration);
         final seatIndex = updatedSeats.indexWhere((s) => s.seatNumber == 1);
         if (seatIndex != -1) {
-          updatedSeats[seatIndex] = updatedSeats[seatIndex].copyWith(occupiedBy: userId);
+          updatedSeats[seatIndex] =
+              updatedSeats[seatIndex].copyWith(occupiedBy: userId);
         } else {
-          updatedSeats.add(SeatInfo(seatNumber: 1, isLocked: false, occupiedBy: userId));
+          updatedSeats.add(
+              SeatInfo(seatNumber: 1, isLocked: false, occupiedBy: userId));
         }
-        updatedSettings = updatedSettings.copyWith(seatConfiguration: updatedSeats);
+        updatedSettings =
+            updatedSettings.copyWith(seatConfiguration: updatedSeats);
       }
 
       // Ensure room owner is automatically in joinedUserIds
@@ -632,7 +710,8 @@ class AudioRoomsRepository {
         updatedJoinedUserIds.add(userId);
       }
 
-      Map<String, DateTime> updatedLastActive = Map<String, DateTime>.from(room.membersLastActive);
+      Map<String, DateTime> updatedLastActive =
+          Map<String, DateTime>.from(room.membersLastActive);
       updatedLastActive[userId] = DateTime.now();
 
       final updatedRoom = room.copyWith(
@@ -658,7 +737,8 @@ class AudioRoomsRepository {
 
       // Set Realtime Database presence for auto-exit
       try {
-        final databaseRef = FirebaseDatabase.instance.ref('audio_room_presence/$roomId/$userId');
+        final databaseRef = FirebaseDatabase.instance
+            .ref('audio_room_presence/$roomId/$userId');
         await databaseRef.set({
           'joinedAt': ServerValue.timestamp,
         });
@@ -718,9 +798,11 @@ class AudioRoomsRepository {
       // If creator leaves, the live room ends (since deletion is disabled, we set isActive = false)
       if (room.isCreator(userId) && room.category == 'Live') {
         shouldEndRoom = true;
-        debugPrint('🗑️ [RoomCleanup] Admin leaving Live room, ending the room by setting isActive = false.');
+        debugPrint(
+            '🗑️ [RoomCleanup] Admin leaving Live room, ending the room by setting isActive = false.');
       } else if (room.isCreator(userId)) {
-        debugPrint('🚪 [RoomCleanup] Admin leaving Audio room, room remains active.');
+        debugPrint(
+            '🚪 [RoomCleanup] Admin leaving Audio room, room remains active.');
       }
 
       // Regular users cannot delete the room - just leave
@@ -731,7 +813,8 @@ class AudioRoomsRepository {
         // Don't delete - room stays active but empty
       }
 
-      Map<String, DateTime> updatedLastActive = Map<String, DateTime>.from(room.membersLastActive);
+      Map<String, DateTime> updatedLastActive =
+          Map<String, DateTime>.from(room.membersLastActive);
       updatedLastActive[userId] = DateTime.now();
 
       final updatedRoom = room.copyWith(
@@ -746,15 +829,15 @@ class AudioRoomsRepository {
 
       // Clear Realtime Database presence since user left cleanly
       try {
-        await FirebaseDatabase.instance.ref('audio_room_presence/$roomId/$userId').remove();
+        await FirebaseDatabase.instance
+            .ref('audio_room_presence/$roomId/$userId')
+            .remove();
       } catch (e) {
         debugPrint('⚠️ [AudioRooms] Failed to clear RTDB presence: $e');
       }
 
-      // Track live hours if leaving user was the host of the room
-      if (leavingParticipant.isHost || room.isCreator(userId)) {
-        _updateHostLiveHours(userId, leavingParticipant.joinedAt);
-      }
+      // Track live hours asynchronously in background so room exit is instantaneous and smooth without UI hang
+      unawaited(_updateHostLiveHours(userId, leavingParticipant.joinedAt));
     } catch (e) {
       throw Exception('Failed to leave room: $e');
     }
@@ -777,12 +860,19 @@ class AudioRoomsRepository {
   /// Update host live hours in the hosts collection.
   /// Called when a host leaves a room — calculates session duration from joinedAt.
   /// Also increments the current Monday-to-Monday weekly live hours field.
-  Future<void> _updateHostLiveHours(
-      String userId, DateTime joinedAt) async {
+  Future<void> _updateHostLiveHours(String userId, DateTime joinedAt) async {
     try {
-      final sessionHours =
-          DateTime.now().difference(joinedAt).inMinutes / 60.0;
-      if (sessionHours <= 0) return;
+      final now = DateTime.now();
+      if (joinedAt.isAfter(now)) return; // Clock skew guard
+
+      int sessionMinutes = now.difference(joinedAt).inMinutes;
+      // Sanity cap: maximum 24 hours (1440 min) per continuous session to avoid corrupted timestamps
+      if (sessionMinutes > 1440) {
+        sessionMinutes = 1440;
+      }
+      if (sessionMinutes <= 0) return;
+
+      final sessionHours = sessionMinutes / 60.0;
 
       // Find host doc by userId (hosts collection uses auto-generated IDs)
       final hostQuery = await _firestore
@@ -794,18 +884,31 @@ class AudioRoomsRepository {
 
       if (hostQuery.docs.isEmpty) {
         debugPrint(
-            '⏱️ [AudioRooms] User $userId is not a registered host, skipping live hours');
+            '⏱️ [AudioRooms] User $userId is not a registered active host, skipping live hours');
         return;
       }
 
       final hostDocId = hostQuery.docs.first.id;
-      final weeklyKey = 'performance.weeklyLiveHours_${RankingHelper.mondayWeeklySuffix}';
+      final weeklyKey =
+          'performance.weeklyLiveHours_${RankingHelper.mondayWeeklySuffix}';
 
       await _firestore.collection('hosts').doc(hostDocId).update({
         'performance.totalLiveHours': FieldValue.increment(sessionHours),
         weeklyKey: FieldValue.increment(sessionHours),
         'performance.lastUpdated': FieldValue.serverTimestamp(),
       });
+
+      try {
+        await _firestore.collection('Users').doc(userId).update({
+          'activityStats.dailyVoiceRoomMinutes': FieldValue.increment(sessionMinutes),
+          'activityStats.weeklyVoiceRoomMinutes': FieldValue.increment(sessionMinutes),
+          'activityStats.monthlyVoiceRoomMinutes': FieldValue.increment(sessionMinutes),
+          'activityStats.lastUpdated': FieldValue.serverTimestamp(),
+          'dailyVoiceRoomMinutes_${RankingHelper.dailySuffix}': FieldValue.increment(sessionMinutes),
+          'weeklyVoiceRoomMinutes_${RankingHelper.mondayWeeklySuffix}': FieldValue.increment(sessionMinutes),
+          'monthlyVoiceRoomMinutes_${RankingHelper.monthlySuffix}': FieldValue.increment(sessionMinutes),
+        });
+      } catch (_) {}
 
       debugPrint(
           '⏱️ [AudioRooms] Updated host $hostDocId live hours +${sessionHours.toStringAsFixed(2)}h '
@@ -898,11 +1001,14 @@ class AudioRoomsRepository {
       if (!roomDoc.exists) return;
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
-      final participantIndex = room.participants.indexWhere((p) => p.userId == userId);
+      final participantIndex =
+          room.participants.indexWhere((p) => p.userId == userId);
 
       if (participantIndex != -1) {
-        final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
-        updatedParticipants[participantIndex] = updatedParticipants[participantIndex].copyWith(
+        final updatedParticipants =
+            List<AudioRoomParticipant>.from(room.participants);
+        updatedParticipants[participantIndex] =
+            updatedParticipants[participantIndex].copyWith(
           frameId: frameId,
         );
 
@@ -910,27 +1016,36 @@ class AudioRoomsRepository {
           'participants': updatedParticipants.map((p) => p.toJson()).toList(),
           'updatedAt': Timestamp.fromDate(DateTime.now()),
         });
-        debugPrint('🖼️ [AudioRoomsRepository] Updated participant $userId frameId to $frameId in room $roomId');
+        debugPrint(
+            '🖼️ [AudioRoomsRepository] Updated participant $userId frameId to $frameId in room $roomId');
       }
     } catch (e) {
-      debugPrint('⚠️ [AudioRoomsRepository] Error updating participant frameId: $e');
+      debugPrint(
+          '⚠️ [AudioRoomsRepository] Error updating participant frameId: $e');
     }
   }
 
   /// Toggle admin mute status for a participant
-  Future<void> toggleAdminMute(String roomId, String userId, bool mutedByAdmin) async {
+  Future<void> toggleAdminMute(
+      String roomId, String userId, bool mutedByAdmin) async {
     try {
       final roomDoc = await _roomsCollection.doc(roomId).get();
       if (!roomDoc.exists) throw Exception('Room not found');
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
-      final participantIndex = room.participants.indexWhere((p) => p.userId == userId);
-      
+      final participantIndex =
+          room.participants.indexWhere((p) => p.userId == userId);
+
       if (participantIndex != -1) {
-        final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
-        updatedParticipants[participantIndex] = updatedParticipants[participantIndex].copyWith(
+        final updatedParticipants =
+            List<AudioRoomParticipant>.from(room.participants);
+        updatedParticipants[participantIndex] =
+            updatedParticipants[participantIndex].copyWith(
           isMutedByAdmin: mutedByAdmin,
-          isMuted: mutedByAdmin ? true : updatedParticipants[participantIndex].isMuted, // Force mute if admin muting
+          isMuted: mutedByAdmin
+              ? true
+              : updatedParticipants[participantIndex]
+                  .isMuted, // Force mute if admin muting
         );
 
         await _roomsCollection.doc(roomId).update({
@@ -945,17 +1060,21 @@ class AudioRoomsRepository {
   }
 
   /// Toggle messaging block for a participant
-  Future<void> toggleMessagingBlock(String roomId, String userId, bool isBlocked) async {
+  Future<void> toggleMessagingBlock(
+      String roomId, String userId, bool isBlocked) async {
     try {
       final roomDoc = await _roomsCollection.doc(roomId).get();
       if (!roomDoc.exists) throw Exception('Room not found');
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
-      final participantIndex = room.participants.indexWhere((p) => p.userId == userId);
-      
+      final participantIndex =
+          room.participants.indexWhere((p) => p.userId == userId);
+
       if (participantIndex != -1) {
-        final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
-        updatedParticipants[participantIndex] = updatedParticipants[participantIndex].copyWith(
+        final updatedParticipants =
+            List<AudioRoomParticipant>.from(room.participants);
+        updatedParticipants[participantIndex] =
+            updatedParticipants[participantIndex].copyWith(
           isMessagingBlocked: isBlocked,
         );
 
@@ -971,18 +1090,21 @@ class AudioRoomsRepository {
   }
 
   /// Toggle seat access block for a participant
-  Future<void> toggleSeatBlock(String roomId, String userId, bool isBlocked) async {
+  Future<void> toggleSeatBlock(
+      String roomId, String userId, bool isBlocked) async {
     try {
       final roomDoc = await _roomsCollection.doc(roomId).get();
       if (!roomDoc.exists) throw Exception('Room not found');
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
-      final participantIndex = room.participants.indexWhere((p) => p.userId == userId);
-      
+      final participantIndex =
+          room.participants.indexWhere((p) => p.userId == userId);
+
       if (participantIndex != -1) {
-        final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
+        final updatedParticipants =
+            List<AudioRoomParticipant>.from(room.participants);
         var participant = updatedParticipants[participantIndex];
-        
+
         participant = participant.copyWith(
           isSeatBlocked: isBlocked,
         );
@@ -1000,8 +1122,10 @@ class AudioRoomsRepository {
           );
 
           if (seatNumber != null) {
-            final updatedSeats = List<SeatInfo>.from(room.settings.seatConfiguration);
-            final seatIndex = updatedSeats.indexWhere((s) => s.seatNumber == seatNumber);
+            final updatedSeats =
+                List<SeatInfo>.from(room.settings.seatConfiguration);
+            final seatIndex =
+                updatedSeats.indexWhere((s) => s.seatNumber == seatNumber);
             if (seatIndex != -1) {
               if (updatedSeats[seatIndex].isLocked) {
                 updatedSeats[seatIndex] = updatedSeats[seatIndex].copyWith(
@@ -1015,7 +1139,8 @@ class AudioRoomsRepository {
                   occupiedBy: null,
                 );
               }
-              updatedSettings = room.settings.copyWith(seatConfiguration: updatedSeats);
+              updatedSettings =
+                  room.settings.copyWith(seatConfiguration: updatedSeats);
             }
           }
         }
@@ -1077,12 +1202,10 @@ class AudioRoomsRepository {
 
       final now = DateTime.now();
       rooms.sort((a, b) {
-        final aPinned = a.isPinned &&
-            a.pinnedUntil != null &&
-            a.pinnedUntil!.isAfter(now);
-        final bPinned = b.isPinned &&
-            b.pinnedUntil != null &&
-            b.pinnedUntil!.isAfter(now);
+        final aPinned =
+            a.isPinned && a.pinnedUntil != null && a.pinnedUntil!.isAfter(now);
+        final bPinned =
+            b.isPinned && b.pinnedUntil != null && b.pinnedUntil!.isAfter(now);
         if (aPinned && !bPinned) return -1;
         if (!aPinned && bPinned) return 1;
         return b.createdAt.compareTo(a.createdAt);
@@ -1101,29 +1224,36 @@ class AudioRoomsRepository {
         .map((snapshot) {
       final rooms = snapshot.docs
           .map((doc) => AudioRoomV2.fromFirestore(doc))
-          .where((room) => !room.isGroupRoom && !room.isPrivate && !room.excludeFromRanking && !room.isBanned)
+          .where((room) =>
+              !room.isGroupRoom &&
+              !room.isPrivate &&
+              !room.excludeFromRanking &&
+              !room.isBanned)
           .toList();
 
       final now = DateTime.now();
       rooms.sort((a, b) {
-        final aPinned = a.isPinned &&
-            a.pinnedUntil != null &&
-            a.pinnedUntil!.isAfter(now);
-        final bPinned = b.isPinned &&
-            b.pinnedUntil != null &&
-            b.pinnedUntil!.isAfter(now);
+        final aPinned =
+            a.isPinned && a.pinnedUntil != null && a.pinnedUntil!.isAfter(now);
+        final bPinned =
+            b.isPinned && b.pinnedUntil != null && b.pinnedUntil!.isAfter(now);
         if (aPinned && !bPinned) return -1;
         if (!aPinned && bPinned) return 1;
 
-        final scoreA = a.trendingScore + (a.participants.length * 120.0) + (a.participants.where((p) => p.isSeated || p.isSpeaker).length * 60.0);
-        final scoreB = b.trendingScore + (b.participants.length * 120.0) + (b.participants.where((p) => p.isSeated || p.isSpeaker).length * 60.0);
+        final scoreA = a.trendingScore +
+            (a.participants.length * 120.0) +
+            (a.participants.where((p) => p.isSeated || p.isSpeaker).length *
+                60.0);
+        final scoreB = b.trendingScore +
+            (b.participants.length * 120.0) +
+            (b.participants.where((p) => p.isSeated || p.isSpeaker).length *
+                60.0);
         return scoreB.compareTo(scoreA);
       });
 
       return rooms;
     });
   }
-
 
   /// Get real-time updates for a specific room
   Stream<AudioRoomV2> getRoomStream(String roomId) {
@@ -1202,12 +1332,13 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Check if user is creator or host
+      // Check if user is creator or host/admin
       final isHost = room.isCreator(userId) ||
+          room.settings.adminIds.contains(userId) ||
           room.participants.any((p) => p.userId == userId && p.isHost);
 
       if (!isHost) {
-        throw Exception('Only room creator or host can update settings');
+        throw Exception('Only room creator or host/admin can update settings');
       }
 
       await _roomsCollection.doc(roomId).update({
@@ -1234,20 +1365,22 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Check if user is creator or host
+      // Check if user is creator or host/admin
       final isHost = room.isCreator(userId) ||
+          room.settings.adminIds.contains(userId) ||
           room.participants.any((p) => p.userId == userId && p.isHost);
 
       if (!isHost) {
-        throw Exception('Only room creator or host can update PK battle state');
+        throw Exception('Only room creator or host/admin can update PK battle state');
       }
 
       await _roomsCollection.doc(roomId).update({
         'pkBattleState': pkBattleState.toJson(),
         'updatedAt': Timestamp.fromDate(DateTime.now()),
       });
-      
-      debugPrint('⚔️ PK battle state updated for room: $roomId (Active: ${pkBattleState.isActive})');
+
+      debugPrint(
+          '⚔️ PK battle state updated for room: $roomId (Active: ${pkBattleState.isActive})');
     } catch (e) {
       throw Exception('Failed to update PK battle state: $e');
     }
@@ -1380,9 +1513,10 @@ class AudioRoomsRepository {
       final updatedSettings = room.settings.copyWith(maxSpeakers: seatCount);
 
       // Check for participants that need to be unseated
-      final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
+      final updatedParticipants =
+          List<AudioRoomParticipant>.from(room.participants);
       bool participantsChanged = false;
-      
+
       for (int i = 0; i < updatedParticipants.length; i++) {
         final p = updatedParticipants[i];
         if (p.isSeated && p.seatNumber != null && p.seatNumber! > seatCount) {
@@ -1397,7 +1531,8 @@ class AudioRoomsRepository {
 
       await _roomsCollection.doc(roomId).update({
         'settings': updatedSettings.toJson(),
-        if (participantsChanged) 'participants': updatedParticipants.map((p) => p.toJson()).toList(),
+        if (participantsChanged)
+          'participants': updatedParticipants.map((p) => p.toJson()).toList(),
         'updatedAt': Timestamp.fromDate(DateTime.now()),
       });
 
@@ -1420,13 +1555,14 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Check if user is creator or host
+      // Check if user is creator or host/admin
       final isHost = room.isCreator(userId) ||
+          room.settings.adminIds.contains(userId) ||
           room.participants.any((p) => p.userId == userId && p.isHost);
 
       if (!isHost) {
         throw Exception(
-            'Only room creator or host can update background image');
+            'Only room creator or host/admin can update background image');
       }
 
       final updatedSettings = room.settings.copyWith(
@@ -1457,13 +1593,14 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Check if user is creator or host
+      // Check if user is creator or host/admin
       final isHost = room.isCreator(userId) ||
+          room.settings.adminIds.contains(userId) ||
           room.participants.any((p) => p.userId == userId && p.isHost);
 
       if (!isHost) {
         throw Exception(
-            'Only room creator or host can update room announcement');
+            'Only room creator or host/admin can update room announcement');
       }
 
       final updatedSettings =
@@ -1492,12 +1629,13 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Check if user is creator or host
+      // Check if user is creator or host/admin
       final isHost = room.isCreator(userId) ||
+          room.settings.adminIds.contains(userId) ||
           room.participants.any((p) => p.userId == userId && p.isHost);
 
       if (!isHost) {
-        throw Exception('Only room creator or host can update music settings');
+        throw Exception('Only room creator or host/admin can update music settings');
       }
 
       final updatedSettings = room.settings.copyWith(
@@ -1528,12 +1666,13 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Check if user is creator or host
+      // Check if user is creator or host/admin
       final isHost = room.isCreator(userId) ||
+          room.settings.adminIds.contains(userId) ||
           room.participants.any((p) => p.userId == userId && p.isHost);
 
       if (!isHost) {
-        throw Exception('Only room creator or host can update room mode');
+        throw Exception('Only room creator or host/admin can update room mode');
       }
 
       // Update seat configuration to match new room mode
@@ -1764,6 +1903,20 @@ class AudioRoomsRepository {
   Future<void> sendChatMessage(String roomId, String userId, String username,
       String? userAvatar, String message) async {
     try {
+      if (BackendEngineManager.isVps) {
+        BackendEngineManager.instance.socketService.sendRoomMessage(
+          roomId: roomId,
+          content: message,
+          messageType: 'text',
+          extraData: {
+            'username': username,
+            'userAvatar': userAvatar,
+          },
+        );
+        debugPrint('💬 [VPS] Room message sent to room: $roomId');
+        return;
+      }
+
       final messageId = _firestore
           .collection('audio_rooms_v2')
           .doc(roomId)
@@ -1797,6 +1950,44 @@ class AudioRoomsRepository {
 
   /// Get chat messages stream
   Stream<List<ChatMessage>> getChatMessagesStream(String roomId) {
+    if (BackendEngineManager.isVps) {
+      final vpsSocket = BackendEngineManager.instance.socketService;
+      final List<ChatMessage> roomMessages = [];
+      late StreamController<List<ChatMessage>> controller;
+      StreamSubscription? sub;
+
+      controller = StreamController<List<ChatMessage>>.broadcast(
+        onListen: () {
+          vpsSocket.joinRoom(roomId);
+          controller.add(List.from(roomMessages));
+          sub = vpsSocket.roomMessageStream.listen((data) {
+            if (data['roomId']?.toString() == roomId) {
+              final extra = (data['extraData'] is Map) ? Map<String, dynamic>.from(data['extraData']) : {};
+              final msg = ChatMessage(
+                id: data['id']?.toString() ?? '',
+                userId: data['senderId']?.toString() ?? '',
+                username: extra['username']?.toString() ?? 'User',
+                userAvatar: extra['userAvatar']?.toString(),
+                message: data['content']?.toString() ?? '',
+                timestamp: DateTime.tryParse(data['createdAt']?.toString() ?? '') ?? DateTime.now(),
+                roomId: roomId,
+              );
+              roomMessages.add(msg);
+              if (roomMessages.length > 100) roomMessages.removeAt(0);
+              if (!controller.isClosed) {
+                controller.add(List.from(roomMessages));
+              }
+            }
+          });
+        },
+        onCancel: () {
+          sub?.cancel();
+        },
+      );
+
+      return controller.stream;
+    }
+
     return _firestore
         .collection('audio_rooms_v2')
         .doc(roomId)
@@ -1822,9 +2013,11 @@ class AudioRoomsRepository {
 
   /// Toggle seat lock/unlock
   /// Toggle lock for all 15 seats
-  Future<void> toggleAllSeatsLock(String roomId, String hostId, bool isLocked) async {
+  Future<void> toggleAllSeatsLock(
+      String roomId, String hostId, bool isLocked) async {
     try {
-      debugPrint('🪑 [SeatManagement] Toggling ALL seats lock to $isLocked in room: $roomId');
+      debugPrint(
+          '🪑 [SeatManagement] Toggling ALL seats lock to $isLocked in room: $roomId');
 
       final roomDoc = await _roomsCollection.doc(roomId).get();
       if (!roomDoc.exists) {
@@ -1833,26 +2026,30 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Verify host permissions
-      if (!room.isCreator(hostId)) {
-        throw Exception('Only hosts can manage seats');
+      // Verify host/admin permissions
+      final isHostOrAdmin = room.isCreator(hostId) ||
+          room.settings.adminIds.contains(hostId) ||
+          room.participants.any((p) => p.userId == hostId && p.isHost);
+      if (!isHostOrAdmin) {
+        throw Exception('Only hosts/admins can manage seats');
       }
 
       // Generate updated seat configuration for all expected seats for the current roomMode
       final roomMode = room.settings.roomMode;
       final totalSeatsCount = roomMode.seatCount;
       final List<SeatInfo> updatedSeats = [];
-      
+
       for (int i = 1; i <= totalSeatsCount; i++) {
         SeatInfo? existingSeat;
         try {
-          existingSeat = room.settings.seatConfiguration.firstWhere((s) => s.seatNumber == i);
+          existingSeat = room.settings.seatConfiguration
+              .firstWhere((s) => s.seatNumber == i);
         } catch (_) {
           existingSeat = null;
         }
 
         String? newOccupiedBy = existingSeat?.occupiedBy;
-        
+
         // If locking all seats, unseat everyone
         if (isLocked) {
           newOccupiedBy = null;
@@ -1867,11 +2064,13 @@ class AudioRoomsRepository {
         ));
       }
 
-      final updatedSettings = room.settings.copyWith(seatConfiguration: updatedSeats);
-      final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
-      
+      final updatedSettings =
+          room.settings.copyWith(seatConfiguration: updatedSeats);
+      final updatedParticipants =
+          List<AudioRoomParticipant>.from(room.participants);
+
       final batch = FirebaseFirestore.instance.batch();
-      
+
       if (isLocked) {
         // Kick everyone sitting
         for (int i = 0; i < updatedParticipants.length; i++) {
@@ -1882,9 +2081,12 @@ class AudioRoomsRepository {
               seatNumber: null,
               isSpeaker: false,
             );
-            
+
             // Legacy subcollection update (set with merge to avoid NOT_FOUND crashes on batch commit)
-            final pDoc = _roomsCollection.doc(roomId).collection('participants').doc(pId);
+            final pDoc = _roomsCollection
+                .doc(roomId)
+                .collection('participants')
+                .doc(pId);
             batch.set(
               pDoc,
               {
@@ -1897,24 +2099,28 @@ class AudioRoomsRepository {
           }
         }
       }
-      
+
       batch.update(_roomsCollection.doc(roomId), {
         'settings': updatedSettings.toJson(),
-        if (isLocked) 'participants': updatedParticipants.map((p) => p.toJson()).toList(),
+        if (isLocked)
+          'participants': updatedParticipants.map((p) => p.toJson()).toList(),
         'updatedAt': Timestamp.fromDate(DateTime.now()),
       });
 
       await batch.commit();
-      debugPrint('🪑 [SeatManagement] All seats ${isLocked ? 'locked' : 'unlocked'} successfully');
+      debugPrint(
+          '🪑 [SeatManagement] All seats ${isLocked ? 'locked' : 'unlocked'} successfully');
     } catch (e) {
       debugPrint('🪑 [SeatManagement] Error toggling all seats lock: $e');
       rethrow;
     }
   }
 
-  Future<void> toggleAllMicsMute(String roomId, String hostId, bool muteAll) async {
+  Future<void> toggleAllMicsMute(
+      String roomId, String hostId, bool muteAll) async {
     try {
-      debugPrint('🎙️ [RoomManagement] Toggling ALL mics mute to $muteAll in room: $roomId');
+      debugPrint(
+          '🎙️ [RoomManagement] Toggling ALL mics mute to $muteAll in room: $roomId');
 
       final roomDoc = await _roomsCollection.doc(roomId).get();
       if (!roomDoc.exists) {
@@ -1930,14 +2136,16 @@ class AudioRoomsRepository {
         throw Exception('Access Denied: Only hosts/admins can mute all mics');
       }
 
-      final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
+      final updatedParticipants =
+          List<AudioRoomParticipant>.from(room.participants);
       final batch = FirebaseFirestore.instance.batch();
 
       for (int i = 0; i < updatedParticipants.length; i++) {
         final p = updatedParticipants[i];
-        
+
         // Exempt creator (owner) and admins
-        if (p.userId == room.creatorId || room.settings.adminIds.contains(p.userId)) {
+        if (p.userId == room.creatorId ||
+            room.settings.adminIds.contains(p.userId)) {
           continue;
         }
 
@@ -1946,7 +2154,10 @@ class AudioRoomsRepository {
           isMuted: muteAll ? true : p.isMuted,
         );
 
-        final pDoc = _roomsCollection.doc(roomId).collection('participants').doc(p.userId);
+        final pDoc = _roomsCollection
+            .doc(roomId)
+            .collection('participants')
+            .doc(p.userId);
         batch.set(
           pDoc,
           {
@@ -1963,16 +2174,19 @@ class AudioRoomsRepository {
       });
 
       await batch.commit();
-      debugPrint('🎙️ [RoomManagement] All mics ${muteAll ? 'muted' : 'unmuted'} successfully');
+      debugPrint(
+          '🎙️ [RoomManagement] All mics ${muteAll ? 'muted' : 'unmuted'} successfully');
     } catch (e) {
       debugPrint('Error toggling all mics mute: $e');
       rethrow;
     }
   }
 
-  Future<void> toggleAllCommentsBan(String roomId, String hostId, bool banAll) async {
+  Future<void> toggleAllCommentsBan(
+      String roomId, String hostId, bool banAll) async {
     try {
-      debugPrint('💬 [RoomManagement] Toggling ALL comments ban to $banAll in room: $roomId');
+      debugPrint(
+          '💬 [RoomManagement] Toggling ALL comments ban to $banAll in room: $roomId');
 
       final roomDoc = await _roomsCollection.doc(roomId).get();
       if (!roomDoc.exists) {
@@ -1988,14 +2202,16 @@ class AudioRoomsRepository {
         throw Exception('Access Denied: Only hosts/admins can ban comments');
       }
 
-      final updatedParticipants = List<AudioRoomParticipant>.from(room.participants);
+      final updatedParticipants =
+          List<AudioRoomParticipant>.from(room.participants);
       final batch = FirebaseFirestore.instance.batch();
 
       for (int i = 0; i < updatedParticipants.length; i++) {
         final p = updatedParticipants[i];
-        
+
         // Exempt creator (owner) and admins
-        if (p.userId == room.creatorId || room.settings.adminIds.contains(p.userId)) {
+        if (p.userId == room.creatorId ||
+            room.settings.adminIds.contains(p.userId)) {
           continue;
         }
 
@@ -2003,7 +2219,10 @@ class AudioRoomsRepository {
           isMessagingBlocked: banAll,
         );
 
-        final pDoc = _roomsCollection.doc(roomId).collection('participants').doc(p.userId);
+        final pDoc = _roomsCollection
+            .doc(roomId)
+            .collection('participants')
+            .doc(p.userId);
         batch.set(
           pDoc,
           {
@@ -2019,7 +2238,8 @@ class AudioRoomsRepository {
       });
 
       await batch.commit();
-      debugPrint('💬 [RoomManagement] All comments ${banAll ? 'banned' : 'unbanned'} successfully');
+      debugPrint(
+          '💬 [RoomManagement] All comments ${banAll ? 'banned' : 'unbanned'} successfully');
     } catch (e) {
       debugPrint('Error toggling all comments ban: $e');
       rethrow;
@@ -2040,9 +2260,12 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Verify host permissions
-      if (!room.isCreator(hostId)) {
-        throw Exception('Only hosts can manage seats');
+      // Verify host/admin permissions
+      final isHostOrAdmin = room.isCreator(hostId) ||
+          room.settings.adminIds.contains(hostId) ||
+          room.participants.any((p) => p.userId == hostId && p.isHost);
+      if (!isHostOrAdmin) {
+        throw Exception('Only hosts/admins can manage seats');
       }
 
       // Update seat configuration
@@ -2115,7 +2338,9 @@ class AudioRoomsRepository {
       }
 
       // Special handling for admin/creator moving to occupied seat
-      final isAdmin = room.isCreator(userId);
+      final isAdmin = room.isCreator(userId) ||
+          room.settings.adminIds.contains(userId) ||
+          room.participants.any((p) => p.userId == userId && p.isHost);
       final isMovingToOccupiedSeat = toSeat >= 0 && room.isSeatOccupied(toSeat);
 
       if (isAdmin && isMovingToOccupiedSeat) {
@@ -2361,9 +2586,12 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Verify host permissions
-      if (!room.isCreator(hostId)) {
-        throw Exception('Only hosts can remove participants from seats');
+      // Verify host/admin permissions
+      final isHostOrAdmin = room.isCreator(hostId) ||
+          room.settings.adminIds.contains(hostId) ||
+          room.participants.any((p) => p.userId == hostId && p.isHost);
+      if (!isHostOrAdmin) {
+        throw Exception('Only hosts/admins can remove participants from seats');
       }
 
       // Update participant to remove seat number and make them a listener
@@ -2430,9 +2658,12 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Verify host permissions
-      if (!room.isCreator(hostId)) {
-        throw Exception('Only hosts can kick participants');
+      // Verify host/admin permissions
+      final isHostOrAdmin = room.isCreator(hostId) ||
+          room.settings.adminIds.contains(hostId) ||
+          room.participants.any((p) => p.userId == hostId && p.isHost);
+      if (!isHostOrAdmin) {
+        throw Exception('Only hosts/admins can kick participants');
       }
 
       // First, mute the participant before removing them from the room
@@ -2498,9 +2729,12 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Verify host permissions
-      if (!room.isCreator(hostId)) {
-        throw Exception('Only hosts can block participants');
+      // Verify host/admin permissions
+      final isHostOrAdmin = room.isCreator(hostId) ||
+          room.settings.adminIds.contains(hostId) ||
+          room.participants.any((p) => p.userId == hostId && p.isHost);
+      if (!isHostOrAdmin) {
+        throw Exception('Only hosts/admins can block participants');
       }
 
       // Get participant info before removing
@@ -2563,9 +2797,12 @@ class AudioRoomsRepository {
 
       final room = AudioRoomV2.fromFirestore(roomDoc);
 
-      // Verify host permissions
-      if (!room.isCreator(hostId)) {
-        throw Exception('Only hosts can unblock participants');
+      // Verify host/admin permissions
+      final isHostOrAdmin = room.isCreator(hostId) ||
+          room.settings.adminIds.contains(hostId) ||
+          room.participants.any((p) => p.userId == hostId && p.isHost);
+      if (!isHostOrAdmin) {
+        throw Exception('Only hosts/admins can unblock participants');
       }
 
       // Remove from blocked users list
@@ -2654,8 +2891,10 @@ class AudioRoomsRepository {
 
       final userData = userDoc.data();
       final customization = userData?['customization'];
-      final selectedEntryEffectId = customization?['selectedEntryEffectId'] as String?;
-      final selectedRoomEntryId = customization?['selectedRoomEntryId'] as String?;
+      final selectedEntryEffectId =
+          customization?['selectedEntryEffectId'] as String?;
+      final selectedRoomEntryId =
+          customization?['selectedRoomEntryId'] as String?;
 
       final entranceService = EntranceEffectService();
 
@@ -2719,7 +2958,8 @@ class AudioRoomsRepository {
       }
 
       // 3. Fallback: Default Room Entry (for all random users)
-      debugPrint('🎬 [EntranceEffect] Triggering default Room Entry for $userName');
+      debugPrint(
+          '🎬 [EntranceEffect] Triggering default Room Entry for $userName');
       await entranceService.triggerEntranceEffect(
         roomId: roomId,
         userId: userId,
@@ -2741,7 +2981,8 @@ class AudioRoomsRepository {
       await _roomsCollection.doc(roomId).update({
         'joinRequests': FieldValue.arrayUnion([userId]),
       });
-      debugPrint('📩 [JoinRequest] User $userId sent join request to room $roomId');
+      debugPrint(
+          '📩 [JoinRequest] User $userId sent join request to room $roomId');
     } catch (e) {
       debugPrint('Error sending join request: $e');
       throw Exception('Failed to send join request: $e');
@@ -2754,7 +2995,8 @@ class AudioRoomsRepository {
       await _roomsCollection.doc(roomId).update({
         'joinRequests': FieldValue.arrayRemove([userId]),
       });
-      debugPrint('✅ [JoinRequest] User $userId join request accepted for room $roomId');
+      debugPrint(
+          '✅ [JoinRequest] User $userId join request accepted for room $roomId');
     } catch (e) {
       debugPrint('Error accepting join request: $e');
       throw Exception('Failed to accept join request: $e');
@@ -2767,7 +3009,8 @@ class AudioRoomsRepository {
       await _roomsCollection.doc(roomId).update({
         'joinRequests': FieldValue.arrayRemove([userId]),
       });
-      debugPrint('❌ [JoinRequest] User $userId join request rejected for room $roomId');
+      debugPrint(
+          '❌ [JoinRequest] User $userId join request rejected for room $roomId');
     } catch (e) {
       debugPrint('Error rejecting join request: $e');
       throw Exception('Failed to reject join request: $e');

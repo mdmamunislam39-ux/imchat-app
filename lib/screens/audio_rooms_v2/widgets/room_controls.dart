@@ -24,6 +24,8 @@ import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
+import 'package:chat_messenger/services/global_settings_service.dart';
+import 'package:chat_messenger/components/animated_svip_name.dart';
 
 /// Bottom control buttons for audio room with live chat
 class RoomControls extends StatefulWidget {
@@ -61,6 +63,10 @@ class RoomControls extends StatefulWidget {
   final VoidCallback? onGrabTopSeat;
   final bool isGameActive;
   final bool isPKActive;
+  final bool isProMode;
+  final String selectedChatTab;
+  final String? announcement;
+  final VoidCallback? onEditAnnouncement;
 
   const RoomControls({
     super.key,
@@ -98,18 +104,44 @@ class RoomControls extends StatefulWidget {
     this.onGrabTopSeat,
     this.isGameActive = false,
     this.isPKActive = false,
+    this.isProMode = false,
+    this.selectedChatTab = 'all',
+    this.announcement,
+    this.onEditAnnouncement,
   });
 
   @override
-  State<RoomControls> createState() => _RoomControlsState();
+  State<RoomControls> createState() => RoomControlsState();
 }
 
-class _RoomControlsState extends State<RoomControls> {
+class RoomControlsState extends State<RoomControls> {
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _textFieldFocusNode = FocusNode();
   bool _chatHasText = false;
   EmojiChatMessage? _replyingToMessage;
+
+  List<EmojiChatMessage> get _filteredMessages {
+    final activeTab = widget.selectedChatTab;
+    if (activeTab == 'all' || activeTab.isEmpty) {
+      return widget.chatMessages;
+    }
+    if (activeTab == 'chat') {
+      return widget.chatMessages.where((m) =>
+        m.messageType == EmojiMessageType.text ||
+        m.messageType == EmojiMessageType.emoji ||
+        m.messageType == EmojiMessageType.mixed,
+      ).toList();
+    }
+    if (activeTab == 'gifts') {
+      return widget.chatMessages.where((m) =>
+        m.messageType == EmojiMessageType.gift ||
+        (m.giftImageUrl != null && m.giftImageUrl!.isNotEmpty) ||
+        (m.giftCredits != null && m.giftCredits! > 0),
+      ).toList();
+    }
+    return widget.chatMessages;
+  }
 
   // Realtime User data cache to fetch Verified checkmark efficiently
   final Map<String, User> _userCache = {};
@@ -144,6 +176,10 @@ class _RoomControlsState extends State<RoomControls> {
     return _ChatUserData(user, sendingUrl, receivingUrl, nameplateUrl);
   }
 
+  void mentionUser(String username) {
+    _handleTapToMention(username);
+  }
+
   void _handleTapToMention(String username) {
     setState(() {
       final currentText = _chatController.text;
@@ -152,6 +188,9 @@ class _RoomControlsState extends State<RoomControls> {
       } else {
         _chatController.text = '$currentText @$username ';
       }
+      _chatController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _chatController.text.length),
+      );
     });
     _textFieldFocusNode.requestFocus();
   }
@@ -435,21 +474,37 @@ class _RoomControlsState extends State<RoomControls> {
   @override
   Widget build(BuildContext context) {
     int seatCount = widget.totalSeats;
-    double listMaxHeight = Get.height * 0.42; // default
+    double listMaxHeight;
 
+    // Filter tabs are pinned below seats.
+    // Pro Mode has gift diamond badges under seats which add extra vertical height.
+    // Adjust chat area height so it nicely reaches right up below the All / Chat / Gifts bar in all modes.
     if (widget.isGameActive) {
-      // When Carrom, Ludo, YouTube or any game is active, restrict chat box height strictly below the bottom seat row
-      listMaxHeight = 135.0;
+      listMaxHeight = 150.0;
     } else if (widget.isPKActive) {
-      // When PK Battle is active, allow chat box messages to reach up to below PK progress bar (marked by user)
-      listMaxHeight = Get.height * 0.40;
-    } else if (seatCount == 15 || seatCount == 12 || seatCount == 9) {
-      listMaxHeight = Get.height * 0.42;
-    } else if (seatCount == 10 || seatCount == 5) {
-      listMaxHeight = Get.height * 0.47;
-    } else if (seatCount == 20) {
-      listMaxHeight = Get.height * 0.30;
+      listMaxHeight = Get.height * 0.33;
+    } else if (seatCount <= 5) {
+      listMaxHeight = Get.height * (widget.isProMode ? 0.51 : 0.55);
+    } else if (seatCount == 10) {
+      listMaxHeight = Get.height * (widget.isProMode ? 0.41 : 0.45);
+    } else if (seatCount == 9 || seatCount == 12 || seatCount == 15) {
+      // 3-row modes: Lite (9), Party (12), Multi-Mic (15)
+      listMaxHeight = Get.height * (widget.isProMode ? 0.33 : 0.38);
+    } else if (seatCount >= 20) {
+      // 4-row mode: 20 seats
+      listMaxHeight = Get.height * (widget.isProMode ? 0.23 : 0.28);
+    } else {
+      listMaxHeight = Get.height * (widget.isProMode ? 0.33 : 0.38);
     }
+
+    final bool showAnnouncement = (widget.announcement != null &&
+            widget.announcement!.trim().isNotEmpty) ||
+        widget.isHost ||
+        (widget.adminIds?.contains(widget.currentUserId) ?? false);
+
+    final int headerCount = 1 + (showAnnouncement ? 1 : 0);
+    final messagesToShow = _filteredMessages;
+    final int totalChatItems = messagesToShow.length + headerCount;
 
     return GestureDetector(
       onTap: () {},
@@ -459,14 +514,15 @@ class _RoomControlsState extends State<RoomControls> {
           Container(
             padding: EdgeInsets.fromLTRB(20, 16, 20, _chatHasText ? 0 : 16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Chat messages list (above input) - flexible height
-                if (widget.chatMessages.isNotEmpty && !_chatHasText)
+                // Chat messages list (above input) - flexible height with scrollable rules & announcement card
+                if (totalChatItems > 0 && !_chatHasText)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Container(
                       width:
-                          Get.width * 0.75, // Restrict width to 75% of screen
+                          Get.width * 0.78, // Restrict width to 78% of screen
                       margin: const EdgeInsets.only(bottom: 8),
                       constraints: BoxConstraints(
                         maxHeight: listMaxHeight, // Dynamic based on seat count
@@ -486,7 +542,7 @@ class _RoomControlsState extends State<RoomControls> {
                               ],
                               stops: [
                                 0.0,
-                                0.20,
+                                0.15,
                               ],
                             ).createShader(bounds);
                           },
@@ -496,9 +552,16 @@ class _RoomControlsState extends State<RoomControls> {
                                 _scrollController, // Add scroll controller
                             shrinkWrap: true, // Allow flexible height
                             reverse: false,
-                            itemCount: widget.chatMessages.length,
+                            itemCount: totalChatItems,
                             itemBuilder: (context, index) {
-                              final message = widget.chatMessages[index];
+                              if (index == 0) {
+                                return _buildProModeRulesCard();
+                              }
+                              if (showAnnouncement && index == 1) {
+                                return _buildAnnouncementCard();
+                              }
+                              final messageIndex = index - headerCount;
+                              final message = messagesToShow[messageIndex];
                               return _buildChatMessage(message);
                             },
                           ),
@@ -678,10 +741,10 @@ class _RoomControlsState extends State<RoomControls> {
                             child: Container(
                               height: 40,
                               decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.3),
+                                color: const Color(0xE61C1430),
                                 borderRadius: BorderRadius.circular(24),
                                 border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.15),
+                                  color: Colors.white.withValues(alpha: 0.22),
                                   width: 1.0,
                                 ),
                               ),
@@ -692,16 +755,18 @@ class _RoomControlsState extends State<RoomControls> {
                                     child: TextField(
                                       controller: _chatController,
                                       focusNode: _textFieldFocusNode,
+                                      cursorColor: const Color(0xFF00E5FF),
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 14,
+                                        fontWeight: FontWeight.w500,
                                         fontFamily: 'Inter',
                                       ),
                                       decoration: InputDecoration(
                                         hintText: 'Say something...',
                                         hintStyle: TextStyle(
                                           color: Colors.white
-                                              .withValues(alpha: 0.5),
+                                              .withValues(alpha: 0.55),
                                           fontSize: 13,
                                           fontFamily: 'Inter',
                                         ),
@@ -1183,6 +1248,16 @@ class _RoomControlsState extends State<RoomControls> {
                           final String? receivingUrl = chatUserData?.receivingUrl;
                           final String? nameplateUrl = chatUserData?.nameplateUrl;
 
+                          final bool isOwner = widget.creatorId != null &&
+                              widget.creatorId!.isNotEmpty &&
+                              chatMessage.userId == widget.creatorId;
+                          final bool isAdmin = !isOwner &&
+                              ((widget.adminIds != null &&
+                                      widget.adminIds!.any((id) =>
+                                          id.toString() == chatMessage.userId)) ||
+                                  widget.participants.any((p) =>
+                                      p.userId == chatMessage.userId && p.isHost));
+
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1190,6 +1265,21 @@ class _RoomControlsState extends State<RoomControls> {
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
+                                  if (isOwner) ...[
+                                    const Icon(
+                                      Icons.person,
+                                      color: Color(0xFFFFD700), // Gold icon for Room Owner
+                                      size: 15.5,
+                                    ),
+                                    const SizedBox(width: 3.5),
+                                  ] else if (isAdmin) ...[
+                                    const Icon(
+                                      Icons.person,
+                                      color: Color(0xFF2196F3), // Blue icon for Room Admin
+                                      size: 15.5,
+                                    ),
+                                    const SizedBox(width: 3.5),
+                                  ],
                                   GestureDetector(
                                     onTap: () {
                                       if (widget.onMessageTap != null) {
@@ -1205,16 +1295,26 @@ class _RoomControlsState extends State<RoomControls> {
                                     },
                                     onLongPress: () => _handleTapToMention(
                                         chatMessage.username),
-                                    child: Text(
-                                      chatMessage.username,
-                                      style: const TextStyle(
-                                        color: Colors
-                                            .white, // Strictly white usernames
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        fontFamily: 'Inter',
-                                      ),
-                                    ),
+                                    child: user != null 
+                                        ? AnimatedSvipName.fromUser(
+                                            user: user,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              fontFamily: 'Inter',
+                                            ),
+                                          )
+                                        : AnimatedSvipName.fromUserId(
+                                            userId: chatMessage.userId,
+                                            defaultName: chatMessage.username,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              fontFamily: 'Inter',
+                                            ),
+                                          ),
                                   ),
                                   if (isVerified) ...[
                                     const SizedBox(width: 4),
@@ -1648,6 +1748,139 @@ class _RoomControlsState extends State<RoomControls> {
               ),
             );
           }),
+        ],
+      ),
+    );
+  }
+
+  /// Build stylized Rules card for Pro Mode (scrolls with chat)
+  Widget _buildProModeRulesCard() {
+    String rulesText =
+        "There are a lot of very interested friends here. Let's chat together.";
+    if (Get.isRegistered<GlobalSettingsService>()) {
+      rulesText = Get.find<GlobalSettingsService>().audioRoomRules.value;
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xB3151026),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.12),
+          width: 0.8,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Rules',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            rulesText,
+            style: const TextStyle(
+              color: Color(0xFF00E5FF),
+              fontSize: 13,
+              height: 1.35,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Build stylized Room Announcement card (scrolls directly below Rules)
+  Widget _buildAnnouncementCard() {
+    final announcementText = widget.announcement ?? '';
+    final canEdit = widget.isHost ||
+        (widget.adminIds?.contains(widget.currentUserId) ?? false);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xB3151026),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.12),
+          width: 0.8,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.campaign_rounded,
+                color: Color(0xFF00E5FF),
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                'Announcement',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              if (canEdit)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onEditAnnouncement,
+                  child: const Padding(
+                    padding: EdgeInsets.all(2),
+                    child: Icon(
+                      Icons.edit_outlined,
+                      color: Colors.white70,
+                      size: 15,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            announcementText.isNotEmpty
+                ? announcementText
+                : 'Click to set room announcement...',
+            style: TextStyle(
+              color: announcementText.isNotEmpty
+                  ? Colors.white.withValues(alpha: 0.9)
+                  : Colors.white38,
+              fontSize: 12.5,
+              height: 1.3,
+            ),
+          ),
         ],
       ),
     );

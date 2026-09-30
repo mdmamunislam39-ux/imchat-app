@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/helpers/app_helper.dart';
 import 'package:chat_messenger/helpers/routes_helper.dart';
@@ -9,13 +11,10 @@ import 'package:chat_messenger/services/family_service.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
 import 'package:chat_messenger/helpers/nameplate_helper.dart';
 import 'package:chat_messenger/widgets/relationship_badge_widget.dart';
-import 'dart:async';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import 'package:get/get.dart';
 import 'gift_wall_page.dart';
 import 'badge_wall_page.dart';
@@ -32,9 +31,10 @@ import 'package:chat_messenger/components/rich_text_viewer.dart';
 import 'package:chat_messenger/screens/news_feed/post_media_viewer.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
-
+import 'package:chat_messenger/screens/audio_rooms_v2/audio_rooms_v2_integration.dart';
 import 'package:chat_messenger/tabs/profile/edit_profile_screen.dart';
 import 'package:chat_messenger/services/news_feed_service.dart';
+import 'package:chat_messenger/components/animated_svip_name.dart';
 
 class ProfilePageForRoom extends StatefulWidget {
   final String userID;
@@ -560,13 +560,11 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     final Map<String, Map<String, dynamic>> giftMap = {};
     final mergedDocs = <String, Map<String, dynamic>>{};
     for (final data in _activeGiftDocs) {
-      final id =
-          data['id'] as String? ?? '${data['giftId']}-${data['timestamp']}';
+      final id = data['id'] as String? ?? '${data['giftId']}-${data['timestamp']}';
       mergedDocs[id] = data;
     }
     for (final data in _archiveGiftDocs) {
-      final id =
-          data['id'] as String? ?? '${data['giftId']}-${data['timestamp']}';
+      final id = data['id'] as String? ?? '${data['giftId']}-${data['timestamp']}';
       mergedDocs[id] = data;
     }
     final allDocs = mergedDocs.values;
@@ -792,6 +790,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
 
             userRooms = allRooms
                 .map((r) => {
+                      'room': r,
+                      'id': r.id,
                       'imageUrl': r.imageUrl ?? r.creatorImageUrl,
                       'name': r.name,
                       'role': getRoleScore(r),
@@ -1767,11 +1767,12 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                         unselectedLabelColor: Colors.grey,
                         indicatorColor: Colors.tealAccent,
                         indicatorSize: TabBarIndicatorSize.label,
-                        tabs: const [
-                          Tab(text: "Profile"),
-                          Tab(text: "Moment"),
+                        tabs: [
+                          Tab(text: 'profile'.tr),
+                          Tab(text: 'moment'.tr),
                         ],
                       ),
+
                     ),
                   ),
                 ];
@@ -1923,17 +1924,24 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          Text(
-                            (_viewedUser?.fullname.isNotEmpty == true
-                                    ? _viewedUser!.fullname
-                                    : widget.userName)
-                                .formattedUsername,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          _viewedUser != null
+                              ? AnimatedSvipName.fromUser(
+                                  user: _viewedUser!,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                )
+                              : AnimatedSvipName.fromUserId(
+                                  userId: widget.userID,
+                                  defaultName: widget.userName,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                           if (_viewedUser?.isVerified == true) ...[
                             const SizedBox(width: 6),
                             const Icon(
@@ -2042,23 +2050,12 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                               await Future.delayed(const Duration(seconds: 2));
                               entry.remove();
                             },
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'ID:${searchId.isNotEmpty ? searchId : widget.userID}',
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.8),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                const SizedBox(width: 3),
-                                Icon(
-                                  Icons.copy_rounded,
-                                  size: 11,
-                                  color: Colors.white.withValues(alpha: 0.7),
-                                ),
-                              ],
+                            child: UserIdBadgeWidget(
+                              searchId: searchId.isNotEmpty
+                                  ? searchId
+                                  : widget.userID,
+                              showCopyIcon: true,
+                              copyIconColor: Colors.white70,
                             ),
                           ),
                           Text(
@@ -2129,10 +2126,80 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                 ),
               ],
             ),
-          ); // closes FlexibleSpaceBar
-        }, // closes builder
-      ), // closes LayoutBuilder
-    ); // closes SliverAppBar
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFindMeButton() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _firestore
+          .collection('audio_rooms_v2')
+          .where('isActive', isEqualTo: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        AudioRoomV2? activeRoom;
+        for (var doc in snapshot.data!.docs) {
+          try {
+            final r = AudioRoomV2.fromFirestore(doc);
+            if (r.isActive && r.isParticipant(widget.userID)) {
+              activeRoom = r;
+              break;
+            }
+          } catch (_) {}
+        }
+
+        if (activeRoom == null) {
+          return const SizedBox.shrink();
+        }
+
+        return GestureDetector(
+          onTap: () {
+            AudioRoomsV2Integration.navigateToRoom(activeRoom!, context);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFFF2A85), Color(0xFFFF7A45)],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFFF2A85).withValues(alpha: 0.35),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: const [
+                _FindMeEqualizer(),
+                SizedBox(width: 6),
+                Text(
+                  'Find Me',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildWhiteCardHeader() {
@@ -2159,44 +2226,67 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    _buildModernStatItem('Follow', followingCount.toString()),
-                    const SizedBox(width: 24),
-                    _buildModernStatItem('Fans', followerCount.toString()),
-                    const SizedBox(width: 24),
-                    _buildModernStatItem('Visitor', visitorCount.toString()),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  bio.isEmpty
-                      ? 'This user is a bit lazy and leaves nothing'
-                      : bio,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(Icons.access_time, size: 14, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text(
-                      memberSince != null
-                          ? 'Joined imChat : ${_formatDate(memberSince!)}'
-                          : 'Joined imChat : 0 days',
-                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              _buildModernStatItem(
+                                  'Follow'.tr, followingCount.toString()),
+                              const SizedBox(width: 18),
+                              _buildModernStatItem(
+                                  'Fans'.tr, followerCount.toString()),
+                              const SizedBox(width: 18),
+                              _buildModernStatItem(
+                                  'Visitor'.tr, visitorCount.toString()),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            bio.isEmpty
+                                ? 'default_bio_empty'.tr
+                                : bio,
+                            style: const TextStyle(
+                                color: Colors.grey, fontSize: 13),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              const Icon(Icons.access_time,
+                                  size: 14, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Text(
+                                memberSince != null
+                                    ? '${'joined_app'.tr} : ${_formatDate(memberSince!)}'
+                                    : '${'joined_app'.tr} : 0 ${'days'.tr}',
+                                style: const TextStyle(
+                                    color: Colors.grey, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 10),
+                    _buildFindMeButton(),
                   ],
                 ),
                 const SizedBox(height: 16),
                 Row(
                   children: [
-                    _buildModernBadge('Ring collection', '0', Colors.pinkAccent,
+                    _buildModernBadge('ring_collection'.tr, '0', Colors.pinkAccent,
                         Icons.favorite_border),
                     const SizedBox(width: 12),
-                    _buildModernBadge('Game Level', '20', Colors.blueAccent,
+                    _buildModernBadge('game_level'.tr, '20', Colors.blueAccent,
                         Icons.emoji_events),
                   ],
                 ),
+
                 const SizedBox(height: 10),
               ],
             ),
@@ -2254,10 +2344,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _buildSectionHeader('Family', trailing: 'Family Center >'),
+        _buildSectionHeader('Family'.tr, trailing: '${'family_center'.tr} >'),
         _buildFamilyCardPlaceholder(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Intimacy',
+        _buildSectionHeader('Intimacy'.tr,
             trailing: '${relationshipsList.length} >', onTapTrailing: () {
           Get.to(() => IntimacyListPage(
                 userID: widget.userID,
@@ -2268,7 +2358,7 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         }),
         _buildRelationshipsList(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Supporter',
+        _buildSectionHeader('Supporter'.tr,
             count: '${allSupporters.length}', // total unique supporters
             trailing: '>', onTapTrailing: () {
           Get.to(() => SupportersPage(
@@ -2280,16 +2370,16 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         _buildSupporterPlaceholder(),
         const SizedBox(height: 20),
         _buildSectionHeader(
-          'All Joined Room',
+          'All Joined Room'.tr,
           count: '${userRooms.length}',
           trailing: '${userRooms.length} >',
           icon: Icons.shield,
         ),
         _buildVoiceClubRoomsList(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Medal',
+        _buildSectionHeader('Medal'.tr,
             count: '${badgeItems.length}',
-            trailing: 'Badge Wall >', onTapTrailing: () {
+            trailing: '${'badge_wall'.tr} >', onTapTrailing: () {
           Get.to(() => BadgeWallPage(
               userID: widget.userID,
               userName: widget.userName,
@@ -2297,9 +2387,9 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         }),
         _buildBadgeList(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Decoration',
+        _buildSectionHeader('Decoration'.tr,
             count: '${decorationItems.length}',
-            trailing: 'Decoration Wall >', onTapTrailing: () {
+            trailing: '${'decoration_wall'.tr} >', onTapTrailing: () {
           Get.to(() => DecorationWallPage(
               userID: widget.userID,
               userName: widget.userName,
@@ -2307,9 +2397,9 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         }),
         _buildDecorationList(),
         const SizedBox(height: 20),
-        _buildSectionHeader('Gift',
+        _buildSectionHeader('Gift'.tr,
             count: '${receivedGifts.length}',
-            trailing: 'Gift Wall >', onTapTrailing: () async {
+            trailing: '${'gift_wall'.tr} >', onTapTrailing: () async {
           await Get.to(() => GiftWallPage(
               userId: widget.userID,
               userName: widget.userName,
@@ -2395,8 +2485,9 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      post.userName,
+                    AnimatedSvipName.fromUserId(
+                      userId: post.userId,
+                      defaultName: post.userName,
                       style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 15,
@@ -2834,96 +2925,105 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           final int participantCount = participants.length;
           final int role = room['role'] ?? 2; // 0=owner, 1=admin, 2=member
 
-          return Container(
-            width: 85,
-            margin: const EdgeInsets.only(right: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Container(
-                  width: 85,
-                  height: 85,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    color: Colors.blue.withValues(alpha: 0.1),
-                    image: imageUrl.isNotEmpty
-                        ? DecorationImage(
-                            image: NetworkImage(imageUrl),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
-                  ),
-                  child: Stack(
-                    children: [
-                      // User icon bottom left
-                      Positioned(
-                        bottom: 4,
-                        left: 4,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            role == 0
-                                ? Icons.workspace_premium
-                                : (role == 1 ? Icons.shield : Icons.person),
-                            size: 12,
-                            color: role == 0
-                                ? Colors.orangeAccent
-                                : (role == 1 ? Colors.blueAccent : Colors.grey),
+          final AudioRoomV2? roomObj = room['room'] as AudioRoomV2?;
+
+          return GestureDetector(
+            onTap: () {
+              if (roomObj != null) {
+                AudioRoomsV2Integration.navigateToRoom(roomObj, context);
+              }
+            },
+            child: Container(
+              width: 85,
+              margin: const EdgeInsets.only(right: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 85,
+                    height: 85,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.blue.withValues(alpha: 0.1),
+                      image: imageUrl.isNotEmpty
+                          ? DecorationImage(
+                              image: NetworkImage(imageUrl),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
+                    ),
+                    child: Stack(
+                      children: [
+                        // User icon bottom left
+                        Positioned(
+                          bottom: 4,
+                          left: 4,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              role == 0
+                                  ? Icons.workspace_premium
+                                  : (role == 1 ? Icons.shield : Icons.person),
+                              size: 12,
+                              color: role == 0
+                                  ? Colors.orangeAccent
+                                  : (role == 1 ? Colors.blueAccent : Colors.grey),
+                            ),
                           ),
                         ),
-                      ),
-                      // Count pill bottom right
-                      Positioned(
-                        bottom: 4,
-                        right: 4,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.person,
-                                size: 10,
-                                color: Colors.white,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '$participantCount',
-                                style: const TextStyle(
+                        // Count pill bottom right
+                        Positioned(
+                          bottom: 4,
+                          right: 4,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.person,
+                                  size: 10,
                                   color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Text(
+                                  '$participantCount',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.black87,
-                    fontWeight: FontWeight.w500,
+                  const SizedBox(height: 6),
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.black87,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -3909,5 +4009,71 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_SliverAppBarDelegate oldDelegate) {
     return false;
+  }
+}
+
+class _FindMeEqualizer extends StatefulWidget {
+  const _FindMeEqualizer();
+
+  @override
+  State<_FindMeEqualizer> createState() => _FindMeEqualizerState();
+}
+
+class _FindMeEqualizerState extends State<_FindMeEqualizer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final val = _controller.value;
+        final h1 = 5.0 + 8.0 * val;
+        final h2 = 13.0 - 8.0 * val;
+        final h3 = 6.0 + 7.0 * ((val + 0.5) % 1.0);
+
+        return SizedBox(
+          height: 14,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _buildBar(h1),
+              const SizedBox(width: 2.5),
+              _buildBar(h2),
+              const SizedBox(width: 2.5),
+              _buildBar(h3),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBar(double height) {
+    return Container(
+      width: 3.2,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
   }
 }

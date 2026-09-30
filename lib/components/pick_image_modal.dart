@@ -13,47 +13,66 @@ class PickImageModal extends StatelessWidget {
   static bool _isPickerActive = false;
 
   // Handle picked image
-  Future<File?> _pickAndCropImage(ImageSource source) async {
+  Future<File?> _pickAndCropImage(BuildContext context, ImageSource source) async {
     if (_isPickerActive) return null;
     _isPickerActive = true;
 
     try {
-      final XFile? pickedFile = await ImagePicker().pickImage(source: source);
-
-    if (pickedFile != null) {
-      // Set aspect ratio list
-      final aspectRatioList = [
-        isAvatar ? CropAspectRatioPreset.square : CropAspectRatioPreset.original
-      ];
-
-      // Crop the image
-      CroppedFile? croppedFile = await ImageCropper().cropImage(
-        sourcePath: pickedFile.path,
-        maxWidth: 640,
-        maxHeight: 960,
-        compressQuality: 100,
-        uiSettings: [
-          AndroidUiSettings(
-            toolbarTitle: 'crop_image'.tr,
-            toolbarColor: primaryColor,
-            toolbarWidgetColor: Colors.white,
-            initAspectRatio: CropAspectRatioPreset.original,
-            lockAspectRatio: false,
-            aspectRatioPresets: aspectRatioList,
-          ),
-          IOSUiSettings(
-            title: 'crop_image'.tr,
-            aspectRatioPresets: aspectRatioList,
-          ),
-        ],
+      final XFile? pickedFile = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 1080,
+        maxHeight: 1080,
+        imageQuality: 80,
       );
 
-      if (croppedFile == null) return null;
+      if (pickedFile == null) return null;
 
-      return File(croppedFile.path);
-    }
+      try {
+        // Set aspect ratio list
+        final aspectRatioList = [
+          isAvatar ? CropAspectRatioPreset.square : CropAspectRatioPreset.original,
+          if (!isAvatar) ...[
+            CropAspectRatioPreset.ratio16x9,
+            CropAspectRatioPreset.ratio4x3,
+          ],
+        ];
 
-    return null;
+        // Crop the image
+        final CroppedFile? croppedFile = await ImageCropper().cropImage(
+          sourcePath: pickedFile.path,
+          maxWidth: 1080,
+          maxHeight: 1080,
+          compressQuality: 80,
+          uiSettings: [
+            AndroidUiSettings(
+              toolbarTitle: 'crop_image'.tr,
+              toolbarColor: primaryColor,
+              toolbarWidgetColor: Colors.white,
+              initAspectRatio: isAvatar ? CropAspectRatioPreset.square : CropAspectRatioPreset.original,
+              lockAspectRatio: isAvatar,
+              aspectRatioPresets: aspectRatioList,
+            ),
+            IOSUiSettings(
+              title: 'crop_image'.tr,
+              aspectRatioPresets: aspectRatioList,
+            ),
+          ],
+        );
+
+        if (croppedFile != null) {
+          return File(croppedFile.path);
+        }
+      } catch (cropError) {
+        debugPrint('ImageCropper fallback to original image: $cropError');
+        return File(pickedFile.path);
+      }
+
+      // For background images, if user skips cropping, keep original image
+      if (!isAvatar) {
+        return File(pickedFile.path);
+      }
+
+      return null;
     } catch (e) {
       debugPrint('Error picking image: $e');
       return null;
@@ -91,7 +110,7 @@ class PickImageModal extends StatelessWidget {
                 ),
                 IconButton(
                   icon: const Icon(Icons.close, color: greyColor),
-                  onPressed: () => Get.back(),
+                  onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
             ),
@@ -100,16 +119,20 @@ class PickImageModal extends StatelessWidget {
               leading: const Icon(IconlyLight.image),
               title: Text('gallery'.tr),
               onTap: () async {
-                File? croppedImage = await _pickAndCropImage(ImageSource.gallery);
-                Get.back(result: croppedImage);
+                final File? image = await _pickAndCropImage(context, ImageSource.gallery);
+                if (context.mounted) {
+                  Navigator.of(context).pop(image);
+                }
               },
             ),
             ListTile(
               leading: const Icon(IconlyLight.camera),
               title: Text('camera'.tr),
               onTap: () async {
-                File? croppedImage = await _pickAndCropImage(ImageSource.camera);
-                Get.back(result: croppedImage);
+                final File? image = await _pickAndCropImage(context, ImageSource.camera);
+                if (context.mounted) {
+                  Navigator.of(context).pop(image);
+                }
               },
             ),
           ],

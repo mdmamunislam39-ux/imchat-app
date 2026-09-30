@@ -60,7 +60,7 @@ class _StoreScreenState extends State<StoreScreen> {
         child: Scaffold(
           backgroundColor: const Color(0xFFF6F7FB),
           appBar: AppBar(
-            title: const Text('Mall'),
+            title: Text('mall'.tr),
             centerTitle: true,
             backgroundColor: Colors.white,
             elevation: 0,
@@ -93,7 +93,7 @@ class _StoreScreenState extends State<StoreScreen> {
                     Text(
                       '${user.diamonds}',
                       style: const TextStyle(
-                        color: Colors.pink,
+                         color: Colors.pink,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -110,17 +110,18 @@ class _StoreScreenState extends State<StoreScreen> {
               labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 16),
               isScrollable: true,
-              tabs: const [
-                Tab(text: 'Frames'),
-                Tab(text: 'Entry'),
-                Tab(text: 'Profile Skins'),
-                Tab(text: 'Room Themes'),
-                Tab(text: 'Mic Refills'),
-                Tab(text: 'Short Profiles'),
-                Tab(text: 'Room Entries'),
+              tabs: [
+                Tab(text: 'frames'.tr),
+                Tab(text: 'entry_effects'.tr),
+                Tab(text: 'profile_skins'.tr),
+                Tab(text: 'room_themes'.tr),
+                Tab(text: 'mic_refills'.tr),
+                Tab(text: 'short_profiles'.tr),
+                Tab(text: 'room_entries'.tr),
               ],
             ),
           ),
+
           body: TabBarView(
             children: [
               _StoreTab(
@@ -234,7 +235,25 @@ class _StoreTabState extends State<_StoreTab> {
   void _showLivePreview(BuildContext context, Map<String, dynamic> item, String type) {
     final name = item['name'] as String? ?? 'Unknown';
     final description = item['description'] as String? ?? '';
-    final fileUrl = (item['fileUrl'] ?? item['thumbnailUrl'] ?? item['imageUrl'] ?? item['image'] ?? '') as String;
+    final fileUrl = (item['fileUrl'] ??
+            item['animationUrl'] ??
+            item['frameUrl'] ??
+            item['frameMediaUrl'] ??
+            item['svgaUrl'] ??
+            item['assetUrl'] ??
+            item['mediaUrl'] ??
+            item['thumbnailUrl'] ??
+            item['imageUrl'] ??
+            item['image'] ??
+            '')
+        .toString();
+
+    final normalizedType = (item['type'] ?? item['category'] ?? type).toString().toLowerCase();
+    final bool isFrame = normalizedType == 'avatarframe' ||
+        normalizedType == 'frame' ||
+        normalizedType == 'frames' ||
+        normalizedType == 'avatar_frame';
+    final bool isMicRefill = normalizedType == 'micrefill' || normalizedType == 'mic_refill';
 
     // Parse validity prices if available
     final Map<String, dynamic>? validityPrices = item['validityPrices'] != null
@@ -346,10 +365,21 @@ class _StoreTabState extends State<_StoreTab> {
                                 ),
                               ),
                             ),
-                            if (type == 'avatarFrame' || type == 'frame' || type == 'micRefill')
+                            if (isFrame || isMicRefill)
                               Stack(
                                 alignment: Alignment.center,
                                 children: [
+                                  if (isMicRefill)
+                                    SizedBox(
+                                      width: 140,
+                                      height: 140,
+                                      child: UniversalAssetWidget(
+                                        key: ValueKey(fileUrl),
+                                        url: fileUrl,
+                                        fit: BoxFit.contain,
+                                        isAlphaVideo: true,
+                                      ),
+                                    ),
                                   Container(
                                     width: 70,
                                     height: 70,
@@ -361,19 +391,25 @@ class _StoreTabState extends State<_StoreTab> {
                                     child: CachedCircleAvatar(
                                       imageUrl: widget.currentUser.photoUrl,
                                       radius: 35,
+                                      userId: widget.currentUser.userId,
+                                      frameId: isMicRefill
+                                          ? widget.currentUser.customization?.selectedFrameId
+                                          : null,
+                                      showFrame: isMicRefill,
                                       isOnline: widget.currentUser.isOnline,
                                     ),
                                   ),
-                                  SizedBox(
-                                    width: type == 'micRefill' ? 190 : 105,
-                                    height: type == 'micRefill' ? 190 : 105,
-                                    child: UniversalAssetWidget(
-                                      key: ValueKey(fileUrl),
-                                      url: fileUrl,
-                                      fit: BoxFit.contain,
-                                      isAlphaVideo: false,
+                                  if (isFrame)
+                                    SizedBox(
+                                      width: 110,
+                                      height: 110,
+                                      child: UniversalAssetWidget(
+                                        key: ValueKey(fileUrl),
+                                        url: fileUrl,
+                                        fit: BoxFit.contain,
+                                        isAlphaVideo: true,
+                                      ),
                                     ),
-                                  ),
                                 ],
                               )
                             else if (type == 'backgroundTheme' || type == 'profileSkin' || type == 'roomTheme' || type == 'shortProfileTheme')
@@ -1188,10 +1224,17 @@ class _StoreTabState extends State<_StoreTab> {
 
     // Check multiple possible keys for the image
     String? imageUrl = (item['thumbnailUrl'] ??
-        item['fileUrl'] ??
-        item['imageUrl'] ??
-        item['image'] ??
-        item['icon']) as String?;
+            item['fileUrl'] ??
+            item['animationUrl'] ??
+            item['frameUrl'] ??
+            item['frameMediaUrl'] ??
+            item['svgaUrl'] ??
+            item['assetUrl'] ??
+            item['mediaUrl'] ??
+            item['imageUrl'] ??
+            item['image'] ??
+            item['icon'])
+        ?.toString();
 
     // Validate URL
     if (imageUrl != null && !imageUrl.startsWith('http')) {
@@ -1303,23 +1346,23 @@ class _StoreTabState extends State<_StoreTab> {
                               ? Stack(
                                   alignment: Alignment.center,
                                   children: [
-                                    Container(
-                                      width: 44,
-                                      height: 44,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFFFA42D).withValues(alpha: 0.85),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.mic, color: Colors.white, size: 22),
-                                    ),
                                     SizedBox(
-                                      width: 80,
-                                      height: 80,
+                                      width: 65,
+                                      height: 65,
                                       child: UniversalAssetWidget(
                                         url: imageUrl,
                                         fit: BoxFit.contain,
                                         isAlphaVideo: true,
                                       ),
+                                    ),
+                                    Container(
+                                      width: 40,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFFA42D).withValues(alpha: 0.85),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.mic, color: Colors.white, size: 20),
                                     ),
                                   ],
                                 )

@@ -277,6 +277,17 @@ class _ExploreTabContentState extends State<ExploreTabContent> {
                              creatorAvatar: roomV2.creatorImageUrl ?? '',
                              viewersCount: roomV2.participants.length,
                              onTap: () {
+                               if (roomV2.isUserBlocked(currentUser.userId)) {
+                                 Get.snackbar('Access Denied', 'You are blocked from entering this room.',
+                                     backgroundColor: Colors.red, colorText: Colors.white);
+                                 return;
+                               }
+                               if (roomV2.isUserKickedRecently(currentUser.userId)) {
+                                 Get.snackbar('Access Denied',
+                                     'You have been removed from this room and cannot join for 24 hours.',
+                                     backgroundColor: Colors.red, colorText: Colors.white);
+                                 return;
+                               }
                                 Get.to(() => AudioRoomScreen(
                                   room: roomV2,
                                   audioRoomsBloc: AudioRoomsBloc(repository: AudioRoomsRepository()),

@@ -56,4 +56,32 @@ class RankingHelper {
     final monday = currentMondayStart;
     return 'mon_${DateFormat('yyyy_MM_dd').format(monday)}';
   }
+
+  /// Gets Monday 00:00:00 of the previous week
+  static DateTime get previousMondayStart {
+    return currentMondayStart.subtract(const Duration(days: 7));
+  }
+
+  /// Gets the suffix for previous Monday to Monday week, e.g., 'mon_2026_07_20'
+  static String get previousMondayWeeklySuffix {
+    final monday = previousMondayStart;
+    return 'mon_${DateFormat('yyyy_MM_dd').format(monday)}';
+  }
+
+  /// Gets the start DateTime for the 10:00 PM (22:00) 24-hour cycle
+  static DateTime get daily22CycleStart {
+    final now = _getAppTime();
+    final today22 = DateTime(now.year, now.month, now.day, 22, 0, 0);
+    if (now.isBefore(today22)) {
+      return today22.subtract(const Duration(days: 1));
+    } else {
+      return today22;
+    }
+  }
+
+  /// Gets the unique suffix for the 10:00 PM (22:00) cycle, e.g., '22h_2026_09_20'
+  static String get daily22CycleSuffix {
+    final start = daily22CycleStart;
+    return '22h_${DateFormat('yyyy_MM_dd').format(start)}';
+  }
 }

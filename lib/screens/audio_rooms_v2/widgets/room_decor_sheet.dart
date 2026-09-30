@@ -105,6 +105,14 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
             'seatColorMode': SeatColorMode.golden,
           },
           {
+            'id': 'free_mode_cyberEmerald',
+            'name': 'Cyber Emerald Neon (Free)',
+            'type': 'seatDecor',
+            'isFreeMode': true,
+            'diamondPrice': 0,
+            'seatColorMode': SeatColorMode.cyberEmerald,
+          },
+          {
             'id': 'free_mode_purple',
             'name': 'Neon Purple & Gold (Free)',
             'type': 'seatDecor',
@@ -143,6 +151,8 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
           final nameLower = (item['name'] ?? '').toString().toLowerCase();
           if (id == 'free_mode_golden' || (scm != null && (scm.contains('golden') || scm.contains('sofa'))) || (nameLower.contains('golden sofa') && (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty))) {
             mode = SeatColorMode.golden;
+          } else if (id == 'free_mode_cyberEmerald' || (scm != null && (scm.contains('cyber') || scm.contains('emerald'))) || (nameLower.contains('cyber emerald') && (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty))) {
+            mode = SeatColorMode.cyberEmerald;
           } else if (id == 'free_mode_purple' || (scm != null && scm.contains('purple')) || (nameLower.contains('neon purple') && (item['fileUrl'] == null || item['fileUrl'].toString().trim().isEmpty))) {
             mode = SeatColorMode.purple;
           } else if (id == 'free_mode_dashedpink' || id == 'free_mode_dashedPink' || (scm != null && scm.contains('dashedpink'))) {
@@ -248,6 +258,8 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
             mode = SeatColorMode.dashedPink;
           } else if (l.contains('dashedorange')) {
             mode = SeatColorMode.dashedOrange;
+          } else if (l.contains('cyber') || l.contains('emerald')) {
+            mode = SeatColorMode.cyberEmerald;
           } else if (l.contains('purple')) {
             mode = SeatColorMode.purple;
           } else {
@@ -256,6 +268,10 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
         }
         final updatedSettings = widget.currentRoom.settings.copyWith(
           seatColorMode: mode,
+          isSeatAnimated: item['isAnimated'] == true || item['isAnimated'] == 'true',
+          seatAnimationType: item['animationType']?.toString() ?? 'rotatingRing',
+          seatAnimationColor: item['animationColor']?.toString() ?? '#00FFE0',
+          seatAnimationSpeed: (item['animationSpeed'] as num?)?.toDouble() ?? 1.0,
           clearSeatDecor: true,
         );
         widget.audioRoomsBloc.add(UpdateRoomSettings(
@@ -269,6 +285,10 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
           seatDecorUrl: item['fileUrl'],
           lockedSeatDecorUrl: item['lockedFileUrl'] ?? item['lockedSeatDecorUrl'] ?? item['fileUrl'],
           seatColorMode: SeatColorMode.original,
+          isSeatAnimated: item['isAnimated'] == true || item['isAnimated'] == 'true',
+          seatAnimationType: item['animationType']?.toString() ?? 'rotatingRing',
+          seatAnimationColor: item['animationColor']?.toString() ?? '#00FFE0',
+          seatAnimationSpeed: (item['animationSpeed'] as num?)?.toDouble() ?? 1.0,
         );
 
         widget.audioRoomsBloc.add(UpdateRoomSettings(
@@ -326,11 +346,26 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
                         color: Colors.black26,
                         border: Border.all(color: Colors.white10),
                       ),
-                      child: item['isFreeMode'] == true
+                      child: AnimatedSeatDecorWidget(
+                        isAnimated: item['isAnimated'] == true || item['isAnimated'] == 'true',
+                        animationType: item['animationType']?.toString() ?? 'rotatingRing',
+                        glowColor: (item['animationColor'] != null && item['animationColor'].toString().isNotEmpty)
+                            ? (item['animationColor'].toString().startsWith('#')
+                                ? Color(int.parse('0xFF' + item['animationColor'].toString().replaceAll('#', '')))
+                                : const Color(0xFF00FFE0))
+                            : const Color(0xFF00FFE0),
+                        animationSpeed: (item['animationSpeed'] as num?)?.toDouble() ?? 1.0,
+                        size: 46,
+                        child: item['isFreeMode'] == true
                           ? Container(
                               color: Colors.black45,
                               child: Center(
-                                child: (item['seatColorMode'] == SeatColorMode.purple || item['seatColorMode'] == 'purple')
+                                child: (item['seatColorMode'] == SeatColorMode.cyberEmerald || item['seatColorMode'] == 'cyberEmerald')
+                                  ? const CyberEmeraldDiamondOrbWidget(
+                                      size: 46,
+                                      child: GoldenSofaIcon(width: 24, height: 21, isNeonPurple: true),
+                                    )
+                                  : (item['seatColorMode'] == SeatColorMode.purple || item['seatColorMode'] == 'purple')
                                   ? const NeonPurpleGlassOrbWidget(
                                       size: 46,
                                       child: GoldenSofaIcon(width: 24, height: 21, isNeonPurple: true),
@@ -376,6 +411,7 @@ class _RoomDecorSheetState extends State<RoomDecorSheet>
                                 ),
                               ),
                             ),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Text(

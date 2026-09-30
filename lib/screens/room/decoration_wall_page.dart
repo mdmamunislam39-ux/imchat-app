@@ -67,6 +67,7 @@ class _DecorationWallPageState extends State<DecorationWallPage> {
   void initState() {
     super.initState();
     _items = List<Map<String, dynamic>>.from(widget.decorationItems);
+    _storeService.checkAndCleanupExpiredUserItems(widget.userID);
     _loadLive();
     _subscribeToRealtimeStoreItems();
     _realtimeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -81,6 +82,7 @@ class _DecorationWallPageState extends State<DecorationWallPage> {
         .where('userId', isEqualTo: widget.userID)
         .snapshots()
         .listen((snapshot) {
+      _storeService.checkAndCleanupExpiredUserItems(widget.userID);
       _loadLive();
     }, onError: (e) {
       debugPrint('Decoration wall live listen error: $e');
@@ -109,9 +111,16 @@ class _DecorationWallPageState extends State<DecorationWallPage> {
       final results = await Future.wait(futures);
 
       final List<Map<String, dynamic>> loaded = [];
+      final now = DateTime.now();
       for (final snapshot in results) {
         for (final doc in snapshot.docs) {
           final data = doc.data();
+          if (data['expiresAt'] != null && data['expiresAt'] is Timestamp) {
+            final expDate = (data['expiresAt'] as Timestamp).toDate();
+            if (expDate.year < 2090 && expDate.isBefore(now)) {
+              continue;
+            }
+          }
           final itemType = data['itemType'] as String? ?? '';
           final entry = <String, dynamic>{
             'id': doc.id,
@@ -167,11 +176,10 @@ class _DecorationWallPageState extends State<DecorationWallPage> {
         }
       }
       
-      final now = DateTime.now();
       final List<Map<String, dynamic>> uniqueLoaded = dedup.values.where((item) {
         final exp = item['expiresAt'] as Timestamp?;
         if (exp == null) return true;
-        return exp.toDate().isAfter(now);
+        return exp.toDate().year >= 2090 || exp.toDate().isAfter(now);
       }).toList();
 
       // Sort by starRating DESC, then assignedAt DESC

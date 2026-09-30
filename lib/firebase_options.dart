@@ -51,7 +51,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyB_GmpX9ttJ6LNxA964U7agaRKbRQVgIeQ',
-    appId: '1:518076067996:android:4e8f33f8ae2988d8a3fd59',
+    appId: '1:518076067996:android:f47bfd4e58dfce51a3fd59',
     messagingSenderId: '518076067996',
     projectId: 'imchat-84519',
     storageBucket: 'imchat-84519.appspot.com',

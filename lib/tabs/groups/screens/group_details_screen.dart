@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
@@ -335,7 +336,11 @@ class GroupDetailsScreen extends GetView<GroupController> {
                         title: Text(member.userId == currentUser.userId
                             ? 'you'.tr
                             : member.fullname),
-                        subtitle: Text(member.searchId.isNotEmpty ? 'ID: ${member.searchId}' : 'ID: ${member.userId}'),
+                        subtitle: UserIdBadgeWidget(
+                          searchId: member.searchId.isNotEmpty ? member.searchId : member.userId,
+                          badgeHeight: 13,
+                          textStyle: const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
                         trailing: Container(
                           margin: const EdgeInsets.only(top: 8),
                           child: Column(

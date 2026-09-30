@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: imchat_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: EHx2c2jOttpXLerl
+      POSTGRES_PASSWORD: qPINqtnTVOE9A3S3UCPwlqzPwVEVKI64
+      POSTGRES_DB: EkKsrDxUVOq09dkt
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+  backend:
+    build: .
+    container_name: imchat_backend
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      PORT: 3000
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DATABASE: EkKsrDxUVOq09dkt
+      PG_USER: EHx2c2jOttpXLerl
+      PG_PASSWORD: qPINqtnTVOE9A3S3UCPwlqzPwVEVKI64
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: your_livekit_secret_key
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

@@ -21,6 +21,7 @@ import 'package:chat_messenger/screens/news_feed/widgets/inline_video_player.dar
 import 'package:chat_messenger/screens/room/roomprofile_screen.dart';
 import 'package:chat_messenger/services/deep_link_service.dart';
 import 'package:chat_messenger/services/news_feed_service.dart';
+import 'package:chat_messenger/components/animated_svip_name.dart';
 
 class SinglePostScreen extends StatefulWidget {
   final String postId;
@@ -335,8 +336,9 @@ class _SinglePostScreenState extends State<SinglePostScreen> {
                                       children: [
                                         Row(
                                           children: [
-                                            Text(
-                                              post.userName,
+                                            AnimatedSvipName.fromUserId(
+                                              userId: post.userId,
+                                              defaultName: post.userName,
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
                                                 fontSize: 15,
@@ -563,8 +565,9 @@ class _SinglePostScreenState extends State<SinglePostScreen> {
                                             child: Column(
                                               crossAxisAlignment: CrossAxisAlignment.start,
                                               children: [
-                                                Text(
-                                                  comment.userName,
+                                                AnimatedSvipName.fromUserId(
+                                                  userId: comment.userId,
+                                                  defaultName: comment.userName,
                                                   style: TextStyle(
                                                     fontWeight: FontWeight.bold,
                                                     fontSize: 13,

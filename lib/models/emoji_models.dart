@@ -167,6 +167,8 @@ class EmojiChatMessage extends Equatable {
       timestamp = json['timestamp'] as DateTime;
     } else if (json['timestamp'] is int) {
       timestamp = DateTime.fromMillisecondsSinceEpoch(json['timestamp']);
+    } else if (json['timestamp'] is String) {
+      timestamp = DateTime.tryParse(json['timestamp']) ?? DateTime.now();
     } else {
       timestamp = DateTime.now(); // Fallback
     }

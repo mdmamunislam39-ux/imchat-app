@@ -263,22 +263,21 @@ class TopExposureService extends GetxController {
     int? giftShowingTime,
   }) async {
     // Qualification rule:
-    // 1. Gift ID is explicitly listed in specificGiftIds OR
-    // 2. Total diamond value >= minDiamonds threshold
-    final bool isSpecificGift = specificGiftIds.contains(giftId);
-    final bool meetsDiamondRequirement = totalDiamonds >= minDiamonds.value;
-
-    if (!isSpecificGift && !meetsDiamondRequirement) {
-      return false;
-    }
-
-    final durationSec = getDurationForGift(
+    // ONLY qualify and trigger if this gift and quantity matches an active rule configured in Admin Panel!
+    final matchedRule = GrabTheTopService.instance.findMatchingRule(
       giftId: giftId,
-      totalDiamonds: totalDiamonds,
-      giftShowingTime: giftShowingTime,
       giftName: giftName,
       quantity: quantity,
     );
+
+    if (matchedRule == null) {
+      debugPrint('[TopExposureService] Gift "$giftName" (ID: $giftId, Qty: $quantity) does not match any active Grab The Top rule. Skipping.');
+      return false;
+    }
+
+    final durationSec = matchedRule.showingTimeSeconds > 0
+        ? matchedRule.showingTimeSeconds
+        : (giftShowingTime != null && giftShowingTime > 0 ? giftShowingTime : defaultDurationSeconds.value);
     final now = DateTime.now();
     final expiresAt = now.add(Duration(seconds: durationSec));
     final exposureId = 'exp_${now.millisecondsSinceEpoch}';

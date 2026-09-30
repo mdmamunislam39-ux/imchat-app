@@ -1,3 +1,4 @@
+import 'package:chat_messenger/widgets/user_id_badge_widget.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
@@ -227,11 +228,12 @@ class NumberSearchScreen extends StatelessWidget {
                       ),
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          user.searchId.isNotEmpty
-                              ? 'ID: ${user.searchId}'
-                              : 'ID: ${user.userId}',
-                          style: TextStyle(
+                        child: UserIdBadgeWidget(
+                          searchId: user.searchId.isNotEmpty
+                              ? user.searchId
+                              : user.userId,
+                          badgeHeight: 14,
+                          textStyle: TextStyle(
                             color: Colors.grey[600],
                             fontSize: 13,
                           ),

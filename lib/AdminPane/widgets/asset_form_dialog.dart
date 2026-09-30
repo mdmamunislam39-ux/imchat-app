@@ -575,9 +575,18 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
 
   Widget _buildPreviewArea() {
     final bool hasLocalAnim = _animationFile != null;
-    final bool hasRemoteAnim = widget.asset != null &&
-        widget.asset!['fileUrl'] != null &&
-        (widget.asset!['fileUrl'] as String).isNotEmpty;
+    final String? remoteUrl = widget.asset != null
+        ? (widget.asset!['fileUrl'] ??
+                widget.asset!['animationUrl'] ??
+                widget.asset!['frameUrl'] ??
+                widget.asset!['frameMediaUrl'] ??
+                widget.asset!['svgaUrl'] ??
+                widget.asset!['imageUrl'] ??
+                widget.asset!['thumbnailUrl'] ??
+                '')
+            .toString()
+        : null;
+    final bool hasRemoteAnim = remoteUrl != null && remoteUrl.isNotEmpty;
 
     return Container(
       height: 180,
@@ -606,7 +615,7 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
                 padding: const EdgeInsets.all(12.0),
                 child: UniversalAssetWidget(
                   file: _animationFile,
-                  url: _animationFile == null ? widget.asset!['fileUrl'] : null,
+                  url: _animationFile == null ? remoteUrl : null,
                   fit: BoxFit.contain,
                   isAlphaVideo: true,
                 ),

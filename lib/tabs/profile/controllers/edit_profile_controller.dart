@@ -26,20 +26,24 @@ class EditProfileController extends GetxController {
 
   @override
   void onInit() {
-    _loadInitialData();
+    loadInitialData();
     super.onInit();
   }
 
   @override
-  void dispose() {
+  void onClose() {
     nameController.dispose();
     bioController.dispose();
-    super.dispose();
+    super.onClose();
   }
 
-  void _loadInitialData() {
+  void loadInitialData() {
     final User currentUser = AuthController.instance.currentUser;
     
+    photoFile.value = null;
+    newBackgroundFiles.clear();
+    retainedBackgroundUrls.clear();
+
     nameController.text = currentUser.fullname;
     name.value = currentUser.fullname;
     bioController.text = currentUser.bio;
@@ -57,11 +61,12 @@ class EditProfileController extends GetxController {
   }
 
   Future<void> updateAccount() async {
+    if (isLoading.value) return;
     try {
       isLoading.value = true;
 
-      // Update user account with an overall timeout to prevent hanging forever
-      final result = await Future.microtask(() => UserApi.updateAccount(
+      // Update user account
+      final result = await UserApi.updateAccount(
         photoFile: photoFile.value,
         newBackgroundFiles: newBackgroundFiles.toList(),
         retainedBackgroundUrls: retainedBackgroundUrls.toList(),
@@ -70,14 +75,15 @@ class EditProfileController extends GetxController {
         gender: gender.value,
         birthday: birthday.value,
         country: country.value,
-      )).timeout(const Duration(seconds: 20));
+      );
 
       // Check result
       if (result == true) {
         if (Get.isDialogOpen ?? false) {
-           Get.back();
+          Get.back();
         }
-        Get.back(); // close the screen
+        Get.back(); // close the edit profile screen
+
         // Show success message
         DialogHelper.showSnackbarMessage(
             SnackMsgType.success, 'account_updated_successfully'.tr);

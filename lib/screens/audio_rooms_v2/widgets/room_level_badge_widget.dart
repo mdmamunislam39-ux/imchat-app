@@ -88,19 +88,35 @@ class _RoomLevelBadgeWidgetState extends State<RoomLevelBadgeWidget> {
   
   Widget _buildFallbackBadge() {
     final level = AudioRoomV2.calculateRoomLevel(widget.totalRevenue, _cachedRoomLevelConfig);
+    final double fontSize = (widget.height * 0.38).clamp(9.0, 13.0);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      padding: EdgeInsets.symmetric(
+        horizontal: (widget.height * 0.22).clamp(4.0, 8.0),
+        vertical: (widget.height * 0.08).clamp(1.5, 3.5),
+      ),
       decoration: BoxDecoration(
-        color: Colors.blue.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: Colors.white24, width: 0.5),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF29B6F6), Color(0xFF0288D1)],
+        ),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 0.8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
       child: Text(
         'Lv.$level',
-        style: const TextStyle(
+        style: TextStyle(
           color: Colors.white,
-          fontSize: 8,
+          fontSize: fontSize,
           fontWeight: FontWeight.bold,
+          shadows: const [
+            Shadow(color: Colors.black26, blurRadius: 1, offset: Offset(0, 0.5)),
+          ],
         ),
       ),
     );

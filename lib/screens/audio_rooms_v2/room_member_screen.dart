@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:chat_messenger/api/user_api.dart';
+import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/services/premium_room_service.dart';
@@ -328,6 +329,7 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                                 _buildRoomHeaderCard(
                                   roomName: roomName,
                                   roomImageUrl: roomImageUrl,
+                                  creatorId: creatorId,
                                   creatorName: creatorName,
                                   roomLevel: roomLevel,
                                   progress: progress,
@@ -425,12 +427,30 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                                         orElse: () => null,
                                       ) as Map<String, dynamic>?;
 
-                                      return _buildMemberListItem(
+                                      return _MemberListItemTile(
+                                        key: ValueKey('member_$memberUserId'),
                                         memberUserId: memberUserId,
                                         activeParticipant: activeParticipant,
                                         creatorId: creatorId,
                                         joinedUserIds: joinedUserIds,
                                         roomData: roomData,
+                                        currentUserId: widget.currentUserId,
+                                        onShowAdminOptions: _showAdminOptionsBottomSheet,
+                                        onNavigateToProfile: ({
+                                          required String memberUserId,
+                                          required String fullname,
+                                          required String userImageUrl,
+                                          required bool isOnline,
+                                          required DateTime? lastActive,
+                                        }) {
+                                          _navigateToProfile(
+                                            memberUserId: memberUserId,
+                                            fullname: fullname,
+                                            userImageUrl: userImageUrl,
+                                            isOnline: isOnline,
+                                            lastActive: lastActive,
+                                          );
+                                        },
                                       );
                                     },
                                   ),
@@ -507,6 +527,7 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
   Widget _buildRoomHeaderCard({
     required String roomName,
     required String? roomImageUrl,
+    required String creatorId,
     required String creatorName,
     required int roomLevel,
     required double progress,
@@ -646,13 +667,22 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                           size: 14,
                         ),
                         const SizedBox(width: 4),
-                        Text(
-                          'Host: $creatorName',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13,
-                            fontFamily: 'Inter',
-                          ),
+                        FutureBuilder<User?>(
+                          future: creatorId.isNotEmpty ? UserApi.getUser(creatorId) : null,
+                          initialData: creatorId.isNotEmpty ? UserApi.getCachedUser(creatorId) : null,
+                          builder: (context, userSnap) {
+                            final String displayName = (userSnap.data?.fullname.trim().isNotEmpty == true)
+                                ? userSnap.data!.fullname.trim()
+                                : creatorName;
+                            return Text(
+                              'Host: $displayName',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                                fontFamily: 'Inter',
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -886,266 +916,9 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
     );
   }
 
-  Widget _buildMemberListItem({
-    required String memberUserId,
-    required Map<String, dynamic>? activeParticipant,
-    required String creatorId,
-    required List<dynamic> joinedUserIds,
-    required Map<String, dynamic> roomData,
-  }) {
-    final Map<String, dynamic> settings = roomData['settings'] as Map<String, dynamic>? ?? {};
-    final List<dynamic> adminIds = settings['adminIds'] as List<dynamic>? ?? [];
-    final List<dynamic> participantsData = roomData['participants'] as List<dynamic>? ?? [];
 
-    // Admin checking persistent settings first
-    final bool pIsHost = adminIds.contains(memberUserId) || (activeParticipant?['isHost'] ?? false);
-    final bool pIsSpeaker = activeParticipant?['isSpeaker'] ?? false;
-    final bool isRoomOwner = memberUserId == creatorId;
-    final bool isMemberOfClub = joinedUserIds.contains(memberUserId);
-    final bool isOnlineInsideRoom = activeParticipant != null;
 
-    final Map<String, dynamic> membersLastActiveMap = roomData['membersLastActive'] as Map<String, dynamic>? ?? {};
-    DateTime? lastActiveTime;
-    if (membersLastActiveMap.containsKey(memberUserId)) {
-      final dynamic val = membersLastActiveMap[memberUserId];
-      if (val is Timestamp) {
-        lastActiveTime = val.toDate();
-      } else if (val is int) {
-        lastActiveTime = DateTime.fromMillisecondsSinceEpoch(val);
-      }
-    }
 
-    return FutureBuilder<DocumentSnapshot>(
-      future:
-          FirebaseFirestore.instance.collection('Users').doc(memberUserId).get(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const SizedBox(
-            height: 70,
-            child: Center(
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.5,
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFD4AF37)),
-                ),
-              ),
-            ),
-          );
-        }
-
-        final Map<String, dynamic>? uData =
-            snapshot.data?.data() as Map<String, dynamic>?;
-        final String fullname = uData?['fullname'] ?? 'User';
-        final String userImage = uData?['photoUrl'] ?? '';
-
-        final Map? sendingLevelMap = uData?['sendingLevel'] as Map?;
-        final int sendLvl = (sendingLevelMap?['level'] as num?)?.toInt() ?? 1;
-
-        final Map? receivingLevelMap = uData?['receivingLevel'] as Map?;
-        final int receiveLvl =
-            (receivingLevelMap?['level'] as num?)?.toInt() ?? 1;
-
-        final int activeSvipLevel = uData?['activeSvipLevel'] as int? ?? 0;
-        final String svipValidUntilMonth = uData?['svipValidUntilMonth'] as String? ?? '';
-        final int activeVipLevel = uData?['activeVipLevel'] as int? ?? 0;
-        final String vipValidUntilMonth = uData?['vipValidUntilMonth'] as String? ?? '';
-        final dynamic vipValidUntilRaw = uData?['vipValidUntil'];
-        DateTime? vipValidUntil;
-        if (vipValidUntilRaw is Timestamp) {
-          vipValidUntil = vipValidUntilRaw.toDate();
-        } else if (vipValidUntilRaw is String) {
-          vipValidUntil = DateTime.tryParse(vipValidUntilRaw);
-        }
-
-        // Fallback to user's global lastActive field
-        if (lastActiveTime == null && uData?['lastActive'] != null) {
-          final dynamic lastActiveVal = uData?['lastActive'];
-          if (lastActiveVal is int) {
-            lastActiveTime = DateTime.fromMillisecondsSinceEpoch(lastActiveVal);
-          } else if (lastActiveVal is Timestamp) {
-            lastActiveTime = lastActiveVal.toDate();
-          }
-        }
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF12121A),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.04),
-            ),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: () {
-              final bool currentUserIsOwner = widget.currentUserId == creatorId;
-              final bool currentUserIsAdmin = adminIds.contains(widget.currentUserId);
-              
-              if ((currentUserIsOwner || currentUserIsAdmin) && memberUserId != creatorId) {
-                // If owner or admin taps a member, show moderation bottom sheet
-                _showAdminOptionsBottomSheet(
-                  memberUserId: memberUserId,
-                  fullname: fullname,
-                  userImageUrl: userImage,
-                  pIsHost: pIsHost,
-                  adminIds: adminIds,
-                  participantsData: participantsData,
-                  isCurrentUserOwner: currentUserIsOwner,
-                  activeParticipant: activeParticipant,
-                );
-              } else {
-                // Otherwise navigate to their profile directly
-                _navigateToProfile(
-                  memberUserId: memberUserId,
-                  fullname: fullname,
-                  userImageUrl: userImage,
-                  isOnline: isOnlineInsideRoom,
-                  lastActive: lastActiveTime,
-                );
-              }
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 50,
-                    height: 50,
-                    child: CachedCircleAvatar(
-                      imageUrl: userImage,
-                      radius: 22,
-                      userId: memberUserId,
-                      isOnline: isOnlineInsideRoom,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: AnimatedSvipName(
-                                name: fullname,
-                                activeSvipLevel: activeSvipLevel,
-                                svipValidUntilMonth: svipValidUntilMonth,
-                                activeVipLevel: activeVipLevel,
-                                vipValidUntilMonth: vipValidUntilMonth,
-                                vipValidUntil: vipValidUntil,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
-                                  fontFamily: 'Inter',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-
-                            // Role/Official Badges
-                            if (isRoomOwner)
-                              _buildPremiumBadge(
-                                'Owner',
-                                [const Color(0xFFFFD700), const Color(0xFFFFA500)],
-                                Colors.black,
-                              )
-                            else if (pIsHost)
-                              _buildPremiumBadge(
-                                'Admin',
-                                [const Color(0xFF8E2DE2), const Color(0xFF4A00E0)],
-                                Colors.white,
-                              )
-                            else if (pIsSpeaker)
-                              _buildBadgePill('Mic', Colors.tealAccent)
-                            else if (isMemberOfClub)
-                              _buildBadgePill('Member', Colors.blueAccent),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            // Sending Level badge
-                            _buildLevelPill('Send', sendLvl, const Color(0xFFFFD700)),
-                            const SizedBox(width: 8),
-                            // Receiving Level badge
-                            _buildLevelPill('Recv', receiveLvl, const Color(0xFFEA4C89)),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Icon(
-                              isOnlineInsideRoom ? Icons.circle : Icons.access_time_rounded,
-                              color: isOnlineInsideRoom ? Colors.greenAccent : Colors.white38,
-                              size: isOnlineInsideRoom ? 10 : 12,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              isOnlineInsideRoom ? 'Active now' : _formatLastActive(lastActiveTime),
-                              style: TextStyle(
-                                color: isOnlineInsideRoom ? Colors.greenAccent : Colors.white38,
-                                fontSize: 11,
-                                fontFamily: 'Inter',
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (isOnlineInsideRoom)
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildPremiumBadge(String label, List<Color> gradientColors, Color textColor) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: gradientColors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: gradientColors[0].withValues(alpha: 0.35),
-            blurRadius: 5,
-            spreadRadius: 0.5,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: textColor,
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
-          fontFamily: 'Inter',
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
 
   String _formatLastActive(DateTime? lastActive) {
     if (lastActive == null) return 'Last active long ago';
@@ -1719,51 +1492,7 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
     }
   }
 
-  Widget _buildBadgePill(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: color.withValues(alpha: 0.5),
-          width: 0.8,
-        ),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
-          fontFamily: 'Inter',
-        ),
-      ),
-    );
-  }
 
-  Widget _buildLevelPill(String type, int level, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: color.withValues(alpha: 0.25),
-          width: 0.6,
-        ),
-      ),
-      child: Text(
-        '$type. $level',
-        style: TextStyle(
-          color: color,
-          fontSize: 9,
-          fontWeight: FontWeight.bold,
-          fontFamily: 'Inter',
-        ),
-      ),
-    );
-  }
 
   void _showRoomSettingsBottomSheet(Map<String, dynamic> roomData) {
     final String creatorId = roomData['creatorId'] ?? '';
@@ -2310,108 +2039,18 @@ class _RoomMemberScreenState extends State<RoomMemberScreen>
                       orElse: () => null,
                     ) as Map<String, dynamic>?;
 
-                    final bool pIsHost = adminIds.contains(memberUserId) || (activeParticipant?['isHost'] ?? false);
-                    final bool isRoomOwner = memberUserId == creatorId;
-                    final bool isOnlineInsideRoom = activeParticipant != null;
-
-                    return FutureBuilder<DocumentSnapshot>(
-                      future: FirebaseFirestore.instance.collection('Users').doc(memberUserId).get(),
-                      builder: (context, snapshot) {
-                        if (!snapshot.hasData) {
-                          return const SizedBox(
-                            height: 70,
-                            child: Center(
-                              child: SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 1.5,
-                                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFD4AF37)),
-                                ),
-                              ),
-                            ),
-                          );
-                        }
-
-                        final Map<String, dynamic>? uData = snapshot.data?.data() as Map<String, dynamic>?;
-                        final String fullname = uData?['fullname'] ?? 'User';
-                        final String userImage = uData?['photoUrl'] ?? '';
-
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.02),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-              ),
-              child: ListTile(tileColor: Colors.transparent,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                leading: CircleAvatar(
-                  radius: 20,
-                  backgroundImage: userImage.isNotEmpty ? NetworkImage(userImage) : null,
-                  child: userImage.isEmpty ? const Icon(Icons.person, color: Colors.white30) : null,
+                    return _SettingsMemberListItemTile(
+                      key: ValueKey('settings_member_$memberUserId'),
+                      memberUserId: memberUserId,
+                      activeParticipant: activeParticipant,
+                      creatorId: creatorId,
+                      adminIds: adminIds,
+                      participantsData: participantsData,
+                      currentUserId: widget.currentUserId,
+                      onShowAdminOptions: _showAdminOptionsBottomSheet,
+                    );
+                  },
                 ),
-                title: Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        fullname,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Inter'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    if (isRoomOwner)
-                      _buildPremiumBadge(
-                        'Owner',
-                        [const Color(0xFFFFD700), const Color(0xFFFFA500)],
-                        Colors.black,
-                      )
-                    else if (pIsHost)
-                      _buildPremiumBadge(
-                        'Admin',
-                        [const Color(0xFF8E2DE2), const Color(0xFF4A00E0)],
-                        Colors.white,
-                      ),
-                  ],
-                ),
-                subtitle: Text(
-                  isOnlineInsideRoom ? 'Active now inside room' : 'Offline / Outside room',
-                  style: TextStyle(
-                    color: isOnlineInsideRoom ? Colors.green : Colors.white30,
-                    fontSize: 12,
-                    fontFamily: 'Inter',
-                  ),
-                ),
-                trailing: isRoomOwner
-                    ? null
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.tune, color: Color(0xFFD4AF37)),
-                            onPressed: () {
-                              _showAdminOptionsBottomSheet(
-                                memberUserId: memberUserId,
-                                fullname: fullname,
-                                userImageUrl: userImage,
-                                pIsHost: pIsHost,
-                                adminIds: adminIds,
-                                participantsData: participantsData,
-                                isCurrentUserOwner: widget.currentUserId == creatorId,
-                                activeParticipant: activeParticipant,
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-              ),
-            );
-          },
-        );
-      },
-    ),
   ),
   ],
 );
@@ -2427,7 +2066,6 @@ class _RoomInfoTabWidget extends StatefulWidget {
   final Map<String, dynamic> roomData;
 
   const _RoomInfoTabWidget({
-    super.key,
     required this.roomId,
     required this.currentUserId,
     required this.roomData,
@@ -2438,22 +2076,21 @@ class _RoomInfoTabWidget extends StatefulWidget {
 }
 
 class _RoomInfoTabWidgetState extends State<_RoomInfoTabWidget> {
-  late TextEditingController _nameController;
-  late TextEditingController _announcementController;
+  late final TextEditingController _nameController =
+      TextEditingController(text: widget.roomData['name'] ?? '');
+  late final TextEditingController _descController =
+      TextEditingController(text: widget.roomData['description'] ?? '');
+  late final TextEditingController _announcementController =
+      TextEditingController(
+    text: (widget.roomData['settings'] as Map<String, dynamic>?)?['announcement'] ?? '',
+  );
   File? _selectedImageFile;
   bool _isSaving = false;
 
   @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController(text: widget.roomData['name'] ?? '');
-    final settings = widget.roomData['settings'] as Map<String, dynamic>? ?? {};
-    _announcementController = TextEditingController(text: settings['announcement'] ?? '');
-  }
-
-  @override
   void dispose() {
     _nameController.dispose();
+    _descController.dispose();
     _announcementController.dispose();
     super.dispose();
   }
@@ -2496,6 +2133,7 @@ class _RoomInfoTabWidgetState extends State<_RoomInfoTabWidget> {
 
       final Map<String, dynamic> updateData = {
         'name': newName,
+        'description': _descController.text.trim(),
         'settings.announcement': _announcementController.text.trim(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
@@ -2662,22 +2300,90 @@ class _RoomInfoTabWidgetState extends State<_RoomInfoTabWidget> {
           const SizedBox(height: 8),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.05),
+              color: const Color(0xFF1E1B2E),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+              border: Border.all(
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.35),
+                width: 1.0,
+              ),
             ),
             child: TextField(
               controller: _nameController,
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Inter'),
+              cursorColor: const Color(0xFFD4AF37),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                fontFamily: 'Inter',
+              ),
               decoration: InputDecoration(
                 hintText: 'Enter room name...',
                 hintStyle: const TextStyle(color: Colors.white38),
+                filled: false,
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 prefixIcon: const Icon(Icons.meeting_room_outlined, color: Color(0xFFD4AF37), size: 20),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
                   onPressed: () => _nameController.clear(),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Room Description
+          const Text(
+            'Room Description',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Inter',
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Describe what your room is about for people browsing rooms.',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 12,
+              fontFamily: 'Inter',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1B2E),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.35),
+                width: 1.0,
+              ),
+            ),
+            child: TextField(
+              controller: _descController,
+              cursorColor: const Color(0xFFD4AF37),
+              maxLines: 3,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                fontFamily: 'Inter',
+              ),
+              decoration: InputDecoration(
+                hintText: 'Enter room description...',
+                hintStyle: const TextStyle(color: Colors.white38),
+                filled: false,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.all(14),
+                prefixIcon: const Padding(
+                  padding: EdgeInsets.only(bottom: 36),
+                  child: Icon(Icons.description_outlined, color: Color(0xFFD4AF37), size: 20),
+                ),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
+                  onPressed: () => _descController.clear(),
                 ),
               ),
             ),
@@ -2703,20 +2409,30 @@ class _RoomInfoTabWidgetState extends State<_RoomInfoTabWidget> {
               fontFamily: 'Inter',
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.05),
+              color: const Color(0xFF1E1B2E),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+              border: Border.all(
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.35),
+                width: 1.0,
+              ),
             ),
             child: TextField(
               controller: _announcementController,
+              cursorColor: const Color(0xFFD4AF37),
               maxLines: 4,
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Inter'),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                fontFamily: 'Inter',
+              ),
               decoration: InputDecoration(
                 hintText: 'Enter announcement here...',
                 hintStyle: const TextStyle(color: Colors.white38),
+                filled: false,
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.all(14),
                 prefixIcon: const Padding(
@@ -2784,4 +2500,550 @@ class _RoomInfoTabWidgetState extends State<_RoomInfoTabWidget> {
     );
   }
 }
+
+class _MemberListItemTile extends StatefulWidget {
+  final String memberUserId;
+  final Map<String, dynamic>? activeParticipant;
+  final String creatorId;
+  final List<dynamic> joinedUserIds;
+  final Map<String, dynamic> roomData;
+  final String currentUserId;
+  final Function({
+    required String memberUserId,
+    required String fullname,
+    required String userImageUrl,
+    required bool pIsHost,
+    required List<dynamic> adminIds,
+    required List<dynamic> participantsData,
+    required bool isCurrentUserOwner,
+    dynamic activeParticipant,
+  }) onShowAdminOptions;
+  final Function({
+    required String memberUserId,
+    required String fullname,
+    required String userImageUrl,
+    required bool isOnline,
+    required DateTime? lastActive,
+  }) onNavigateToProfile;
+
+  const _MemberListItemTile({
+    super.key,
+    required this.memberUserId,
+    required this.activeParticipant,
+    required this.creatorId,
+    required this.joinedUserIds,
+    required this.roomData,
+    required this.currentUserId,
+    required this.onShowAdminOptions,
+    required this.onNavigateToProfile,
+  });
+
+  @override
+  State<_MemberListItemTile> createState() => _MemberListItemTileState();
+
+  static Widget buildBadge(String label, List<Color> gradientColors, Color textColor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: gradientColors,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: gradientColors[0].withValues(alpha: 0.35),
+            blurRadius: 5,
+            spreadRadius: 0.5,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: textColor,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          fontFamily: 'Inter',
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+class _MemberListItemTileState extends State<_MemberListItemTile> {
+  User? _user;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _user = UserApi.getCachedUser(widget.memberUserId);
+    if (_user == null) {
+      _isLoading = true;
+      _fetchUser();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _MemberListItemTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.memberUserId != widget.memberUserId) {
+      _user = UserApi.getCachedUser(widget.memberUserId);
+      if (_user == null) {
+        _isLoading = true;
+        _fetchUser();
+      }
+    }
+  }
+
+  Future<void> _fetchUser() async {
+    final user = await UserApi.getUser(widget.memberUserId);
+    if (mounted) {
+      setState(() {
+        _user = user;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Map<String, dynamic> settings = widget.roomData['settings'] as Map<String, dynamic>? ?? {};
+    final List<dynamic> adminIds = settings['adminIds'] as List<dynamic>? ?? [];
+    final List<dynamic> participantsData = widget.roomData['participants'] as List<dynamic>? ?? [];
+
+    final bool pIsHost = adminIds.contains(widget.memberUserId) || (widget.activeParticipant?['isHost'] ?? false);
+    final bool pIsSpeaker = widget.activeParticipant?['isSpeaker'] ?? false;
+    final bool isRoomOwner = widget.memberUserId == widget.creatorId;
+    final bool isMemberOfClub = widget.joinedUserIds.contains(widget.memberUserId);
+    final bool isOnlineInsideRoom = widget.activeParticipant != null;
+
+    final Map<String, dynamic> membersLastActiveMap = widget.roomData['membersLastActive'] as Map<String, dynamic>? ?? {};
+    DateTime? lastActiveTime;
+    if (membersLastActiveMap.containsKey(widget.memberUserId)) {
+      final dynamic val = membersLastActiveMap[widget.memberUserId];
+      if (val is Timestamp) {
+        lastActiveTime = val.toDate();
+      } else if (val is int) {
+        lastActiveTime = DateTime.fromMillisecondsSinceEpoch(val);
+      }
+    }
+
+    if (_isLoading && _user == null) {
+      return const SizedBox(
+        height: 70,
+        child: Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFD4AF37)),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final String fullname = _user?.fullname.isNotEmpty == true ? _user!.fullname : 'User';
+    final String userImage = _user?.photoUrl ?? '';
+    final int sendLvl = _user?.sendingLevel?.level ?? 1;
+    final int receiveLvl = _user?.receivingLevel?.level ?? 1;
+    final int activeSvipLevel = _user?.activeSvipLevel ?? 0;
+    final String svipValidUntilMonth = _user?.svipValidUntilMonth ?? '';
+    final int activeVipLevel = _user?.activeVipLevel ?? 0;
+    final String vipValidUntilMonth = _user?.vipValidUntilMonth ?? '';
+    final DateTime? vipValidUntil = _user?.vipValidUntil;
+
+    if (lastActiveTime == null && _user?.lastActive != null) {
+      lastActiveTime = _user!.lastActive;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12121A),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.04),
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          final bool currentUserIsOwner = widget.currentUserId == widget.creatorId;
+          final bool currentUserIsAdmin = adminIds.contains(widget.currentUserId);
+          final bool isTargetOwner = widget.memberUserId == widget.creatorId;
+          final bool isTargetAdmin = pIsHost || adminIds.contains(widget.memberUserId);
+          final bool isTargetSelf = widget.memberUserId == widget.currentUserId;
+
+          final bool canManage = !isTargetSelf && (
+            currentUserIsOwner ||
+            (currentUserIsAdmin && !isTargetOwner && !isTargetAdmin)
+          );
+
+          if (canManage) {
+            widget.onShowAdminOptions(
+              memberUserId: widget.memberUserId,
+              fullname: fullname,
+              userImageUrl: userImage,
+              pIsHost: pIsHost,
+              adminIds: adminIds,
+              participantsData: participantsData,
+              isCurrentUserOwner: currentUserIsOwner,
+              activeParticipant: widget.activeParticipant,
+            );
+          } else {
+            widget.onNavigateToProfile(
+              memberUserId: widget.memberUserId,
+              fullname: fullname,
+              userImageUrl: userImage,
+              isOnline: isOnlineInsideRoom,
+              lastActive: lastActiveTime,
+            );
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 50,
+                height: 50,
+                child: CachedCircleAvatar(
+                  imageUrl: userImage,
+                  radius: 22,
+                  userId: widget.memberUserId,
+                  isOnline: isOnlineInsideRoom,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: AnimatedSvipName(
+                            name: fullname,
+                            activeSvipLevel: activeSvipLevel,
+                            svipValidUntilMonth: svipValidUntilMonth,
+                            activeVipLevel: activeVipLevel,
+                            vipValidUntilMonth: vipValidUntilMonth,
+                            vipValidUntil: vipValidUntil,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        if (isRoomOwner)
+                          _MemberListItemTile.buildBadge(
+                            'Owner',
+                            [const Color(0xFFFFD700), const Color(0xFFFFA500)],
+                            Colors.black,
+                          )
+                        else if (pIsHost)
+                          _MemberListItemTile.buildBadge(
+                            'Admin',
+                            [const Color(0xFF8E2DE2), const Color(0xFF4A00E0)],
+                            Colors.white,
+                          )
+                        else if (pIsSpeaker)
+                          _buildPill('Mic', Colors.tealAccent)
+                        else if (isMemberOfClub)
+                          _buildPill('Member', Colors.blueAccent),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        _buildLvlPill('Send', sendLvl, const Color(0xFFFFD700)),
+                        const SizedBox(width: 8),
+                        _buildLvlPill('Recv', receiveLvl, const Color(0xFFEA4C89)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(
+                          isOnlineInsideRoom ? Icons.circle : Icons.access_time_rounded,
+                          color: isOnlineInsideRoom ? Colors.greenAccent : Colors.white38,
+                          size: isOnlineInsideRoom ? 10 : 12,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          isOnlineInsideRoom ? 'Active now' : _formatTime(lastActiveTime),
+                          style: TextStyle(
+                            color: isOnlineInsideRoom ? Colors.greenAccent : Colors.white38,
+                            fontSize: 11,
+                            fontFamily: 'Inter',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (isOnlineInsideRoom)
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Colors.green,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static Widget _buildPill(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
+          fontFamily: 'Inter',
+        ),
+      ),
+    );
+  }
+
+  static Widget _buildLvlPill(String type, int level, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: color.withValues(alpha: 0.25),
+          width: 0.6,
+        ),
+      ),
+      child: Text(
+        '$type. $level',
+        style: TextStyle(
+          color: color,
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
+          fontFamily: 'Inter',
+        ),
+      ),
+    );
+  }
+
+  static String _formatTime(DateTime? lastActive) {
+    if (lastActive == null) return 'Last active long ago';
+    final now = DateTime.now();
+    final difference = now.difference(lastActive);
+
+    if (difference.inSeconds < 60) {
+      return 'Last active just now';
+    } else if (difference.inMinutes < 60) {
+      final minutes = difference.inMinutes;
+      return 'Last active $minutes ${minutes == 1 ? "minute" : "minutes"} ago';
+    } else if (difference.inHours < 24) {
+      final hours = difference.inHours;
+      return 'Last active $hours ${hours == 1 ? "hour" : "hours"} ago';
+    } else if (difference.inDays == 1) {
+      return 'Last active yesterday';
+    } else {
+      final days = difference.inDays;
+      return 'Last active $days ${days == 1 ? "day" : "days"} ago';
+    }
+  }
+}
+
+class _SettingsMemberListItemTile extends StatefulWidget {
+  final String memberUserId;
+  final Map<String, dynamic>? activeParticipant;
+  final String creatorId;
+  final List<dynamic> adminIds;
+  final List<dynamic> participantsData;
+  final String currentUserId;
+  final Function({
+    required String memberUserId,
+    required String fullname,
+    required String userImageUrl,
+    required bool pIsHost,
+    required List<dynamic> adminIds,
+    required List<dynamic> participantsData,
+    required bool isCurrentUserOwner,
+    dynamic activeParticipant,
+  }) onShowAdminOptions;
+
+  const _SettingsMemberListItemTile({
+    super.key,
+    required this.memberUserId,
+    required this.activeParticipant,
+    required this.creatorId,
+    required this.adminIds,
+    required this.participantsData,
+    required this.currentUserId,
+    required this.onShowAdminOptions,
+  });
+
+  @override
+  State<_SettingsMemberListItemTile> createState() => _SettingsMemberListItemTileState();
+}
+
+class _SettingsMemberListItemTileState extends State<_SettingsMemberListItemTile> {
+  User? _user;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _user = UserApi.getCachedUser(widget.memberUserId);
+    if (_user == null) {
+      _isLoading = true;
+      _fetchUser();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _SettingsMemberListItemTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.memberUserId != widget.memberUserId) {
+      _user = UserApi.getCachedUser(widget.memberUserId);
+      if (_user == null) {
+        _isLoading = true;
+        _fetchUser();
+      }
+    }
+  }
+
+  Future<void> _fetchUser() async {
+    final user = await UserApi.getUser(widget.memberUserId);
+    if (mounted) {
+      setState(() {
+        _user = user;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool pIsHost = widget.adminIds.contains(widget.memberUserId) || (widget.activeParticipant?['isHost'] ?? false);
+    final bool isRoomOwner = widget.memberUserId == widget.creatorId;
+    final bool isOnlineInsideRoom = widget.activeParticipant != null;
+
+    if (_isLoading && _user == null) {
+      return const SizedBox(
+        height: 70,
+        child: Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFD4AF37)),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final String fullname = _user?.fullname.isNotEmpty == true ? _user!.fullname : 'User';
+    final String userImage = _user?.photoUrl ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: ListTile(
+        tileColor: Colors.transparent,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: CachedCircleAvatar(
+          imageUrl: userImage,
+          radius: 20,
+          userId: widget.memberUserId,
+          isOnline: isOnlineInsideRoom,
+        ),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                fullname,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Inter'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (isRoomOwner)
+              _MemberListItemTile.buildBadge(
+                'Owner',
+                [const Color(0xFFFFD700), const Color(0xFFFFA500)],
+                Colors.black,
+              )
+            else if (pIsHost)
+              _MemberListItemTile.buildBadge(
+                'Admin',
+                [const Color(0xFF8E2DE2), const Color(0xFF4A00E0)],
+                Colors.white,
+              ),
+          ],
+        ),
+        subtitle: Text(
+          isOnlineInsideRoom ? 'Active now inside room' : 'Offline / Outside room',
+          style: TextStyle(
+            color: isOnlineInsideRoom ? Colors.green : Colors.white30,
+            fontSize: 12,
+            fontFamily: 'Inter',
+          ),
+        ),
+        trailing: (isRoomOwner ||
+                (widget.currentUserId != widget.creatorId && pIsHost) ||
+                (widget.currentUserId == widget.memberUserId))
+            ? null
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.tune, color: Color(0xFFD4AF37)),
+                    onPressed: () {
+                      widget.onShowAdminOptions(
+                        memberUserId: widget.memberUserId,
+                        fullname: fullname,
+                        userImageUrl: userImage,
+                        pIsHost: pIsHost,
+                        adminIds: widget.adminIds,
+                        participantsData: widget.participantsData,
+                        isCurrentUserOwner: widget.currentUserId == widget.creatorId,
+                        activeParticipant: widget.activeParticipant,
+                      );
+                    },
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
 

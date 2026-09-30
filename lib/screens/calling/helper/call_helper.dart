@@ -2,6 +2,7 @@ import 'package:chat_messenger/api/call_history_api.dart';
 import 'package:chat_messenger/tabs/groups/screens/group_video_call.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
+import 'package:flutter/foundation.dart';
 import 'package:chat_messenger/api/message_api.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/models/call.dart';
@@ -9,6 +10,7 @@ import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/models/group.dart';
 import 'package:chat_messenger/routes/app_routes.dart';
 import 'package:chat_messenger/services/push_notification_service.dart';
+import 'package:chat_messenger/services/agora_token_service.dart';
 
 abstract class CallHelper {
   //
@@ -24,6 +26,18 @@ abstract class CallHelper {
     // Get current user
     final User currentUser = AuthController.instance.currentUser;
     
+    // Pre-generate token for caller & receiver channel to achieve 0ms connection latency
+    String? generatedToken;
+    try {
+      final tokenResp = await AgoraTokenService.instance.generateToken(
+        channelName: currentUser.userId,
+        uid: 0,
+      );
+      generatedToken = tokenResp?.token;
+    } catch (e) {
+      debugPrint('Pre-generate token error: $e');
+    }
+
     // Get call instance
     final Call call = Call(
       isVideo: isVideo,
@@ -34,20 +48,10 @@ abstract class CallHelper {
       // Set receiver info
       receiverName: user.fullname,
       receiverPhotoUrl: user.photoUrl,
-      receiverId: user.userId
+      receiverId: user.userId,
+      agoraToken: generatedToken,
     );
 
-  //     String getFormattedCallTime() {
-  //   // Get the CallController
-  //   final CallController controller = Get.put(CallController(call: call));
-
-  //   // Get the current seconds from the controller
-  //   int seconds = controller.seconds.value;
-
-  //   // Use CallHelper's formatTime method to format it as a string
-  //   return CallHelper.formatTime(seconds);
-  // }
-  //  String formattedTime = getFormattedCallTime();
     // Get notification body
     final String body =
         isVideo ? 'incomming_video_call'.tr : 'incomming_voice_call'.tr;
@@ -62,7 +66,9 @@ abstract class CallHelper {
       'receiverName': user.fullname,
       'receiverPhotoUrl': user.photoUrl,
       'receiverId': user.userId,
-      'state': 'calling'
+      'state': 'calling',
+      'isVideo': isVideo,
+      if (generatedToken != null) 'agoraToken': generatedToken,
     });
 
     // Save call history

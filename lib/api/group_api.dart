@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,6 +13,7 @@ import 'package:chat_messenger/models/group_update.dart';
 import 'package:chat_messenger/models/message.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/services/push_notification_service.dart';
+import 'package:chat_messenger/services/backend_engine_manager.dart';
 import 'package:chat_messenger/screens/messages/controllers/message_controller.dart';
 import 'package:chat_messenger/tabs/groups/controllers/group_controller.dart';
 import 'package:get/get.dart';
@@ -78,6 +80,18 @@ abstract class GroupApi {
       );
 
       // Create the new Group
+      if (BackendEngineManager.isVps) {
+        BackendEngineManager.instance.apiService.createGroup(
+          name: name,
+          description: description,
+          coverUrl: photoUrl,
+          memberIds: allUniqueMembers.map((m) => m.userId).toList(),
+        ).catchError((e) {
+          debugPrint('[GroupApi] VPS createGroup notice: $e');
+          return null;
+        });
+      }
+
       await Future.wait([
         // Save new group
         groupsRef.doc(groupId).set(group.toMap()),
@@ -225,6 +239,130 @@ abstract class GroupApi {
 
   static Stream<List<Group>> getUserGroups(String userId) {
     final User currentUser = AuthController.instance.currentUser;
+
+    if (BackendEngineManager.isVps) {
+      final vpsApi = BackendEngineManager.instance.apiService;
+      final vpsSocket = BackendEngineManager.instance.socketService;
+
+      late StreamController<List<Group>> controller;
+      StreamSubscription? msgSub;
+      StreamSubscription? fsSub;
+      final Map<String, Group> groupsMap = {};
+
+      void emitList() {
+        if (controller.isClosed) return;
+        final list = groupsMap.values.toList();
+        list.sort((a, b) {
+          final tA = a.lastMsg?.sentAt ?? a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final tB = b.lastMsg?.sentAt ?? b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          return tB.compareTo(tA);
+        });
+        controller.add(list);
+      }
+
+      Future<void> fetchVpsGroups() async {
+        try {
+          final rawGroups = await vpsApi.getGroups();
+          for (final row in rawGroups) {
+            final gid = row['id']?.toString() ?? '';
+            if (gid.isEmpty) continue;
+
+            final lastSentAtStr = row['last_message_at'] ?? row['created_at'];
+            final lastSentAt = lastSentAtStr != null ? (DateTime.tryParse(lastSentAtStr.toString()) ?? DateTime.now()) : DateTime.now();
+
+            final lastMsg = Message(
+              msgId: row['last_message_id']?.toString() ?? '',
+              senderId: row['last_message_sender_id']?.toString() ?? '',
+              type: Message.getMsgType(row['last_message_type']?.toString() ?? 'text'),
+              textMsg: row['last_message_text']?.toString() ?? '',
+              sentAt: lastSentAt,
+            );
+
+            final group = Group(
+              groupId: gid,
+              name: row['name']?.toString() ?? 'Group',
+              description: row['description']?.toString() ?? '',
+              photoUrl: row['cover_url']?.toString() ?? '',
+              createdBy: row['creator_id']?.toString() ?? '',
+              lastMsg: lastMsg,
+              updatedAt: lastSentAt,
+              members: [currentUser],
+            );
+            groupsMap[gid] = group;
+          }
+          emitList();
+        } catch (e) {
+          debugPrint('[GroupApi] VPS getGroups notice: $e');
+        }
+      }
+
+      controller = StreamController<List<Group>>.broadcast(
+        onListen: () {
+          fetchVpsGroups();
+
+          msgSub = vpsSocket.groupMessageStream.listen((data) {
+            final gid = data['group_id']?.toString();
+            if (gid != null && groupsMap.containsKey(gid)) {
+              final old = groupsMap[gid]!;
+              final lastMsg = Message(
+                msgId: data['id']?.toString() ?? '',
+                senderId: data['sender_id']?.toString() ?? '',
+                type: Message.getMsgType(data['message_type']?.toString() ?? 'text'),
+                textMsg: data['content']?.toString() ?? '',
+                fileUrl: data['media_url']?.toString() ?? '',
+                sentAt: DateTime.now(),
+              );
+              old.lastMsg = lastMsg;
+              old.updatedAt = DateTime.now();
+              emitList();
+            } else {
+              fetchVpsGroups();
+            }
+          });
+
+          // Firebase Firestore stream fallback
+          fsSub = groupsRef
+              .where('members', arrayContains: userId)
+              .orderBy('updatedAt', descending: true)
+              .snapshots()
+              .asyncMap((event) async {
+            List<Group> fsGroups = [];
+            for (final doc in event.docs) {
+              final Map<String, dynamic> data = doc.data();
+              final bool isBroadcast = data['isBroadcast'] ?? false;
+              final String createdBy = data['createdBy'] ?? '';
+              final List<String> memberIds = List<String>.from(data['members'] ?? []);
+              List<Future<User?>> futures = memberIds.map((uId) => UserApi.getUser(uId)).toList();
+              List<User?> users = futures.isNotEmpty ? await Future.wait(futures) : [];
+              final List<User> members = users.whereType<User>().toList();
+              final Group group = Group.fromMap(data: doc.data(), members: members);
+
+              final bool isValid = !group.isRemoved(currentUser.userId) ||
+                  (group.isRemoved(currentUser.userId) && group.isAdmin(currentUser.userId));
+              if (isValid) {
+                if (!isBroadcast || createdBy == currentUser.userId) {
+                  fsGroups.add(group);
+                }
+              }
+            }
+            return fsGroups;
+          }).listen((fsList) {
+            for (final g in fsList) {
+              if (!groupsMap.containsKey(g.groupId)) {
+                groupsMap[g.groupId] = g;
+              }
+            }
+            emitList();
+          }, onError: (_) {});
+        },
+        onCancel: () {
+          msgSub?.cancel();
+          fsSub?.cancel();
+        },
+      );
+
+      return controller.stream;
+    }
 
     return groupsRef
         .where('members', arrayContains: userId)

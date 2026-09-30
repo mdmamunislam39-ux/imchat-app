@@ -103,13 +103,13 @@ async function sendOfficialNotification(receiverId, messageText) {
 
 /**
  * Scheduled Cloud Function to process weekly commissions
- * Runs every Sunday night at 12:15 AM (Monday 00:15 Dhaka time)
+ * Runs every Sunday night at 10:15 PM Bangladesh Time (22:15 Dhaka time)
  */
 exports.processWeeklyCommissions = functions.pubsub
-    .schedule("15 0 * * 1") // 12:15 AM Sunday Midnight / Monday 00:15 AM (Dhaka Time UTC+6)
+    .schedule("15 22 * * 0") // 10:15 PM Every Sunday (Dhaka Time UTC+6)
     .timeZone("Asia/Dhaka")
     .onRun(async (context) => {
-      console.log("⏰ Starting weekly commission processing...");
+      console.log("⏰ Starting weekly commission processing (Sunday 10:15 PM BST)...");
 
       try {
         const now = new Date();
@@ -121,9 +121,9 @@ exports.processWeeklyCommissions = functions.pubsub
         const month = dhakaNow.getUTCMonth();
         const day = dhakaNow.getUTCDate();
 
-        // End date: Today (Sunday) at 22:00:00 Dhaka time = 16:00:00 UTC
-        const weekEnd = new Date(Date.UTC(year, month, day, 16, 0, 0));
-        // Start date: Exactly 7 days ago at 22:00:00 Dhaka time = 16:00:00 UTC
+        // End date: Today (Sunday) at 22:15:00 Dhaka time = 16:15:00 UTC
+        const weekEnd = new Date(Date.UTC(year, month, day, 16, 15, 0));
+        // Start date: Exactly 7 days ago at 22:15:00 Dhaka time = 16:15:00 UTC
         const weekStart = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
 
         const weekStartTs = admin.firestore.Timestamp.fromDate(weekStart);
@@ -278,10 +278,17 @@ exports.processWeeklyCommissions = functions.pubsub
 
             // 4. Send imChat official team message and push notification
             if (ownerUserId) {
+              const formattedBeans = totalAgencyCommission % 1 === 0 ?
+                  totalAgencyCommission.toString() :
+                  totalAgencyCommission.toFixed(2);
               const messageText =
-                  `🎉 Congratulations! You have received a weekly ` +
-                  `commission reward of ${totalAgencyCommission.toFixed(2)} ` +
-                  `beans for your agency "${agencyName}".`;
+                  `🎉 Congratulations!\n\n` +
+                  `Your weekly agency commission salary for "${agencyName}" ` +
+                  `has been successfully credited.\n\n` +
+                  `🫘 Total Commission: ${formattedBeans} Beans\n` +
+                  `📅 Settlement Date: Every Sunday 10:15 PM (BST)\n\n` +
+                  `The commission beans have been transferred to your imChat Wallet. ` +
+                  `Thank you for being a valued Agency Partner with imChat!`;
               await sendOfficialNotification(ownerUserId, messageText);
               console.log(`Sent payout notification to owner: ${ownerUserId}`);
             }

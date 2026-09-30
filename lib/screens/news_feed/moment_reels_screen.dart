@@ -11,6 +11,7 @@ import 'package:chat_messenger/screens/news_feed/widgets/fb_reaction_picker.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:chat_messenger/services/deep_link_service.dart';
+import 'package:chat_messenger/components/animated_svip_name.dart';
 
 
 class MomentReelsScreen extends StatefulWidget {
@@ -413,8 +414,9 @@ class _ReelsVideoItemState extends State<_ReelsVideoItem>
                       radius: 20,
                     ),
                     const SizedBox(width: 10),
-                    Text(
-                      widget.post.userName,
+                    AnimatedSvipName.fromUserId(
+                      userId: widget.post.userId,
+                      defaultName: widget.post.userName,
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,

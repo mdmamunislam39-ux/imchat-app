@@ -87,19 +87,26 @@ class RenderBlendWidget extends RenderBox
   }
 }
 
-/// A high-performance player for side-by-side MP4 Alpha transparent videos.
-/// It displays the left half (color) masked by the right half (alpha mask)
+/// A high-performance player for side-by-side or top-and-bottom MP4 Alpha transparent videos,
+/// as well as standard full-frame MP4 videos.
+/// For Alpha videos, it displays the color half masked by the alpha mask half
 /// via a luminance-to-alpha ColorFilter and canvas blend mode.
 class AlphaVideoPlayer extends StatefulWidget {
   final VideoPlayerController controller;
   final BoxFit fit;
   final bool isMaskLeft;
+  final bool isVerticalLayout;
+  final bool? isAlphaOverride;
+  final VoidCallback? onComplete;
 
   const AlphaVideoPlayer({
     super.key,
     required this.controller,
     this.fit = BoxFit.contain,
     this.isMaskLeft = false,
+    this.isVerticalLayout = false,
+    this.isAlphaOverride,
+    this.onComplete,
   });
 
   @override
@@ -114,6 +121,7 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
   void initState() {
     super.initState();
     _initializeMask();
+    _attachCompletionListener();
   }
 
   @override
@@ -122,14 +130,31 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
     if (widget.controller.dataSource != oldWidget.controller.dataSource) {
       _cleanupMask();
       _initializeMask();
+      _attachCompletionListener();
     }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_syncControllers);
+    widget.controller.removeListener(_checkCompletion);
     _cleanupMask();
     super.dispose();
+  }
+
+  void _attachCompletionListener() {
+    widget.controller.removeListener(_checkCompletion);
+    widget.controller.addListener(_checkCompletion);
+  }
+
+  void _checkCompletion() {
+    if (!mounted || widget.onComplete == null) return;
+    final value = widget.controller.value;
+    if (value.isInitialized && value.duration > Duration.zero) {
+      if (value.position >= value.duration) {
+        widget.onComplete?.call();
+      }
+    }
   }
 
   void _cleanupMask() {
@@ -215,16 +240,94 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
     }
 
     final double fullWidth = widget.controller.value.size.width;
-    final double height = widget.controller.value.size.height;
-    // Side-by-side means actual display width is half the video width
-    final double displayWidth = fullWidth / 2;
+    final double fullHeight = widget.controller.value.size.height;
+    if (fullWidth <= 0 || fullHeight <= 0) {
+      return const SizedBox.shrink();
+    }
 
+    final double aspect = fullWidth / fullHeight;
+    // Determine whether video is side-by-side (~2:1), top-bottom (~1:2), or standard
+    final bool isSideBySide = !widget.isVerticalLayout && (aspect >= 1.45 || (widget.isAlphaOverride == true && aspect >= 1.0));
+    final bool isTopBottom = widget.isVerticalLayout || (aspect <= 0.7 && widget.isAlphaOverride == true);
+    final bool isAlpha = widget.isAlphaOverride ?? (isSideBySide || isTopBottom);
+
+    if (!isAlpha) {
+      // Standard regular MP4 video playback (full frame)
+      return SizedBox.expand(
+        child: FittedBox(
+          fit: widget.fit,
+          child: SizedBox(
+            width: fullWidth,
+            height: fullHeight,
+            child: VideoPlayer(widget.controller),
+          ),
+        ),
+      );
+    }
+
+    if (isTopBottom) {
+      // Top-and-bottom stacked Alpha video
+      final double displayHeight = fullHeight / 2;
+      return SizedBox.expand(
+        child: FittedBox(
+          fit: widget.fit,
+          child: SizedBox(
+            width: fullWidth,
+            height: displayHeight,
+            child: RepaintBoundary(
+              child: BlendWidget(
+                colorChild: ClipRect(
+                  child: Align(
+                    alignment: widget.isMaskLeft ? Alignment.bottomCenter : Alignment.topCenter,
+                    heightFactor: 0.5,
+                    child: OverflowBox(
+                      minWidth: fullWidth,
+                      maxWidth: fullWidth,
+                      minHeight: fullHeight,
+                      maxHeight: fullHeight,
+                      child: VideoPlayer(widget.controller),
+                    ),
+                  ),
+                ),
+                maskChild: _isMaskInitialized
+                    ? ColorFiltered(
+                        colorFilter: const ColorFilter.matrix(<double>[
+                          0, 0, 0, 0, 0,
+                          0, 0, 0, 0, 0,
+                          0, 0, 0, 0, 0,
+                          1.4, 0, 0, 0, -0.15,
+                        ]),
+                        child: ClipRect(
+                          child: Align(
+                            alignment: widget.isMaskLeft ? Alignment.topCenter : Alignment.bottomCenter,
+                            heightFactor: 0.5,
+                            child: OverflowBox(
+                              minWidth: fullWidth,
+                              maxWidth: fullWidth,
+                              minHeight: fullHeight,
+                              maxHeight: fullHeight,
+                              child: VideoPlayer(_maskController!),
+                            ),
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+                blendMode: BlendMode.dstIn,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Side-by-side horizontal Alpha video
+    final double displayWidth = fullWidth / 2;
     return SizedBox.expand(
       child: FittedBox(
         fit: widget.fit,
         child: SizedBox(
           width: displayWidth,
-          height: height,
+          height: fullHeight,
           child: RepaintBoundary(
             child: BlendWidget(
               colorChild: ClipRect(
@@ -234,8 +337,8 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
                   child: OverflowBox(
                     minWidth: fullWidth,
                     maxWidth: fullWidth,
-                    minHeight: height,
-                    maxHeight: height,
+                    minHeight: fullHeight,
+                    maxHeight: fullHeight,
                     child: VideoPlayer(widget.controller),
                   ),
                 ),
@@ -255,8 +358,8 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
                           child: OverflowBox(
                             minWidth: fullWidth,
                             maxWidth: fullWidth,
-                            minHeight: height,
-                            maxHeight: height,
+                            minHeight: fullHeight,
+                            maxHeight: fullHeight,
                             child: VideoPlayer(_maskController!),
                           ),
                         ),
@@ -272,94 +375,232 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
   }
 }
 
+/// Ultra-fast global asset caching and preloading manager
+/// Handles SVGA bytes in RAM, Video/MP4 files in disk/RAM, deduplicates network requests,
+/// and enables background preloading for instant 0ms playback on all internet connections.
+class FastAssetCache {
+  static final Map<String, Uint8List> _bytesCache = {};
+  static final Map<String, String> _filePathCache = {};
+  static final Map<String, MovieEntity> _movieCache = {};
+  static final Map<String, Future<Uint8List?>> _inFlightBytes = {};
+  static final Map<String, Future<File?>> _inFlightFiles = {};
+  static final Map<String, Future<MovieEntity?>> _inFlightMovies = {};
+
+  /// Preloads a single asset URL (SVGA, MP4, VAP, Image) into disk and RAM
+  static Future<void> preload(String? url) async {
+    if (url == null || url.trim().isEmpty || !url.startsWith('http')) return;
+    final cleanUrl = url.trim();
+    final lower = cleanUrl.toLowerCase();
+    
+    try {
+      if (lower.contains('.svga')) {
+        await decodeSvga(cleanUrl);
+      } else if (lower.contains('.mp4') || lower.contains('.vap')) {
+        await getVideoFile(cleanUrl);
+      } else {
+        await DefaultCacheManager().getSingleFile(cleanUrl);
+      }
+    } catch (_) {}
+  }
+
+  /// Preloads a batch of URLs with concurrency control
+  static Future<void> preloadBatch(List<String?> urls) async {
+    final validUrls = urls
+        .whereType<String>()
+        .where((u) => u.trim().isNotEmpty && u.startsWith('http'))
+        .toSet()
+        .toList();
+    
+    for (int i = 0; i < validUrls.length; i += 3) {
+      final chunk = validUrls.skip(i).take(3);
+      await Future.wait(chunk.map((u) => preload(u)));
+    }
+  }
+
+  /// Get SVGA raw bytes instantly from RAM or disk cache
+  static Future<Uint8List?> getSvgaBytes(String url) async {
+    if (_bytesCache.containsKey(url)) {
+      return _bytesCache[url];
+    }
+    if (_inFlightBytes.containsKey(url)) {
+      return await _inFlightBytes[url];
+    }
+
+    final future = _fetchSvgaBytesInternal(url);
+    _inFlightBytes[url] = future;
+    try {
+      final bytes = await future;
+      if (bytes != null && bytes.isNotEmpty) {
+        _bytesCache[url] = bytes;
+      }
+      return bytes;
+    } finally {
+      _inFlightBytes.remove(url);
+    }
+  }
+
+  static Future<Uint8List?> _fetchSvgaBytesInternal(String url) async {
+    try {
+      final fileInfo = await DefaultCacheManager().getFileFromCache(url);
+      if (fileInfo != null && await fileInfo.file.exists()) {
+        return await fileInfo.file.readAsBytes();
+      }
+    } catch (_) {}
+
+    try {
+      final file = await DefaultCacheManager().getSingleFile(url);
+      return await file.readAsBytes();
+    } catch (_) {
+      try {
+        final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+        final request = await client.getUrl(Uri.parse(url));
+        final response = await request.close();
+        if (response.statusCode == 200) {
+          final bytes = await consolidateHttpClientResponseBytes(response);
+          return bytes;
+        }
+      } catch (e) {
+        debugPrint('❌ [FastAssetCache] SVGA direct download failed for $url: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Get local video File with proper extension instantly from cache
+  static Future<File?> getVideoFile(String url) async {
+    if (_filePathCache.containsKey(url)) {
+      final file = File(_filePathCache[url]!);
+      if (await file.exists()) return file;
+    }
+    if (_inFlightFiles.containsKey(url)) {
+      return await _inFlightFiles[url];
+    }
+
+    final future = _fetchVideoFileInternal(url);
+    _inFlightFiles[url] = future;
+    try {
+      final file = await future;
+      if (file != null && await file.exists()) {
+        _filePathCache[url] = file.path;
+      }
+      return file;
+    } finally {
+      _inFlightFiles.remove(url);
+    }
+  }
+
+  static Future<File?> _fetchVideoFileInternal(String url) async {
+    try {
+      File cachedFile;
+      final fileInfo = await DefaultCacheManager().getFileFromCache(url);
+      if (fileInfo != null && await fileInfo.file.exists()) {
+        cachedFile = fileInfo.file;
+      } else {
+        cachedFile = await DefaultCacheManager().getSingleFile(url);
+      }
+
+      if (!cachedFile.path.toLowerCase().endsWith('.mp4')) {
+        final newPath = '${cachedFile.path}.mp4';
+        final newFile = File(newPath);
+        if (!await newFile.exists()) {
+          await cachedFile.copy(newPath);
+        }
+        return newFile;
+      }
+      return cachedFile;
+    } catch (e) {
+      debugPrint('❌ [FastAssetCache] Video cache failed for $url: $e');
+      return null;
+    }
+  }
+
+  /// Decodes MovieEntity using cached bytes and caches the parsed MovieEntity in RAM
+  static Future<MovieEntity?> decodeSvga(String url) async {
+    if (_inFlightMovies.containsKey(url)) {
+      return await _inFlightMovies[url];
+    }
+
+    final future = _decodeSvgaInternal(url);
+    _inFlightMovies[url] = future;
+    try {
+      return await future;
+    } finally {
+      _inFlightMovies.remove(url);
+    }
+  }
+
+  static Future<MovieEntity?> _decodeSvgaInternal(String url) async {
+    try {
+      final bytes = await getSvgaBytes(url);
+      if (bytes != null && bytes.isNotEmpty) {
+        final parser = SVGAParser();
+        return await parser.decodeFromBuffer(bytes);
+      }
+    } catch (e) {
+      debugPrint('❌ [FastAssetCache] SVGA buffer decode failed for $url: $e');
+    }
+
+    try {
+      final parser = SVGAParser();
+      return await parser.decodeFromURL(url);
+    } catch (e) {
+      debugPrint('❌ [FastAssetCache] SVGAParser decodeFromURL fallback failed for $url: $e');
+    }
+    return null;
+  }
+
+  static void clear() {
+    _bytesCache.clear();
+    _filePathCache.clear();
+    _movieCache.clear();
+    _inFlightBytes.clear();
+    _inFlightFiles.clear();
+    _inFlightMovies.clear();
+  }
+}
+
 /// A unified widget that can display SVGA, MP4 (with transparent Alpha video support),
 /// and standard PNG/JPEG images. It accepts either remote URLs or local Files
 /// and handles initialization and rendering seamlessly.
 class UniversalAssetWidget extends StatefulWidget {
   final String? url;
   final File? file;
+  final double? width;
+  final double? height;
   final BoxFit fit;
   final bool looping;
   final bool isAlphaVideo;
   final bool? isMaskLeft;
+  final bool isVerticalLayout;
+  final Widget? placeholder;
+  final Widget? errorWidget;
+  final VoidCallback? onComplete;
+  final ValueChanged<Duration>? onDurationLoaded;
 
   const UniversalAssetWidget({
     super.key,
     this.url,
     this.file,
+    this.width,
+    this.height,
     this.fit = BoxFit.contain,
     this.looping = true,
     this.isAlphaVideo = true,
     this.isMaskLeft,
+    this.isVerticalLayout = false,
+    this.placeholder,
+    this.errorWidget,
+    this.onComplete,
+    this.onDurationLoaded,
   }) : assert(url != null || file != null, 'Either url or file must be provided');
-
-  // Static in-memory cache for raw SVGA binary bytes to eliminate repeated network downloading
-  // We cache bytes instead of MovieEntity because MovieEntity's internal bitmaps are disposed
-  // when an SVGAAnimationController disposes, causing re-preview to freeze if MovieEntity is reused.
-  static final Map<String, Uint8List> _svgaBytesCache = {};
-  static final Map<String, Future<Uint8List?>> _svgaInFlight = {};
 
   /// Preload an SVGA URL into memory cache
   static Future<MovieEntity?> preloadSvga(String url) async {
-    if (url.isEmpty) return null;
-    return await _decodeSvgaFromUrl(url);
-  }
-
-  static Future<Uint8List?> _fetchSvgaBytes(String url) async {
-    if (_svgaBytesCache.containsKey(url)) {
-      return _svgaBytesCache[url];
-    }
-    if (_svgaInFlight.containsKey(url)) {
-      return await _svgaInFlight[url];
-    }
-
-    final future = _loadBytesFromNetworkOrDisk(url);
-    _svgaInFlight[url] = future;
-    try {
-      final bytes = await future;
-      if (bytes != null && bytes.isNotEmpty) {
-        _svgaBytesCache[url] = bytes;
-      }
-      return bytes;
-    } finally {
-      _svgaInFlight.remove(url);
-    }
-  }
-
-  static Future<Uint8List?> _loadBytesFromNetworkOrDisk(String url) async {
-    try {
-      final file = await DefaultCacheManager().getSingleFile(url);
-      return await file.readAsBytes();
-    } catch (_) {
-      try {
-        final client = HttpClient();
-        final request = await client.getUrl(Uri.parse(url));
-        final response = await request.close();
-        final bytes = await consolidateHttpClientResponseBytes(response);
-        return bytes;
-      } catch (e) {
-        debugPrint('❌ [UniversalAssetWidget] SVGA fetch bytes failed for $url: $e');
-        return null;
-      }
-    }
-  }
-
-  static Future<MovieEntity?> _decodeSvgaFromUrl(String url) async {
-    try {
-      final bytes = await _fetchSvgaBytes(url);
-      if (bytes != null && bytes.isNotEmpty) {
-        final parser = SVGAParser();
-        return await parser.decodeFromBuffer(bytes);
-      }
-    } catch (e) {
-      debugPrint('❌ [UniversalAssetWidget] SVGA decode failed for $url: $e');
-    }
-    return null;
+    return await FastAssetCache.decodeSvga(url);
   }
 
   static void clearSvgaCache() {
-    _svgaBytesCache.clear();
-    _svgaInFlight.clear();
+    FastAssetCache.clear();
   }
 
   @override
@@ -417,7 +658,7 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
 
     MovieEntity? movie;
     if (widget.url != null && widget.url!.isNotEmpty) {
-      movie = await UniversalAssetWidget._decodeSvgaFromUrl(widget.url!);
+      movie = await FastAssetCache.decodeSvga(widget.url!);
     } else if (widget.file != null) {
       movie = await _parseLocalSvga(widget.file!);
     }
@@ -427,6 +668,15 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
         _svgaMovie = movie;
         _isSvgaLoading = false;
       });
+
+      if (movie != null) {
+        try {
+          final int frames = movie.params.frames;
+          final int fps = movie.params.fps;
+          final dur = Duration(milliseconds: (frames / (fps > 0 ? fps : 20) * 1000).toInt());
+          widget.onDurationLoaded?.call(dur);
+        } catch (_) {}
+      }
     }
   }
 
@@ -476,22 +726,7 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
           }
           videoFile = fileToUse;
         } else if (widget.url != null && widget.url!.isNotEmpty) {
-          try {
-            File cachedFile = await DefaultCacheManager().getSingleFile(widget.url!);
-
-            // Critical Fix: Android/iOS players require standard extensions like .mp4
-            if (!cachedFile.path.toLowerCase().endsWith('.mp4')) {
-              final newPath = '${cachedFile.path}.mp4';
-              final newFile = File(newPath);
-              if (!await newFile.exists()) {
-                await cachedFile.copy(newPath);
-              }
-              cachedFile = newFile;
-            }
-            videoFile = cachedFile;
-          } catch (e) {
-            debugPrint('⚠️ [UniversalAssetWidget] Network cache failed for video: $e. Falling back to direct URL.');
-          }
+          videoFile = await FastAssetCache.getVideoFile(widget.url!);
         }
 
         if (loadId != _currentLoadId) return;
@@ -519,6 +754,7 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
           });
           _videoController!.setLooping(widget.looping);
           _videoController!.play();
+          widget.onDurationLoaded?.call(_videoController!.value.duration);
         }
       } catch (e) {
         debugPrint('❌ [UniversalAssetWidget] Video Exception: $e');
@@ -554,35 +790,40 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
 
   @override
   Widget build(BuildContext context) {
+    Widget result;
+
     if (_isFormat('vap') && Theme.of(context).platform == TargetPlatform.android) {
       final vapSource = widget.file != null ? widget.file!.path : (widget.url ?? '');
-      return VapWidget(
+      result = VapWidget(
         url: vapSource,
         fit: widget.fit,
         isMaskLeft: _effectiveIsMaskLeft,
       );
-    }
-
-    if (_isFormat('mp4') || _isFormat('vap')) {
+    } else if (_isFormat('mp4') || _isFormat('vap')) {
       if (_hasVideoError) {
-        return const Center(
-          child: Icon(Icons.image, color: Colors.red, size: 36),
-        );
-      }
-      if (!_isVideoInitialized || _videoController == null) {
-        return const Center(
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
-        );
-      }
-
-      if (widget.isAlphaVideo) {
-        return AlphaVideoPlayer(
+        result = widget.errorWidget ??
+            (widget.isAlphaVideo
+                ? const SizedBox.shrink()
+                : const Center(
+                    child: Icon(Icons.image, color: Colors.red, size: 36),
+                  ));
+      } else if (!_isVideoInitialized || _videoController == null) {
+        result = widget.placeholder ??
+            (widget.isAlphaVideo
+                ? const SizedBox.shrink()
+                : const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
+                  ));
+      } else if (widget.isAlphaVideo) {
+        result = AlphaVideoPlayer(
           controller: _videoController!,
           fit: widget.fit,
           isMaskLeft: _effectiveIsMaskLeft,
+          isVerticalLayout: widget.isVerticalLayout,
+          onComplete: widget.onComplete,
         );
       } else {
-        return SizedBox.expand(
+        result = SizedBox.expand(
           child: FittedBox(
             fit: widget.fit,
             child: SizedBox(
@@ -595,24 +836,33 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
       }
     } else if (_isFormat('svga')) {
       if (_svgaMovie != null) {
-        return _LocalSvgaPlayer(
+        result = _LocalSvgaPlayer(
           key: ValueKey(_svgaLoadedSource),
           movieEntity: _svgaMovie!,
           fit: widget.fit,
+          looping: widget.looping,
+          onComplete: widget.onComplete,
         );
+      } else if (_isSvgaLoading) {
+        result = widget.placeholder ??
+            const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
+              ),
+            );
+      } else if (widget.url != null && widget.url!.startsWith('http')) {
+        // Fallback to cached network image in case format was misclassified or binary decode failed
+        result = CachedNetworkImage(
+          imageUrl: widget.url!,
+          fit: widget.fit,
+          placeholder: (context, url) => widget.placeholder ?? const SizedBox.shrink(),
+          errorWidget: (context, url, error) => widget.errorWidget ?? const SizedBox.shrink(),
+        );
+      } else {
+        result = widget.errorWidget ?? const SizedBox.shrink();
       }
-      if (_isSvgaLoading) {
-        return widget.isAlphaVideo
-            ? const SizedBox.shrink()
-            : const Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
-                ),
-              );
-      }
-      return const SizedBox.shrink();
     } else {
       // Treat as PNG, WEBP or standard image
       final bool isWebp = _isFormat('webp');
@@ -631,53 +881,66 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
           content = Image.file(
             File(filePath),
             fit: effectiveFit,
-            errorBuilder: (context, error, stackTrace) => widget.isAlphaVideo
-                ? const SizedBox.shrink()
-                : const Center(
-                    child: Icon(Icons.image, color: Colors.grey, size: 36),
-                  ),
+            errorBuilder: (context, error, stackTrace) =>
+                widget.errorWidget ??
+                (widget.isAlphaVideo
+                    ? const SizedBox.shrink()
+                    : const Center(
+                        child: Icon(Icons.image, color: Colors.grey, size: 36),
+                      )),
           );
         } catch (_) {
-          content = widget.isAlphaVideo
-              ? const SizedBox.shrink()
-              : const Center(
-                  child: Icon(Icons.broken_image, color: Colors.grey, size: 36),
-                );
+          content = widget.errorWidget ??
+              (widget.isAlphaVideo
+                  ? const SizedBox.shrink()
+                  : const Center(
+                      child: Icon(Icons.broken_image, color: Colors.grey, size: 36),
+                    ));
         }
       } else if (widget.url != null && widget.url!.startsWith('http')) {
         content = CachedNetworkImage(
           imageUrl: widget.url!,
           fit: effectiveFit,
           fadeInDuration: const Duration(milliseconds: 150),
-          placeholder: (context, url) => widget.isAlphaVideo
-              ? const SizedBox.shrink()
-              : const Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
-                  ),
-                ),
-          errorWidget: (context, url, error) => widget.isAlphaVideo
-              ? const SizedBox.shrink()
-              : const Center(
-                  child: Icon(Icons.image, color: Colors.grey, size: 36),
-                ),
+          placeholder: (context, url) =>
+              widget.placeholder ??
+              (widget.isAlphaVideo
+                  ? const SizedBox.shrink()
+                  : const Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
+                      ),
+                    )),
+          errorWidget: (context, url, error) =>
+              widget.errorWidget ??
+              (widget.isAlphaVideo
+                  ? const SizedBox.shrink()
+                  : const Center(
+                      child: Icon(Icons.image, color: Colors.grey, size: 36),
+                    )),
         );
       } else {
-        content = widget.isAlphaVideo
-            ? const SizedBox.shrink()
-            : const Center(
-                child: Icon(Icons.image, color: Colors.grey, size: 36),
-              );
+        content = widget.errorWidget ??
+            (widget.isAlphaVideo
+                ? const SizedBox.shrink()
+                : const Center(
+                    child: Icon(Icons.image, color: Colors.grey, size: 36),
+                  ));
       }
 
-      if (isWebp) {
-        return content;
-      }
-
-      return content;
+      result = content;
     }
+
+    if (widget.width != null || widget.height != null) {
+      return SizedBox(
+        width: widget.width,
+        height: widget.height,
+        child: result,
+      );
+    }
+    return result;
   }
 
   Future<MovieEntity?> _parseLocalSvga(File file) async {
@@ -696,10 +959,15 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
 class _LocalSvgaPlayer extends StatefulWidget {
   final MovieEntity movieEntity;
   final BoxFit fit;
+  final bool looping;
+  final VoidCallback? onComplete;
+
   const _LocalSvgaPlayer({
     super.key,
     required this.movieEntity,
     this.fit = BoxFit.contain,
+    this.looping = true,
+    this.onComplete,
   });
 
   @override
@@ -714,16 +982,29 @@ class _LocalSvgaPlayerState extends State<_LocalSvgaPlayer> with SingleTickerPro
     super.initState();
     _controller = SVGAAnimationController(vsync: this);
     _controller.videoItem = widget.movieEntity;
-    _controller.repeat();
+    if (widget.looping) {
+      _controller.repeat();
+    } else {
+      _controller.addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          widget.onComplete?.call();
+        }
+      });
+      _controller.forward();
+    }
   }
 
   @override
   void didUpdateWidget(covariant _LocalSvgaPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.movieEntity != widget.movieEntity) {
+    if (oldWidget.movieEntity != widget.movieEntity || oldWidget.looping != widget.looping) {
       _controller.videoItem = widget.movieEntity;
       _controller.reset();
-      _controller.repeat();
+      if (widget.looping) {
+        _controller.repeat();
+      } else {
+        _controller.forward();
+      }
     }
   }
 

@@ -505,6 +505,29 @@ class AudioRoomsV2Integration {
         }
       }
 
+      // Check if user is blocked or kicked
+      if (room.isUserBlocked(currentUser.userId)) {
+        Get.snackbar(
+          'Access Denied',
+          'You are blocked from entering this room.',
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+
+      if (room.isUserKickedRecently(currentUser.userId)) {
+        Get.snackbar(
+          'Access Denied',
+          'You have been removed from this room and cannot join for 24 hours.',
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+
       // If user is already in the room, just navigate there
       if (room.isParticipant(currentUser.userId)) {
         Get.to(() => AudioRoomScreen(
