@@ -9,6 +9,9 @@ import 'package:flutter/services.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
 import 'package:chat_messenger/services/svip_service.dart';
 import 'package:chat_messenger/screens/room/seller_history_screen.dart';
+import 'package:chat_messenger/screens/room/seller_kyc_screen.dart';
+import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
+import 'package:get/get.dart';
 
 class DiamondSellerScreen extends StatefulWidget {
   final User currentUser;
@@ -31,6 +34,14 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
   Map<String, dynamic>? _sellerData;
   String? _sellerDocId;
 
+  // Sales filter & stats
+  String _selectedSalesFilter = 'Total'; // 'Daily', 'Weekly', 'Monthly', 'Total'
+  int _dailySales = 0;
+  int _weeklySales = 0;
+  int _monthlySales = 0;
+  int _calculatedTotalSales = 0;
+  StreamSubscription<QuerySnapshot>? _salesTransactionsSubscription;
+
   // Found user data
   User? _foundUser;
   String? _searchError;
@@ -40,6 +51,7 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
   void initState() {
     super.initState();
     _listenToSellerData();
+    _listenToSalesTransactions();
   }
 
   @override
@@ -47,6 +59,7 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
     _searchController.dispose();
     _amountController.dispose();
     _sellerSubscription?.cancel();
+    _salesTransactionsSubscription?.cancel();
     super.dispose();
   }
 
@@ -80,6 +93,84 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
         setState(() => _isLoadingSeller = false);
       }
     });
+  }
+
+  void _listenToSalesTransactions() {
+    _salesTransactionsSubscription?.cancel();
+    _salesTransactionsSubscription = _firestore
+        .collection('seller_transactions')
+        .where('sellerId', isEqualTo: widget.currentUser.userId)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      int daily = 0;
+      int weekly = 0;
+      int monthly = 0;
+      int total = 0;
+
+      final now = DateTime.now();
+      final startOfToday = DateTime(now.year, now.month, now.day);
+      final startOfWeek = startOfToday.subtract(Duration(days: now.weekday - 1));
+      final startOfMonth = DateTime(now.year, now.month, 1);
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final amount = (data['amount'] as num?)?.toInt() ?? 0;
+        total += amount;
+
+        final ts = data['createdAt'] as Timestamp?;
+        if (ts != null) {
+          final date = ts.toDate();
+          if (!date.isBefore(startOfToday)) {
+            daily += amount;
+          }
+          if (!date.isBefore(startOfWeek)) {
+            weekly += amount;
+          }
+          if (!date.isBefore(startOfMonth)) {
+            monthly += amount;
+          }
+        }
+      }
+
+      setState(() {
+        _dailySales = daily;
+        _weeklySales = weekly;
+        _monthlySales = monthly;
+        _calculatedTotalSales = total;
+      });
+    }, onError: (e) {
+      debugPrint('Error listening to sales transactions: $e');
+    });
+  }
+
+  int get _displaySales {
+    switch (_selectedSalesFilter) {
+      case 'Daily':
+        return _dailySales;
+      case 'Weekly':
+        return _weeklySales;
+      case 'Monthly':
+        return _monthlySales;
+      case 'Total':
+      default:
+        final docTotal = (_sellerData?['totalSales'] as num?)?.toInt() ?? 0;
+        return docTotal > _calculatedTotalSales ? docTotal : _calculatedTotalSales;
+    }
+  }
+
+  String get _displaySalesLabel {
+    switch (_selectedSalesFilter) {
+      case 'Daily':
+        return 'Daily Sales'.tr;
+      case 'Weekly':
+        return 'Weekly Sales'.tr;
+      case 'Monthly':
+        return 'Monthly Sales'.tr;
+      case 'Total':
+      default:
+        return 'Total Sales'.tr;
+    }
   }
 
   Future<void> _searchUser() async {
@@ -138,9 +229,26 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Confirm Recharge'),
-        content: Text(
-          'Send $amount diamonds to ${_foundUser!.fullname} (ID: ${_foundUser!.searchId})?',
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            DynamicDiamondIcon(width: 22, height: 22),
+            SizedBox(width: 8),
+            Text('Confirm Recharge'),
+          ],
+        ),
+        content: Row(
+          children: [
+            const Text('Send '),
+            const DynamicDiamondIcon(width: 16, height: 16),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                '$amount diamonds to ${_foundUser!.fullname} (ID: ${_foundUser!.searchId})?',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -149,8 +257,11 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.pink),
-            child: const Text('Confirm', style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.pink,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Confirm', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -267,8 +378,12 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
             (_sellerData?['totalSales'] ?? 0) + amount;
       });
       
-      // Send official system notification
-      OfficialTeamApi.sendDiamondSellerRechargeMessage(_foundUser!, widget.currentUser, amount);
+      // Send official system notification (sales notification for both buyer and seller)
+      try {
+        await OfficialTeamApi.sendDiamondSellerRechargeMessage(_foundUser!, widget.currentUser, amount);
+      } catch (ex) {
+        debugPrint('⚠️ Error sending sales notification: $ex');
+      }
 
       _showSnackBar(
           'Successfully sent $amount diamonds to ${_foundUser!.fullname}!',
@@ -325,11 +440,25 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
         ],
       ),
       backgroundColor: Colors.grey.shade100,
-      body: _isLoadingSeller
-          ? const Center(child: CircularProgressIndicator())
-          : _sellerData == null || _sellerData!['isActive'] != true
-              ? _buildNotSellerView()
-              : _buildSellerView(),
+      body: SafeArea(
+        top: false,
+        bottom: true,
+        child: _isLoadingSeller
+            ? const Center(child: CircularProgressIndicator())
+            : _sellerData != null && _sellerData!['isActive'] == true
+                ? _buildSellerView()
+                : (_sellerData != null || widget.currentUser.isSeller == true || widget.currentUser.sellerAssigned == true)
+                    ? SellerKycView(
+                        currentUser: widget.currentUser,
+                        sellerData: _sellerData ?? {
+                          'userId': widget.currentUser.userId,
+                          'directSellerId': '',
+                          'directSellerName': '',
+                          'kycStatus': 'not_submitted',
+                        },
+                      )
+                    : _buildNotSellerView(),
+      ),
     );
   }
 
@@ -381,6 +510,7 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
               style: const TextStyle(color: Colors.red, fontSize: 14),
             ),
           ],
+          const SizedBox(height: 24),
         ],
       ),
     );
@@ -389,7 +519,6 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
   Widget _buildSellerInfoCard() {
     final balance = _sellerData?['accountBalance'] ?? 0;
     final sellerName = _sellerData?['sellerName'] ?? 'Seller';
-    final totalSales = _sellerData?['totalSales'] ?? 0;
 
     return Container(
       width: double.infinity,
@@ -400,56 +529,159 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF8E44AD).withValues(alpha: 0.35),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            sellerName,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              Text(
+                sellerName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              // Sales Filter Dropdown (Daily, Weekly, Monthly, Total)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white38, width: 1),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _selectedSalesFilter,
+                    isDense: true,
+                    dropdownColor: const Color(0xFF7D3C98),
+                    icon: const Icon(Icons.arrow_drop_down_rounded, color: Colors.white, size: 20),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: 'Daily',
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.today_rounded, color: Colors.white70, size: 14),
+                            const SizedBox(width: 6),
+                            Text('Daily'.tr),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Weekly',
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.date_range_rounded, color: Colors.white70, size: 14),
+                            const SizedBox(width: 6),
+                            Text('Weekly'.tr),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Monthly',
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.calendar_month_rounded, color: Colors.white70, size: 14),
+                            const SizedBox(width: 6),
+                            Text('Monthly'.tr),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Total',
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.all_inclusive_rounded, color: Colors.white70, size: 14),
+                            const SizedBox(width: 6),
+                            Text('Total'.tr),
+                          ],
+                        ),
+                      ),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _selectedSalesFilter = val);
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Account Balance with Real-time Diamond Icon
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Account Balance',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  const SizedBox(height: 4),
                   Text(
-                    balance.toString(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    'Account Balance'.tr,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const DynamicDiamondIcon(width: 24, height: 24),
+                      const SizedBox(width: 6),
+                      Text(
+                        balance.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
+              // Sales (Filtered) with Real-time Diamond Icon
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Text(
-                    'Total Sales',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  const SizedBox(height: 4),
                   Text(
-                    totalSales.toString(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    _displaySalesLabel,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const DynamicDiamondIcon(width: 20, height: 20),
+                      const SizedBox(width: 6),
+                      Text(
+                        '$_displaySales',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -587,7 +819,10 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
             controller: _amountController,
             decoration: InputDecoration(
               hintText: 'Enter diamond amount',
-              prefixIcon: const Icon(Icons.diamond, color: Colors.pink),
+              prefixIcon: const Padding(
+                padding: EdgeInsets.all(12),
+                child: DynamicDiamondIcon(width: 20, height: 20),
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -596,6 +831,37 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
             ),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          ),
+          const SizedBox(height: 10),
+          // Quick amount preset chips
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [100, 500, 1000, 5000, 10000, 50000].map((amt) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ActionChip(
+                    backgroundColor: Colors.pink.shade50,
+                    side: BorderSide(color: Colors.pink.shade200),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    avatar: const DynamicDiamondIcon(width: 14, height: 14),
+                    label: Text(
+                      '+$amt',
+                      style: const TextStyle(
+                        color: Colors.pink,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _amountController.text = amt.toString();
+                      });
+                    },
+                  ),
+                );
+              }).toList(),
+            ),
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -619,9 +885,16 @@ class _DiamondSellerScreenState extends State<DiamondSellerScreen> {
                             AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     )
-                  : const Text(
-                      'Send Diamonds',
-                      style: TextStyle(fontSize: 18, color: Colors.white),
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const DynamicDiamondIcon(width: 20, height: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Send Diamonds'.tr,
+                          style: const TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ],
                     ),
             ),
           ),

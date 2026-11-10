@@ -396,9 +396,10 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
 
           final effectiveBgUrl = bgUrl;
           final effectiveBgColor = bgColor;
+          final bool shouldDrawBackground = widget.showAppBar;
 
           return Container(
-            decoration: (effectiveBgUrl != null && effectiveBgUrl.isNotEmpty)
+            decoration: (shouldDrawBackground && effectiveBgUrl != null && effectiveBgUrl.isNotEmpty)
                 ? BoxDecoration(
                     image: DecorationImage(
                       image: CachedNetworkImageProvider(effectiveBgUrl),
@@ -414,9 +415,11 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
                 ),
               ),
               child: Scaffold(
-                backgroundColor: (effectiveBgUrl != null && effectiveBgUrl.isNotEmpty)
-                    ? Colors.transparent
-                    : (effectiveBgColor ?? const Color(0xFF120C1C)),
+                backgroundColor: shouldDrawBackground
+                    ? ((effectiveBgUrl != null && effectiveBgUrl.isNotEmpty)
+                        ? Colors.transparent
+                        : (effectiveBgColor ?? const Color(0xFF120C1C)))
+                    : Colors.transparent,
                 appBar: widget.showAppBar
                     ? _buildAppBar(primaryTextColor, secondaryTextColor, isLightBg)
                     : null,
@@ -1166,8 +1169,9 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
     }
 
     if (state is AudioRoomsLoaded) {
+      final nonLiveRooms = state.userRooms.where((room) => room.category != 'Live').toList();
       return RoomList(
-        rooms: state.userRooms,
+        rooms: nonLiveRooms,
         title: 'My Room',
         showTotalCount: false,
         onRoomTap: _handleRoomTap,
@@ -1205,29 +1209,20 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
       );
     }
 
+    final currentUser = AuthController.instance.currentUser;
     final List<AudioRoomV2> liveRooms = [];
     if (state is AudioRoomsLoaded) {
       final allRooms = state.isSearching ? state.searchResults : state.popularRooms;
-      liveRooms.addAll(allRooms.where((room) => room.category == 'Live'));
-    }
-
-    final currentUser = AuthController.instance.currentUser;
-    
-    bool hasActiveLiveRoom = false;
-    if (state is AudioRoomsLoaded) {
-      hasActiveLiveRoom = state.userRooms.any(
-        (room) => room.creatorId == currentUser.userId && room.category == 'Live'
-      );
+      liveRooms.addAll(allRooms.where((room) => room.category == 'Live' && room.isActive && room.creatorId != currentUser.userId));
     }
 
     List<Widget> roomWidgets = [];
 
-    // If user has no active live room, show Create button
-    if (!hasActiveLiveRoom) {
-      roomWidgets.add(
-        GestureDetector(
-          onTap: () async {
-             _showLoadingSnackBar('Creating Live Room...');
+    // The user's live video room is always opened via the Create card in the Live tab
+    roomWidgets.add(
+      GestureDetector(
+        onTap: () async {
+          _showLoadingSnackBar('Starting Live Stream...');
              try {
                final repository = AudioRoomsRepository();
                final newRoom = await repository.createRoom(
@@ -1368,9 +1363,8 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
               ),
             ),
           ),
-        )
+        ),
       );
-    }
 
     // Add actual live rooms
     for (var room in liveRooms) {
@@ -1675,49 +1669,87 @@ class _AudioRoomsV2ScreenState extends State<AudioRoomsV2Screen>
 
   /// Build error widget
   Widget _buildErrorWidget(String message) {
+    final lowerMsg = message.toLowerCase();
+    String displayMessage = 'Failed to load rooms. Please try again.';
+    if (lowerMsg.contains('internet') ||
+        lowerMsg.contains('network') ||
+        lowerMsg.contains('socket') ||
+        lowerMsg.contains('failed to connect') ||
+        lowerMsg.contains('timed out') ||
+        lowerMsg.contains('firebase') ||
+        lowerMsg.contains('firestore') ||
+        lowerMsg.contains('livekit') ||
+        lowerMsg.contains('agora') ||
+        lowerMsg.contains('exception')) {
+      displayMessage = 'Failed to connect. Please check your internet connection.';
+    } else if (message.trim().isNotEmpty && message.length < 80) {
+      displayMessage = message;
+    }
+
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(defaultPadding * 2),
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.error_outline,
-              size: 80,
-              color: Colors.red[400],
+            Container(
+              width: 90,
+              height: 90,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.08),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  width: 1.5,
+                ),
+              ),
+              child: Icon(
+                Icons.wifi_tethering_off_rounded,
+                size: 44,
+                color: Colors.white.withValues(alpha: 0.8),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             const Text(
-              'Something went wrong',
+              'Network Error',
               style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
                 color: Colors.white,
+                letterSpacing: 0.3,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              message,
+              displayMessage,
               style: TextStyle(
-                fontSize: 14,
-                color: Colors.white.withValues(alpha: 0.7),
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.65),
+                height: 1.4,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: _handleRefresh,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try Again'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 12,
+            SizedBox(
+              width: 180,
+              height: 44,
+              child: ElevatedButton(
+                onPressed: _handleRefresh,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A3FF),
+                  foregroundColor: Colors.white,
+                  elevation: 4,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(22),
+                  ),
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(25),
+                child: const Text(
+                  'Try Again',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),

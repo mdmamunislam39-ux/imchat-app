@@ -31,6 +31,7 @@ import 'package:chat_messenger/components/rich_text_viewer.dart';
 import 'package:chat_messenger/screens/news_feed/post_media_viewer.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
+import 'package:chat_messenger/api/user_api.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/audio_rooms_v2_integration.dart';
 import 'package:chat_messenger/tabs/profile/edit_profile_screen.dart';
 import 'package:chat_messenger/services/news_feed_service.dart';
@@ -147,11 +148,14 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
 
   Future<User?> _getUserData() async {
     try {
+      if (widget.userID == 'official_team' || widget.userID.startsWith('official_channel_')) {
+        return await UserApi.getUser(widget.userID);
+      }
       final doc = await _firestore.collection('Users').doc(widget.userID).get();
       if (doc.exists) {
         return User.fromMap(doc.data()!);
       }
-      return null;
+      return await UserApi.getUser(widget.userID);
     } catch (e) {
       debugPrint('❌ Error fetching user data: $e');
       return null;
@@ -485,19 +489,6 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         _roomProfileBackgroundUrl = newRpBgUrl;
         _shortProfileThemeUrl = newShortProfileThemeUrl;
       });
-
-      if (_roomProfileBackgroundUrl != null &&
-          _roomProfileBackgroundUrl!.isNotEmpty &&
-          !_hasPlayedRoomProfileBackground &&
-          _bgAnimationTimer == null) {
-        _bgAnimationTimer = Timer(const Duration(seconds: 4), () {
-          if (mounted) {
-            setState(() {
-              _hasPlayedRoomProfileBackground = true;
-            });
-          }
-        });
-      }
     }
   }
 
@@ -1787,15 +1778,16 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
           ),
           bottomNavigationBar: isOwner ? null : _buildBottomNavigationBar(),
         ),
-        if (!_hasPlayedRoomProfileBackground &&
-            _roomProfileBackgroundUrl != null &&
+        if (_roomProfileBackgroundUrl != null &&
             _roomProfileBackgroundUrl!.isNotEmpty)
           Positioned.fill(
             child: IgnorePointer(
               child: UniversalAssetWidget(
+                key: ValueKey(_roomProfileBackgroundUrl),
                 url: _roomProfileBackgroundUrl,
                 fit: BoxFit.cover,
-                looping: false,
+                isAlphaVideo: true,
+                looping: true,
               ),
             ),
           ),
@@ -1810,6 +1802,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
             ? _viewedUser!.fullname
             : widget.userName)
         .formattedUsername;
+    final bool isOfficial = widget.userID == 'official_team' ||
+        widget.userID.startsWith('official_channel_');
 
     return SliverAppBar(
       expandedHeight: 280,
@@ -1915,9 +1909,10 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                       CachedCircleAvatar(
                         imageUrl: (_viewedUser?.photoUrl.isNotEmpty == true)
                             ? _viewedUser!.photoUrl
-                            : (widget.userImage.isEmpty
-                                ? "https://i.pravatar.cc/150?img=9"
-                                : widget.userImage),
+                            : (widget.userImage.isNotEmpty
+                                ? widget.userImage
+                                : (isOfficial ? 'assets/images/app_logo.png' : "https://i.pravatar.cc/150?img=9")),
+                        userId: widget.userID,
                         radius: 40,
                         frameUrl: currentFrameUrl,
                       ),
@@ -1942,7 +1937,7 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                          if (_viewedUser?.isVerified == true) ...[
+                          if (_viewedUser?.isVerified == true || isOfficial) ...[
                             const SizedBox(width: 6),
                             const Icon(
                               Icons.verified,
@@ -1951,46 +1946,61 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                             ),
                           ],
                           const SizedBox(width: 8),
-                          Builder(builder: (context) {
-                            final isBoy =
-                                _viewedUser?.gender.toLowerCase() == 'boy' ||
-                                    _viewedUser?.gender.toLowerCase() == 'male';
-                            final color =
-                                isBoy ? Colors.blueAccent : Colors.pinkAccent;
-                            final icon = isBoy ? Icons.male : Icons.female;
+                          if (!isOfficial)
+                            Builder(builder: (context) {
+                              final isBoy =
+                                  _viewedUser?.gender.toLowerCase() == 'boy' ||
+                                      _viewedUser?.gender.toLowerCase() == 'male';
+                              final color =
+                                  isBoy ? Colors.blueAccent : Colors.pinkAccent;
+                              final icon = isBoy ? Icons.male : Icons.female;
 
-                            int age = 18; // default
-                            if (_viewedUser?.birthday != null &&
-                                _viewedUser!.birthday.isNotEmpty) {
-                              try {
-                                final parts = _viewedUser!.birthday.split('-');
-                                if (parts.length >= 3) {
-                                  final year = int.tryParse(parts[0]);
-                                  if (year != null) {
-                                    age = DateTime.now().year - year;
+                              int age = 18; // default
+                              if (_viewedUser?.birthday != null &&
+                                  _viewedUser!.birthday.isNotEmpty) {
+                                try {
+                                  final parts = _viewedUser!.birthday.split('-');
+                                  if (parts.length >= 3) {
+                                    final year = int.tryParse(parts[0]);
+                                    if (year != null) {
+                                      age = DateTime.now().year - year;
+                                    }
                                   }
-                                }
-                              } catch (_) {}
-                            }
+                                } catch (_) {}
+                              }
 
-                            return Container(
+                              return Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(icon, color: Colors.white, size: 12),
+                                    const SizedBox(width: 2),
+                                    Text('$age',
+                                        style: const TextStyle(
+                                            color: Colors.white, fontSize: 10)),
+                                  ],
+                                ),
+                              );
+                            })
+                          else
+                            Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
+                                  horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
-                                color: color,
+                                color: Colors.blueAccent,
                                 borderRadius: BorderRadius.circular(10),
                               ),
-                              child: Row(
-                                children: [
-                                  Icon(icon, color: Colors.white, size: 12),
-                                  const SizedBox(width: 2),
-                                  Text('$age',
-                                      style: const TextStyle(
-                                          color: Colors.white, fontSize: 10)),
-                                ],
-                              ),
-                            );
-                          }),
+                              child: const Text('Official',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold)),
+                            ),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -2218,6 +2228,8 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
               child: UniversalAssetWidget(
                 url: _shortProfileThemeUrl,
                 fit: BoxFit.cover,
+                looping: false,
+                isAlphaVideo: true,
               ),
             ),
           Padding(
@@ -2246,29 +2258,33 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            bio.isEmpty
-                                ? 'default_bio_empty'.tr
+                            (bio.isEmpty || bio == 'default_bio_empty'.tr)
+                                ? ((widget.userID == 'official_team' || widget.userID.startsWith('official_channel_'))
+                                    ? UserApi.officialDefaultBio
+                                    : 'default_bio_empty'.tr)
                                 : bio,
                             style: const TextStyle(
                                 color: Colors.grey, fontSize: 13),
-                            maxLines: 2,
+                            maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              const Icon(Icons.access_time,
-                                  size: 14, color: Colors.grey),
-                              const SizedBox(width: 4),
-                              Text(
-                                memberSince != null
-                                    ? '${'joined_app'.tr} : ${_formatDate(memberSince!)}'
-                                    : '${'joined_app'.tr} : 0 ${'days'.tr}',
-                                style: const TextStyle(
-                                    color: Colors.grey, fontSize: 12),
-                              ),
-                            ],
-                          ),
+                          if (!(widget.userID == 'official_team' || widget.userID.startsWith('official_channel_'))) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                const Icon(Icons.access_time,
+                                    size: 14, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text(
+                                  memberSince != null
+                                      ? '${'joined_app'.tr} : ${_formatDate(memberSince!)}'
+                                      : '${'joined_app'.tr} : 0 ${'days'.tr}',
+                                  style: const TextStyle(
+                                      color: Colors.grey, fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -2568,6 +2584,9 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
   }
 
   Widget _buildBottomNavigationBar() {
+    final bool isOfficial = widget.userID == 'official_team' ||
+        widget.userID.startsWith('official_channel_');
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -2581,36 +2600,53 @@ class _ProfilePageForRoomState extends State<ProfilePageForRoom> {
         ],
       ),
       child: SafeArea(
-        child: Row(
-          children: [
-            Expanded(
-              child: _buildBottomActionButton(
-                  isFriend ? 'Message' : 'Add Friend',
-                  isFriend ? Icons.message : Icons.person_add_alt_1,
-                  Colors.greenAccent.shade700, () async {
-                var user = await _getUserData();
-                if (user != null) {
-                  if (isFriend) {
-                    RoutesHelper.toMessages(user: user).then((_) {
-                      Get.back();
-                    });
-                  } else {
-                    await ContactApi.sendFriendRequest(
-                        targetUserId: user.userId, showMsg: true);
-                  }
-                }
-              }),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildBottomActionButton(
-                  isFollowing ? 'Following' : 'Follow',
-                  Icons.favorite,
-                  Colors.greenAccent.shade700,
-                  _toggleFollow),
-            ),
-          ],
-        ),
+        child: isOfficial
+            ? SizedBox(
+                width: double.infinity,
+                child: _buildBottomActionButton(
+                  'Official Channel Messages',
+                  Icons.campaign_rounded,
+                  Colors.blueAccent,
+                  () async {
+                    var user = await _getUserData();
+                    if (user != null) {
+                      RoutesHelper.toMessages(user: user).then((_) {
+                        Get.back();
+                      });
+                    }
+                  },
+                ),
+              )
+            : Row(
+                children: [
+                  Expanded(
+                    child: _buildBottomActionButton(
+                        isFriend ? 'Message' : 'Add Friend',
+                        isFriend ? Icons.message : Icons.person_add_alt_1,
+                        Colors.greenAccent.shade700, () async {
+                      var user = await _getUserData();
+                      if (user != null) {
+                        if (isFriend) {
+                          RoutesHelper.toMessages(user: user).then((_) {
+                            Get.back();
+                          });
+                        } else {
+                          await ContactApi.sendFriendRequest(
+                              targetUserId: user.userId, showMsg: true);
+                        }
+                      }
+                    }),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildBottomActionButton(
+                        isFollowing ? 'Following' : 'Follow',
+                        Icons.favorite,
+                        Colors.greenAccent.shade700,
+                        _toggleFollow),
+                  ),
+                ],
+              ),
       ),
     );
   }

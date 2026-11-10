@@ -54,6 +54,35 @@ android {
             }
         }
     }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            excludes += listOf(
+                "**/libnoise.so",
+                "lib/arm64-v8a/libnoise.so",
+                "lib/x86_64/libnoise.so",
+                "lib/armeabi-v7a/libnoise.so"
+            )
+            pickFirsts += listOf(
+                "**/libc++_shared.so",
+                "**/libjingle_peerconnection_so.so"
+            )
+        }
+        resources {
+            excludes += listOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/license.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/notice.txt",
+                "META-INF/ASL2.0",
+                "META-INF/*.kotlin_module"
+            )
+        }
+    }
 }
 
 kotlin {

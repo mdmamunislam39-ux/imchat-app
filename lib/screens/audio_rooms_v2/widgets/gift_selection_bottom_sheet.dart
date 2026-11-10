@@ -6,6 +6,7 @@ import 'package:chat_messenger/AdminPane/services/gift_service.dart';
 import 'package:chat_messenger/services/emoji_chat_service.dart';
 import 'package:chat_messenger/models/audio_room_v2.dart';
 import 'package:chat_messenger/components/universal_asset_widget.dart';
+import 'package:chat_messenger/services/recent_gifts_service.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
@@ -50,6 +51,7 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
   List<Gift> _allActiveGifts = [];
   List<Gift> _gifts = [];
   List<String> _categories = [];
+  List<String> _recentGiftIds = [];
   bool _isLoading = true;
   bool _isCategoriesLoading = true;
   String _selectedCategory = '';
@@ -73,14 +75,35 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
   @override
   void initState() {
     super.initState();
+    // Load recent gift IDs from cache/storage
+    _recentGiftIds = RecentGiftsService.getCachedRecentGiftIds();
+    RecentGiftsService.getRecentGiftIds(userId: widget.senderId).then((ids) {
+      if (mounted && ids.isNotEmpty) {
+        setState(() {
+          _recentGiftIds = ids;
+          if (_selectedCategory == 'Recent') {
+            _gifts = _getGiftsForCategory('Recent');
+            if (_selectedGift == null || !_gifts.any((g) => g.id == _selectedGift!.id)) {
+              _selectedGift = _gifts.isNotEmpty ? _gifts.first : null;
+            }
+          }
+        });
+      }
+    });
+
     // Immediate 0ms initialization if static memory cache is present
     if (_staticCachedGifts != null && _staticCachedGifts!.isNotEmpty && _staticCategories != null) {
       _allActiveGifts = List.from(_staticCachedGifts!);
       _categories = List.from(_staticCategories!);
-      _selectedCategory = _categories.first;
-      _gifts = _allActiveGifts.where((g) => g.category == _selectedCategory).toList();
+      if (!_categories.contains('Recent')) {
+        _categories.insert(0, 'Recent');
+      }
+      _selectedCategory = _recentGiftIds.isNotEmpty ? 'Recent' : (_categories.contains('Hot') ? 'Hot' : _categories.first);
+      _gifts = _getGiftsForCategory(_selectedCategory);
       _selectedGift = _gifts.isNotEmpty ? _gifts.first : null;
-      _tabController = TabController(length: _categories.length, vsync: this);
+      int initIdx = _categories.indexOf(_selectedCategory);
+      if (initIdx < 0) initIdx = 0;
+      _tabController = TabController(length: _categories.length, vsync: this, initialIndex: initIdx);
       _isLoading = false;
       _isCategoriesLoading = false;
     }
@@ -246,21 +269,23 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
       }
 
       final presentCategories = activeGifts.map((g) => g.category).toSet();
-      final orderedCategories = <String>[];
+      final orderedCategories = <String>['Recent'];
 
       for (final cat in configuredOrder) {
+        if (cat == 'Recent') continue;
         if (presentCategories.contains(cat) || snapshot.docs.any((d) => d.id == cat)) {
           orderedCategories.add(cat);
         }
       }
 
       for (final cat in presentCategories) {
+        if (cat == 'Recent') continue;
         if (!orderedCategories.contains(cat)) {
           orderedCategories.add(cat);
         }
       }
 
-      final categories = orderedCategories.isNotEmpty ? orderedCategories : configuredOrder;
+      final categories = orderedCategories;
     
       // Ultra-fast proactive background preloading for all active gifts (SVGA, MP4, PNG, WebP)
       final List<String> urlsToPreload = [];
@@ -293,23 +318,29 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
           return;
         }
 
-        // If selected category is no longer valid or empty, pick the first one
+        // If selected category is no longer valid or empty, pick Recent (if recent gifts exist) or Hot or first
         if (!_categories.contains(_selectedCategory) || _selectedCategory.isEmpty) {
-          _selectedCategory = _categories.first;
+          _selectedCategory = _recentGiftIds.isNotEmpty
+              ? 'Recent'
+              : (_categories.contains('Hot') ? 'Hot' : _categories.first);
         }
 
         // Filter gifts for the selected category
-        _gifts = _allActiveGifts.where((g) => g.category == _selectedCategory).toList();
+        _gifts = _getGiftsForCategory(_selectedCategory);
         
         // Update selected gift if the previous one is no longer in this category
         if (_selectedGift == null || !_gifts.any((g) => g.id == _selectedGift!.id)) {
           _selectedGift = _gifts.isNotEmpty ? _gifts.first : null;
         }
         
-        // Re-initialize tab controller if length changed
+        // Re-initialize tab controller if length changed or sync initialIndex
+        final currentIdx = _categories.indexOf(_selectedCategory);
+        final safeIdx = currentIdx >= 0 ? currentIdx : 0;
         if (_tabController?.length != categories.length) {
           _tabController?.dispose();
-          _tabController = TabController(length: categories.length, vsync: this);
+          _tabController = TabController(length: categories.length, vsync: this, initialIndex: safeIdx);
+        } else if (_tabController != null && _tabController!.index != safeIdx) {
+          _tabController!.index = safeIdx;
         }
 
         _isCategoriesLoading = false;
@@ -329,6 +360,29 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
 
 
 
+
+  List<Gift> _getGiftsForCategory(String category) {
+    if (category == 'Recent') {
+      final Map<String, Gift> giftMap = {for (var g in _allActiveGifts) g.id: g};
+      final Map<String, Gift> nameMap = {for (var g in _allActiveGifts) g.name.toLowerCase().trim(): g};
+      final List<Gift> recentList = [];
+      for (final id in _recentGiftIds) {
+        if (giftMap.containsKey(id)) {
+          final g = giftMap[id]!;
+          if (!recentList.any((item) => item.id == g.id)) {
+            recentList.add(g);
+          }
+        } else if (nameMap.containsKey(id.toLowerCase().trim())) {
+          final g = nameMap[id.toLowerCase().trim()]!;
+          if (!recentList.any((item) => item.id == g.id)) {
+            recentList.add(g);
+          }
+        }
+      }
+      return recentList;
+    }
+    return _allActiveGifts.where((g) => g.category == category).toList();
+  }
 
   void _navigateToRecharge() {
     Get.back(); // close bottom sheet
@@ -432,6 +486,15 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
     }
 
     debugPrint('🎁 [GiftSelection] Instant-sending gift: $displayName to ${receiversList.length} recipients');
+
+    // Record to recent gifts
+    RecentGiftsService.recordRecentGift(gift.id, userId: senderId);
+    if (!_recentGiftIds.contains(gift.id)) {
+      _recentGiftIds.insert(0, gift.id);
+    } else {
+      _recentGiftIds.remove(gift.id);
+      _recentGiftIds.insert(0, gift.id);
+    }
 
     // Close the bottom sheet IMMEDIATELY
     Navigator.of(context).pop();
@@ -753,7 +816,9 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
                   child: TabBar(
                     controller: _tabController!,
                     isScrollable: true,
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    tabAlignment: TabAlignment.start,
+                    padding: EdgeInsets.zero,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 14),
                     unselectedLabelColor: Colors.grey[400],
                     labelColor: Colors.white,
                     indicatorColor: cyanColor,
@@ -776,8 +841,7 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
                     onTap: (index) {
                       setState(() {
                         _selectedCategory = _categories[index];
-                        // Filter locally since we already have all active gifts from the stream
-                        _gifts = _allActiveGifts.where((g) => g.category == _selectedCategory).toList();
+                        _gifts = _getGiftsForCategory(_selectedCategory);
                         _selectedGift = _gifts.isNotEmpty ? _gifts.first : null;
                       });
                     },
@@ -797,11 +861,31 @@ class _GiftSelectionBottomSheetState extends State<GiftSelectionBottomSheet>
                       )
                     : _categories.isEmpty || _gifts.isEmpty
                         ? Center(
-                            child: Text(
-                              'No gifts found\nTotal Docs: $_debugTotalDocs | Active: $_debugActiveGifts',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Colors.grey),
-                            ),
+                            child: _selectedCategory == 'Recent'
+                                ? Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.history_rounded,
+                                        size: 38,
+                                        color: Colors.grey[600],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'No recent gifts yet\nSend a gift to see it here',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.grey[400],
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    'No gifts found\nTotal Docs: $_debugTotalDocs | Active: $_debugActiveGifts',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(color: Colors.grey),
+                                  ),
                           )
                         : GridView.builder(
                             padding: const EdgeInsets.symmetric(

@@ -20,6 +20,12 @@ import 'package:chat_messenger/AdminPane/screens/admin_agora_settings_screen.dar
 import 'package:chat_messenger/AdminPane/screens/admin_database_settings_screen.dart';
 import 'package:chat_messenger/AdminPane/screens/admin_seller_requests_screen.dart';
 import 'package:chat_messenger/AdminPane/screens/admin_withdrawals_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_bd_management_screen.dart';
+import 'package:chat_messenger/screens/room/bd_dashboard_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_direct_sellers_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_pk_effects_screen.dart';
+import 'package:chat_messenger/AdminPane/screens/admin_seller_processing_screen.dart';
+import 'package:chat_messenger/screens/room/direct_seller_dashboard_screen.dart';
 
 class RoleDashboardScreen extends StatefulWidget {
   final User currentUser;
@@ -56,7 +62,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
   void _checkAccess() {
     if (!mounted) return;
     final roleService = RoleService.instance;
-    if (roleService.userRole.value != AppRoles.admin && !roleService.isSuperAdmin.value && !roleService.isBD) {
+    if (roleService.userRole.value != AppRoles.admin && !roleService.isSuperAdmin.value && !roleService.isBD && !roleService.isDirectSeller) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Access Revoked'),
         backgroundColor: Colors.red,
@@ -83,18 +89,28 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       }
 
-      if (roleService.userRole.value != AppRoles.admin && !roleService.isSuperAdmin.value && !roleService.isBD) {
+      if (roleService.userRole.value != AppRoles.admin && !roleService.isSuperAdmin.value && !roleService.isBD && !roleService.isDirectSeller) {
         return const Scaffold(
           body: Center(child: Text('Access Denied. You do not have permission to view this dashboard.')),
         );
       }
 
       final isSuperAdmin = roleService.userRole.value == AppRoles.admin || roleService.isSuperAdmin.value;
+      String screenTitle = 'Admin Dashboard';
+      if (!isSuperAdmin) {
+        if (roleService.isDirectSeller && roleService.isBD) {
+          screenTitle = 'Management Dashboard';
+        } else if (roleService.isDirectSeller) {
+          screenTitle = 'Direct Seller Dashboard';
+        } else {
+          screenTitle = 'BD Dashboard';
+        }
+      }
 
       return Scaffold(
         backgroundColor: const Color(0xFF0F0F1A),
         appBar: AppBar(
-          title: Text(isSuperAdmin ? 'Admin Dashboard' : 'BD Dashboard', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          title: Text(screenTitle, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: const Color(0xFF1A1A2E),
           elevation: 0,
           iconTheme: const IconThemeData(color: Colors.white),
@@ -111,10 +127,42 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             padding: const EdgeInsets.all(20),
             children: [
               if (!isSuperAdmin) ...[
-                _buildDashboardCard('Agency Management', Icons.business, Colors.orange),
-                _buildDashboardCard('Diamond Seller Management', Icons.monetization_on, Colors.orangeAccent),
+                if (roleService.isBD)
+                  _buildCardBase('BD Panel (Agency Management)', Icons.business_center, Colors.orange, () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => BdDashboardScreen(currentUser: widget.currentUser),
+                      ),
+                    );
+                  }),
+                if (roleService.isDirectSeller)
+                  _buildCardBase('Direct Seller Panel', Icons.storefront_rounded, Colors.amberAccent, () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => DirectSellerDashboardScreen(currentUser: widget.currentUser),
+                      ),
+                    );
+                  }),
               ] else ...[
                 _buildAdminPaneCard('Full Management Features (Admin Pane)', Icons.admin_panel_settings, Colors.purpleAccent),
+                _buildCardBase('Direct Sellers Management', Icons.storefront_rounded, Colors.amberAccent, () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AdminDirectSellersScreen(),
+                    ),
+                  );
+                }),
+                _buildCardBase('BD Management', Icons.business_center_rounded, Colors.tealAccent, () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AdminBdManagementScreen(),
+                    ),
+                  );
+                }),
                 _buildCardBase('Invitation Reward Setting', Icons.card_giftcard, Colors.pinkAccent, () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminInvitationRewardScreen()));
                 }),
@@ -135,6 +183,12 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 }),
                 _buildCardBase('Database & VPS Server Settings', Icons.storage_rounded, Colors.blueAccent, () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDatabaseSettingsScreen()));
+                }),
+                _buildCardBase('PK Battle Effects & SVGA', Icons.sports_kabaddi_rounded, const Color(0xFFD946EF), () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPkEffectsScreen()));
+                }),
+                _buildCardBase('Seller Processing'.tr, Icons.assignment_ind_rounded, const Color(0xFF6C5CE7), () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminSellerProcessingScreen()));
                 }),
                 ...roleService.superAdminPermissions.entries
                     .where((entry) => entry.value == true)

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
+import 'package:chat_messenger/api/official_team_api.dart';
+import 'package:chat_messenger/models/user.dart';
 
 /// Service for gift economy config (bean splits, conversion rates) and withdrawals.
 class GiftEconomyService {
@@ -350,6 +352,135 @@ class GiftEconomyService {
       debugPrint(
           '❌ GiftEconomyService: Error fetching pending withdrawals: $e');
       return 0;
+    }
+  }
+
+  /// When a user confirms they have received payment from the seller:
+  /// Marks the withdrawal as 'approved', sets 'userConfirmed' to true,
+  /// credits the seller's account balance with the equivalent diamonds (e.g. 90%),
+  /// logs to seller_admin_credits, and notifies both seller and user via OfficialTeamApi.
+  Future<bool> userAcceptWithdrawal({
+    required String docId,
+    required Map<String, dynamic> data,
+    required String userId,
+    required String userName,
+    String? userDeviceToken,
+  }) async {
+    try {
+      // 1. Verify doc status
+      final docRef = _firestore.collection('withdrawals').doc(docId);
+      final currentDoc = await docRef.get();
+      if (!currentDoc.exists) {
+        throw Exception('Withdrawal record not found.');
+      }
+      final currentData = currentDoc.data() ?? {};
+      final currentStatus = (currentData['status'] as String?)?.toLowerCase() ?? '';
+      if (currentStatus == 'approved') {
+        debugPrint('Withdrawal #$docId is already approved.');
+        return true;
+      }
+      if (currentStatus == 'rejected') {
+        throw Exception('This withdrawal was rejected and cannot be accepted.');
+      }
+
+      final beanAmount = (currentData['beanAmount'] as num?)?.toInt() ??
+          (currentData['amount'] as num?)?.toInt() ??
+          0;
+      final usdAmount = (currentData['usdAmount'] as num?)?.toDouble() ?? 0.0;
+      final sellerId = currentData['sellerId'] as String? ?? currentData['dealerId'] as String? ?? '';
+      final sellerName = currentData['sellerName'] as String? ?? currentData['dealerName'] as String? ?? 'Seller';
+      final int sellerDiamondPercent = (currentData['sellerDiamondPercent'] as num?)?.toInt() ?? 90;
+      final int diamondReward = (currentData['diamondReward'] as num?)?.toInt() ??
+          (beanAmount * (sellerDiamondPercent / 100.0)).round();
+
+      // 2. Update withdrawal document
+      await docRef.update({
+        'status': 'approved',
+        'userConfirmed': true,
+        'userConfirmedAt': FieldValue.serverTimestamp(),
+        'approvedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'diamondReward': diamondReward,
+      });
+
+      // 3. Credit diamonds to seller
+      if (sellerId.isNotEmpty) {
+        final sellerSnap = await _firestore
+            .collection('sellers')
+            .where('userId', isEqualTo: sellerId)
+            .limit(1)
+            .get();
+
+        String sellerDocId = '';
+        if (sellerSnap.docs.isNotEmpty) {
+          sellerDocId = sellerSnap.docs.first.id;
+          await _firestore.collection('sellers').doc(sellerDocId).update({
+            'accountBalance': FieldValue.increment(diamondReward),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else {
+          final newDoc = _firestore.collection('sellers').doc();
+          sellerDocId = newDoc.id;
+          await newDoc.set({
+            'userId': sellerId,
+            'sellerName': sellerName,
+            'accountBalance': diamondReward,
+            'isActive': true,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        // Also credit seller's User document diamonds
+        await _firestore.collection('Users').doc(sellerId).update({
+          'diamonds': FieldValue.increment(diamondReward),
+        });
+
+        // 4. Create log in seller_admin_credits
+        final creditDoc = _firestore.collection('seller_admin_credits').doc();
+        await creditDoc.set({
+          'id': creditDoc.id,
+          'sellerId': sellerId,
+          'sellerDocId': sellerDocId,
+          'sellerName': sellerName,
+          'amount': diamondReward,
+          'note': 'Reward for withdrawal of $beanAmount beans (\$ $usdAmount) confirmed and accepted by user $userName',
+          'type': 'withdrawal_reward_user_accepted',
+          'withdrawalId': docId,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        // 5. Send Official notification to seller
+        try {
+          final sellerUserDoc = await _firestore.collection('Users').doc(sellerId).get();
+          if (sellerUserDoc.exists) {
+            final sUser = User.fromMap(sellerUserDoc.data()!);
+            OfficialTeamApi.sendOfficialMessage(
+              receiverId: sUser.userId,
+              receiverDeviceToken: sUser.deviceToken,
+              messageText: 'Payment Confirmed by User! User $userName has confirmed receipt of \$ $usdAmount ($beanAmount beans). +$diamondReward diamonds (stock) have been credited to your diamond balance for withdrawal #$docId.',
+            );
+          }
+        } catch (e) {
+          debugPrint('Error sending official notification to seller: $e');
+        }
+      }
+
+      // 6. Send Official notification to user
+      try {
+        OfficialTeamApi.sendOfficialMessage(
+          receiverId: userId,
+          receiverDeviceToken: userDeviceToken ?? '',
+          messageText: 'Withdrawal of $beanAmount beans (\$ $usdAmount) completed! Thank you for confirming receipt of payment for withdrawal #$docId.',
+        );
+      } catch (e) {
+        debugPrint('Error sending official notification to user: $e');
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('❌ GiftEconomyService: Error in userAcceptWithdrawal: $e');
+      rethrow;
     }
   }
 }

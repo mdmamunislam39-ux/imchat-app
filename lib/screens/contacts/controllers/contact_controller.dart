@@ -47,10 +47,13 @@ class ContactController extends GetxController {
   void _listenToPendingRequests() {
     try {
       final User currentUser = AuthController.instance.currentUser;
-      if (currentUser.userId.isNotEmpty) {
+      final String myId = currentUser.userId.isNotEmpty
+          ? currentUser.userId
+          : (AuthController.instance.firebaseUser?.uid ?? '');
+      if (myId.isNotEmpty) {
         _requestsStream = FirebaseFirestore.instance
             .collection('Users')
-            .doc(currentUser.userId)
+            .doc(myId)
             .collection('friend_requests')
             .snapshots()
             .listen((snapshot) {

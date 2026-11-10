@@ -83,10 +83,10 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
       debugPrint('📁 AssetFormDialog: Picking $type file...');
       final List<String> extensions;
       if (type == 'png') {
-        extensions = ['png', 'jpg', 'jpeg'];
+        extensions = ['png', 'jpg', 'jpeg', 'webp'];
       } else {
-        // Animation file can be SVGA, MP4 (Alpha), VAP, or PNG
-        extensions = ['svga', 'mp4', 'vap', 'png'];
+        // Animation file can be SVGA, MP4 (Alpha), VAP, VAR, PNG, WEBP, GIF
+        extensions = ['svga', 'mp4', 'vap', 'var', 'png', 'webp', 'gif'];
       }
 
       final result = await FilePicker.platform.pickFiles(
@@ -507,7 +507,7 @@ class _AssetFormDialogState extends State<AssetFormDialog> {
                   const SizedBox(height: 16),
 
                   _buildFilePicker(
-                    label: 'Dynamic Animation File (SVGA / MP4 Alpha / VAP / PNG)',
+                    label: 'Dynamic Animation File (SVGA / MP4 Alpha / VAP / VAR / GIF)',
                     file: _animationFile,
                     type: 'animation',
                     existingUrl: isEdit ? (widget.asset!['fileUrl']) : null,

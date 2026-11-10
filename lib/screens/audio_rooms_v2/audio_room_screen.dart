@@ -52,6 +52,15 @@ import 'package:chat_messenger/screens/audio_rooms_v2/widgets/gift_selection_bot
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/waiting_list_bottom_sheet.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/room_pk_settings_sheet.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/html5_game_sheet.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/video_effects_sheet.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/video_room_settings_sheet.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/video_call_manage_sheet.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/create_lucky_bag_sheet.dart';
+import 'package:chat_messenger/models/video_pk_models.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/services/video_pk_service.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/video_pk_split_screen.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/video_pk_animation_overlay.dart';
+import 'package:chat_messenger/screens/audio_rooms_v2/widgets/video_pk_sheet.dart';
 import 'widgets/room_decor_sheet.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/lucky_bag_floating_widget.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/widgets/lucky_bag_global_banner.dart';
@@ -99,7 +108,6 @@ import 'package:chat_messenger/screens/audio_rooms_v2/widgets/floating_music_pla
 import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_controller.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/minimized_room_overlay.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chat_messenger/screens/audio_rooms_v2/room_member_screen.dart';
 import 'package:chat_messenger/api/contact_api.dart';
@@ -168,8 +176,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       GlobalKey<RoomControlsState>();
   StreamSubscription<List<EmojiChatMessage>>? _chatSubscription;
 
-  // Video controllers cache
+  // Video controllers cache & effects
   final Map<int, VideoViewController> _videoControllers = {};
+  late final VideoEffectsController _videoEffectsController =
+      VideoEffectsController();
 
   VideoViewController _getVideoController(int uid, RtcEngine engine) {
     if (_videoControllers.containsKey(uid)) {
@@ -200,7 +210,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   StreamSubscription<DocumentSnapshot>? _micInviteSubscription;
   bool _isMicInviteDialogShowing = false;
   late final DateTime
-  _joinTime; // Track when user joined to filter old messages
+      _joinTime; // Track when user joined to filter old messages
+
+  // Live Video Room PK variables (Exclusive to Live Video Rooms)
+  final VideoPkService _videoPkService = VideoPkService();
+  StreamSubscription<VideoPkBattleModel?>? _videoPkBattleSub;
+  StreamSubscription<List<VideoPkInvitationModel>>? _videoPkInviteSub;
+  VideoPkBattleModel? _activeVideoBattle;
+  VideoPkAnimationPhase _videoAnimationPhase = VideoPkAnimationPhase.none;
+  bool _isOpponentAudioMuted = false;
+  String? _lastShownVideoInviteId;
+  final Set<String> _processedPkTxIds = {};
 
   // Agora related variables
   bool _agoraChannelJoined = false;
@@ -229,6 +249,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   static Map<int, String>? _cachedFriendshipLevelImages;
   static Map<int, String>? _cachedCoupleLevelImages;
 
+  // Live stream session statistics
+  int _sessionInitialRevenue = 0;
+  int _sessionGiftsCount = 0;
+  final Set<String> _sessionViewers = {};
+
   // Chat auto-delete timer
   Timer? _autoDeleteTimer;
 
@@ -256,7 +281,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     // Reset minimizing flag when screen is created/restored
     _isMinimizing = false;
-    debugPrint('Ã°Å¸âÂ¼ [AudioRoom] Screen initialized, minimizing flag reset');
+    debugPrint(
+        'Ã°Å¸âÂ¼ [AudioRoom] Screen initialized, minimizing flag reset');
 
     // Add lifecycle observer for background audio handling
     WidgetsBinding.instance.addObserver(this);
@@ -271,12 +297,20 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Set join time Ã¢â¬â restore original if coming back from minimize, otherwise use now
     if (widget.isRestoring) {
       final minimizedController = _getMinimizedController();
-      _joinTime =
-          minimizedController.originalJoinTime ??
+      _joinTime = minimizedController.originalJoinTime ??
           DateTime.now().subtract(const Duration(seconds: 5));
-      debugPrint('Ã°Å¸âÂ¼ [AudioRoom] Restored original join time: $_joinTime');
+      debugPrint(
+          'Ã°Å¸âÂ¼ [AudioRoom] Restored original join time: $_joinTime');
     } else {
       _joinTime = DateTime.now();
+    }
+
+    // Initialize live session tracking
+    _sessionInitialRevenue = widget.room.totalRevenue;
+    _sessionGiftsCount = 0;
+    _sessionViewers.clear();
+    if (widget.room.joinedUserIds.isNotEmpty) {
+      _sessionViewers.addAll(widget.room.joinedUserIds);
     }
 
     // Get current user with null safety
@@ -308,7 +342,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     }
 
     // Debug participant list
-    debugPrint('Ã°Å¸Å½Â¯ Room participants: ${_currentRoom.participants.length}');
+    debugPrint(
+        'Ã°Å¸Å½Â¯ Room participants: ${_currentRoom.participants.length}');
     for (var participant in _currentRoom.participants) {
       debugPrint(
         'Ã°Å¸Å½Â¯ Participant: ${participant.userId} - ${participant.userName}',
@@ -317,7 +352,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     // Safety check: don't use a closed BLoC
     if (widget.audioRoomsBloc.isClosed) {
-      debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã¢ Å BLoC is closed, cannot initialize room');
+      debugPrint(
+          'Ã°Å¸Å½Â¤ [AudioRoom] Ã¢ Å BLoC is closed, cannot initialize room');
       // Navigating back safely if the BLoC is closed
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.of(context).pop();
@@ -394,7 +430,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     // Start listening to PK Invites if host
     if (_isCurrentUserHost) {
-      _startPKInviteListener();
+      if (_currentRoom.category == 'Live') {
+        _startVideoPKListeners();
+      } else {
+        _startPKInviteListener();
+      }
+    } else if (_currentRoom.category == 'Live') {
+      _startVideoPKBattleListener();
     }
 
     // Start listening to mic invites for current user
@@ -413,21 +455,28 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     // Listen to real-time frame updates
     _frameSubscription = AuthController.instance.currentFrameUrl.listen((url) {
-      debugPrint('Ã°Å¸âÂ¼Ã¯Â¸  [AudioRoom] Frame updated to: $url, rebuilding UI...');
+      debugPrint(
+          'Ã°Å¸âÂ¼Ã¯Â¸  [AudioRoom] Frame updated to: $url, rebuilding UI...');
       if (mounted) {
-        final newFrameId = AuthController.instance.currentUser.customization?.selectedFrameId;
-        final pIdx = _currentRoom.participants.indexWhere((p) => p.userId == _currentUser.userId);
+        final newFrameId =
+            AuthController.instance.currentUser.customization?.selectedFrameId;
+        final pIdx = _currentRoom.participants
+            .indexWhere((p) => p.userId == _currentUser.userId);
         if (pIdx != -1) {
           if (_currentRoom.participants[pIdx].frameId != newFrameId) {
-            final updated = _currentRoom.participants[pIdx].copyWith(frameId: newFrameId);
+            final updated =
+                _currentRoom.participants[pIdx].copyWith(frameId: newFrameId);
             setState(() {
               _currentRoom.participants[pIdx] = updated;
             });
-            AudioRoomsRepository().updateParticipantFrameId(
-              roomId: _currentRoom.id,
-              userId: _currentUser.userId,
-              frameId: newFrameId,
-            ).catchError((e) => debugPrint('Error updating participant frame: $e'));
+            AudioRoomsRepository()
+                .updateParticipantFrameId(
+                  roomId: _currentRoom.id,
+                  userId: _currentUser.userId,
+                  frameId: newFrameId,
+                )
+                .catchError(
+                    (e) => debugPrint('Error updating participant frame: $e'));
           }
         }
       }
@@ -447,10 +496,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       final urls = <String>[];
       for (final doc in snap.docs) {
         final data = doc.data();
-        if (data['svgaUrl'] is String && (data['svgaUrl'] as String).trim().isNotEmpty) {
+        if (data['svgaUrl'] is String &&
+            (data['svgaUrl'] as String).trim().isNotEmpty) {
           urls.add((data['svgaUrl'] as String).trim());
         }
-        if (data['pngUrl'] is String && (data['pngUrl'] as String).trim().isNotEmpty) {
+        if (data['pngUrl'] is String &&
+            (data['pngUrl'] as String).trim().isNotEmpty) {
           urls.add((data['pngUrl'] as String).trim());
         }
       }
@@ -472,7 +523,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     final cycleStart = RankingHelper.daily22CycleStart;
     final next22 = cycleStart.add(const Duration(days: 1));
     final durationUntil22 = next22.difference(now);
-    _dailyResetTimer = Timer(durationUntil22 > Duration.zero ? durationUntil22 : const Duration(seconds: 1), () {
+    _dailyResetTimer = Timer(
+        durationUntil22 > Duration.zero
+            ? durationUntil22
+            : const Duration(seconds: 1), () {
       if (!mounted) return;
       _initGiftTransactionsListener();
       _scheduleDailyResetTimer();
@@ -481,19 +535,45 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   void _initGiftTransactionsListener() {
     _roomGiftTransactionsSub?.cancel();
-    _roomGiftTransactionsSub = _giftService
-        .getGiftTransactions(widget.room.id)
-        .listen((transactions) {
+    _roomGiftTransactionsSub =
+        _giftService.getGiftTransactions(widget.room.id).listen((transactions) {
       if (!mounted) return;
       final cycleStart = RankingHelper.daily22CycleStart;
       final Map<String, int> received = {};
+      int sessionGifts = 0;
       for (final tx in transactions) {
+        if (tx.timestamp.isAfter(_joinTime.subtract(const Duration(seconds: 2)))) {
+          sessionGifts += (tx.quantity > 0 ? tx.quantity : 1);
+        }
         if (tx.receiverId.isNotEmpty && tx.timestamp.isAfter(cycleStart)) {
           final amount = tx.beansToReceiver;
           received[tx.receiverId] = (received[tx.receiverId] ?? 0) + amount;
         }
+
+        // Live Video Room PK Battle scoring
+        if (_currentRoom.category == 'Live' &&
+            _activeVideoBattle != null &&
+            _activeVideoBattle!.isActive &&
+            _activeVideoBattle!.startedAt != null &&
+            !_processedPkTxIds.contains(tx.id)) {
+          if (tx.timestamp.isAfter(_activeVideoBattle!.startedAt!)) {
+            _processedPkTxIds.add(tx.id);
+            if (tx.receiverId == _activeVideoBattle!.host1Id ||
+                tx.receiverId == _activeVideoBattle!.host2Id) {
+              _videoPkService.recordGiftScore(
+                battleId: _activeVideoBattle!.id,
+                targetHostId: tx.receiverId,
+                userId: tx.senderId,
+                userName: tx.senderName,
+                userPhoto: tx.senderImageUrl,
+                giftDiamonds: tx.beansToReceiver,
+              );
+            }
+          }
+        }
       }
       setState(() {
+        _sessionGiftsCount = sessionGifts;
         _userReceivedGiftsMap.clear();
         _userReceivedGiftsMap.addAll(received);
       });
@@ -709,12 +789,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           .doc('room_config')
           .snapshots()
           .listen((doc) {
-            if (doc.exists && mounted) {
-              setState(() {
-                _roomLevelConfigData = doc.data()?['levels'] as List<dynamic>?;
-              });
-            }
+        if (doc.exists && mounted) {
+          setState(() {
+            _roomLevelConfigData = doc.data()?['levels'] as List<dynamic>?;
           });
+        }
+      });
 
       _startRelationshipsListener();
     } catch (e) {
@@ -767,9 +847,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       _coupleLevelImages = _cachedCoupleLevelImages!;
     } else {
       try {
-        final snap = await FirebaseFirestore.instance
-            .collection('couple_levels')
-            .get();
+        final snap =
+            await FirebaseFirestore.instance.collection('couple_levels').get();
         final Map<int, String> map = {};
         for (var doc in snap.docs) {
           final data = doc.data();
@@ -799,50 +878,318 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       }
     }
 
-    // 3. Relationships check: only update state if list actually changed
+    // 3. Relationships check: one-time fetch to avoid continuous global snapshots listener
     _relationshipsSub?.cancel();
-    _relationshipsSub = FirebaseFirestore.instance
+    _relationshipsSub = null;
+    FirebaseFirestore.instance
         .collection('relationships')
         .where('status', isEqualTo: 'accepted')
         .limit(30)
-        .snapshots()
-        .listen((snapshot) {
-          if (mounted) {
-            final List<Map<String, dynamic>> list = [];
-            for (var doc in snapshot.docs) {
-              final data = doc.data();
-              data['id'] = doc.id;
-              list.add(data);
+        .get()
+        .then((snapshot) {
+      if (mounted) {
+        final List<Map<String, dynamic>> list = [];
+        for (var doc in snapshot.docs) {
+          final data = doc.data();
+          data['id'] = doc.id;
+          list.add(data);
+        }
+        if (_activeRoomRelationships.length != list.length) {
+          setState(() {
+            _activeRoomRelationships = list;
+          });
+        } else {
+          _activeRoomRelationships = list;
+        }
+        debugPrint(
+          '🎯 [Intimacy] Loaded active room relationships: ${_activeRoomRelationships.length}',
+        );
+      }
+    }).catchError((e) {
+      debugPrint('Error loading room relationships: $e');
+    });
+  }
+
+  /// Start listening for Live Room Video PK battles and invitations (Live Video rooms only)
+  void _startVideoPKListeners() {
+    if (_currentRoom.category != 'Live') return;
+    _startVideoPKBattleListener();
+
+    _videoPkInviteSub?.cancel();
+    _videoPkInviteSub = _videoPkService
+        .streamIncomingInvitations(_currentUser.userId, _currentRoom.id)
+        .listen((invites) {
+      if (!mounted) return;
+      if (_currentRoom.category != 'Live') return;
+      for (final invite in invites) {
+        if (_lastShownVideoInviteId == invite.id) continue;
+        _lastShownVideoInviteId = invite.id;
+        _showVideoPkInviteDialog(invite);
+      }
+    });
+  }
+
+  void _startVideoPKBattleListener() {
+    if (_currentRoom.category != 'Live') return;
+    _videoPkBattleSub?.cancel();
+    _videoPkBattleSub = _videoPkService
+        .streamActiveBattle(_currentRoom.id)
+        .listen((battle) {
+      if (!mounted) return;
+      if (_currentRoom.category != 'Live') return;
+      final wasActive = _activeVideoBattle != null;
+      setState(() {
+        _activeVideoBattle = battle;
+      });
+
+      if (battle != null && !wasActive) {
+        _processedPkTxIds.clear();
+        _triggerVideoPkPhase(VideoPkAnimationPhase.countdown);
+      } else if (battle != null && battle.isEnded && wasActive) {
+        _triggerVideoPkPhase(VideoPkAnimationPhase.winner);
+      }
+    });
+  }
+
+  void _triggerVideoPkPhase(VideoPkAnimationPhase phase) {
+    setState(() {
+      _videoAnimationPhase = phase;
+    });
+  }
+
+  void _showVideoPkInviteDialog(VideoPkInvitationModel invite) {
+    if (_currentRoom.category != 'Live') {
+      _videoPkService.rejectInvitation(invite.id);
+      return;
+    }
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => VideoPkInvitationDialog(
+        invitation: invite,
+        onAccept: () async {
+          Navigator.of(ctx).pop();
+          try {
+            await _videoPkService.acceptInvitation(invite.id);
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to accept PK challenge: $e'),
+                  backgroundColor: Colors.redAccent,
+                ),
+              );
             }
-            if (_activeRoomRelationships.length != list.length) {
-              setState(() {
-                _activeRoomRelationships = list;
-              });
-            } else {
-              _activeRoomRelationships = list;
-            }
-            debugPrint(
-              'Ã°Å¸Å½Â¯ [Intimacy] Loaded active room relationships: ${_activeRoomRelationships.length}',
-            );
           }
+        },
+        onReject: () async {
+          Navigator.of(ctx).pop();
+          await _videoPkService.rejectInvitation(invite.id);
+        },
+      ),
+    );
+  }
+
+  void _openVideoPkSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => VideoPkSheet(
+        currentRoomId: _currentRoom.id,
+        currentHostId: _currentUser.userId,
+        currentHostName: _currentUser.fullname.isNotEmpty ? _currentUser.fullname : 'Host',
+        currentHostPhotoUrl: _currentUser.photoUrl,
+      ),
+    );
+  }
+
+  void _confirmEndVideoPk(String battleId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF161129),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: Color(0xFFD946EF), width: 1.5),
+        ),
+        title: const Text(
+          'End PK Battle?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Are you sure you want to end the current PK battle for both rooms?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              try {
+                await _videoPkService.endPkBattle(battleId, _currentUser.userId);
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to end PK battle: $e'),
+                      backgroundColor: Colors.redAccent,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFF5252),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text('End PK', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPkHostPlaceholder(String? photoUrl, String name) {
+    return Container(
+      color: const Color(0xFF161129),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white24, width: 1.5),
+              ),
+              child: ClipOval(
+                child: (photoUrl != null && photoUrl.isNotEmpty)
+                    ? CachedNetworkImage(
+                        imageUrl: photoUrl,
+                        fit: BoxFit.cover,
+                        errorWidget: (_, __, ___) => const Icon(
+                          Icons.person,
+                          size: 30,
+                          color: Colors.white54,
+                        ),
+                      )
+                    : const Icon(Icons.person, size: 30, color: Colors.white54),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              name,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoPkSection() {
+    final battle = _activeVideoBattle!;
+    final engine = AgoraService().engine;
+    final isHost1 = _currentUser.userId == battle.host1Id;
+    final isHost2 = _currentUser.userId == battle.host2Id;
+
+    // Left Video (Host 1)
+    Widget leftVideo;
+    if (isHost1) {
+      leftVideo = _isHostVideoEnabled && engine != null
+          ? VideoFilterColorOverlay(
+              controller: _videoEffectsController,
+              child: AgoraVideoView(controller: _getVideoController(0, engine)),
+            )
+          : _buildPkHostPlaceholder(battle.host1Photo, battle.host1Name);
+    } else {
+      final host1Uid = _generateUid(battle.host1Id);
+      leftVideo = engine != null
+          ? AgoraVideoView(controller: _getVideoController(host1Uid, engine))
+          : _buildPkHostPlaceholder(battle.host1Photo, battle.host1Name);
+    }
+
+    // Right Video (Host 2)
+    Widget rightVideo;
+    if (isHost2) {
+      rightVideo = _isHostVideoEnabled && engine != null
+          ? VideoFilterColorOverlay(
+              controller: _videoEffectsController,
+              child: AgoraVideoView(controller: _getVideoController(0, engine)),
+            )
+          : _buildPkHostPlaceholder(battle.host2Photo, battle.host2Name);
+    } else {
+      final host2Uid = _generateUid(battle.host2Id);
+      rightVideo = engine != null
+          ? AgoraVideoView(controller: _getVideoController(host2Uid, engine))
+          : _buildPkHostPlaceholder(battle.host2Photo, battle.host2Name);
+    }
+
+    return VideoPkSplitScreen(
+      pkBattle: battle,
+      isCurrentRoomHost1: _currentRoom.id == battle.room1Id,
+      leftVideoView: leftVideo,
+      rightVideoView: rightVideo,
+      isHost: _isCurrentUserHost,
+      onToggleMuteOpponent: (isMuted) {
+        setState(() {
+          _isOpponentAudioMuted = isMuted;
         });
+        final opponentId = isHost1 ? battle.host2Id : battle.host1Id;
+        final opponentUid = _generateUid(opponentId);
+        AgoraService().engine?.muteRemoteAudioStream(
+              uid: opponentUid,
+              mute: _isOpponentAudioMuted,
+            );
+      },
+      onEndPk: () => _confirmEndVideoPk(battle.id),
+      onBattleTimeExpired: () {
+        if (_isCurrentUserHost) {
+          _videoPkService.startPunishment(battle.id);
+        }
+      },
+      onPunishmentTimeExpired: () {
+        if (_isCurrentUserHost) {
+          _videoPkService.endPkBattle(battle.id);
+        }
+      },
+    );
   }
 
   void _startPKInviteListener() {
+    if (_currentRoom.category == 'Live') return;
     _pkInviteSubscription = _pkRepository
         .listenToIncomingInvites(_currentRoom.id)
         .listen((invites) {
-          if (!mounted) return;
-          for (var invite in invites) {
-            if (!_invitedUserIds.contains(invite.id)) {
-              _invitedUserIds.add(invite.id);
-              _showPKInviteDialog(invite);
-            }
-          }
-        });
+      if (!mounted) return;
+      if (_currentRoom.category == 'Live') return;
+      for (var invite in invites) {
+        if (!_invitedUserIds.contains(invite.id)) {
+          _invitedUserIds.add(invite.id);
+          _showPKInviteDialog(invite);
+        }
+      }
+    });
   }
 
   void _showPKInviteDialog(RoomPKInvite invite) {
+    if (_currentRoom.category == 'Live') {
+      _pkRepository.rejectInvite(invite.id);
+      return;
+    }
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -904,7 +1251,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       final data = doc.data();
       if (data == null) return;
       if (data['status'] == 'pending') {
-        if (_currentParticipant?.isSeated == true && (_currentParticipant?.seatNumber ?? 0) > 0) {
+        if (_currentParticipant?.isSeated == true &&
+            (_currentParticipant?.seatNumber ?? 0) > 0) {
           // Already seated, remove invite
           doc.reference.delete();
           return;
@@ -1092,8 +1440,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       if (targetSeat > 0) {
         canTakeSpecifiedSeat =
             _currentRoom.canUserMoveToSeat(_currentUser.userId, targetSeat) &&
-            !_currentRoom.isSeatOccupied(targetSeat) &&
-            !_currentRoom.isSeatLocked(targetSeat);
+                !_currentRoom.isSeatOccupied(targetSeat) &&
+                !_currentRoom.isSeatLocked(targetSeat);
       }
 
       if (!canTakeSpecifiedSeat) {
@@ -1132,11 +1480,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   void _triggerSeatEmoji(String userId, String emojiUrl) {
     if (!mounted || emojiUrl.isEmpty) return;
-    final pIdx = _currentRoom.participants.indexWhere((p) => p.userId == userId);
+    final pIdx =
+        _currentRoom.participants.indexWhere((p) => p.userId == userId);
     if (pIdx != -1) {
       final participant = _currentRoom.participants[pIdx];
       // Only display above avatar if participant is seated or is host
-      if (participant.isSeated || participant.seatNumber != null || participant.isHost) {
+      if (participant.isSeated ||
+          participant.seatNumber != null ||
+          participant.isHost) {
         if (participant.activeEmojiUrl != emojiUrl) {
           setState(() {
             _currentRoom.participants[pIdx] =
@@ -1144,15 +1495,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           });
         }
         _activeEmojiTimers[userId]?.cancel();
-        _activeEmojiTimers[userId] = Timer(const Duration(milliseconds: 3500), () {
+        _activeEmojiTimers[userId] =
+            Timer(const Duration(milliseconds: 3500), () {
           if (mounted) {
             final currIdx =
                 _currentRoom.participants.indexWhere((p) => p.userId == userId);
             if (currIdx != -1 &&
                 _currentRoom.participants[currIdx].activeEmojiUrl == emojiUrl) {
               setState(() {
-                _currentRoom.participants[currIdx] =
-                    _currentRoom.participants[currIdx].copyWith(clearActiveEmoji: true);
+                _currentRoom.participants[currIdx] = _currentRoom
+                    .participants[currIdx]
+                    .copyWith(clearActiveEmoji: true);
               });
             }
           }
@@ -1164,7 +1517,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Start listening to chat messages
   void _startChatListener() {
     // Use the emoji chat message stream for full emoji support
-    _chatSubscription = EmojiChatService.getEmojiChatMessagesStream(_currentRoom.id).listen(
+    _chatSubscription =
+        EmojiChatService.getEmojiChatMessagesStream(_currentRoom.id).listen(
       (messages) {
         if (!mounted) {
           debugPrint(
@@ -1191,7 +1545,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         // Trigger seat avatar emoji reaction for recent emoji messages
         final now = DateTime.now();
         for (final msg in allMessages) {
-          if (msg.messageType == EmojiMessageType.emoji || msg.emojiItem != null) {
+          if (msg.messageType == EmojiMessageType.emoji ||
+              msg.emojiItem != null) {
             final emojiUrl = msg.emojiItem?.emojiUrl ?? '';
             if (emojiUrl.isNotEmpty) {
               final age = now.difference(msg.timestamp).inSeconds;
@@ -1228,30 +1583,24 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         .limit(1)
         .snapshots()
         .listen((snapshot) {
-          if (snapshot.docs.isNotEmpty) {
-            final doc = snapshot.docs.first;
-            final data = doc.data();
-            final timestamp = data['timestamp'] as Timestamp?;
-            if (timestamp != null) {
-              final diff = DateTime.now()
-                  .difference(timestamp.toDate())
-                  .inSeconds;
-              if (diff < 15) {
-                if (mounted) {
-                  setState(() {
-                    _currentLuckyWin = data;
-                    _showCoinShower = true;
-                  });
-                }
-              }
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        final data = doc.data();
+        final timestamp = data['timestamp'] as Timestamp?;
+        if (timestamp != null) {
+          final diff = DateTime.now().difference(timestamp.toDate()).inSeconds;
+          if (diff < 15) {
+            if (mounted) {
+              setState(() {
+                _currentLuckyWin = data;
+                _showCoinShower = true;
+              });
             }
           }
-        });
+        }
+      }
+    });
   }
-
-
-
-
 
   /// Delete displayed entrance effects from Firestore
   Future<void> _deleteDisplayedEntranceEffects(
@@ -1274,7 +1623,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Start periodic cleanup timer for old gifts
   void _startGiftCleanupTimer() {
-    _giftCleanupTimer = Timer.periodic(const Duration(seconds: 15), (timer) async {
+    _giftCleanupTimer =
+        Timer.periodic(const Duration(seconds: 15), (timer) async {
       if (!_isCurrentUserHost) return;
       try {
         final snap = await FirebaseFirestore.instance
@@ -1297,7 +1647,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             batch.delete(doc.reference);
           }
           await batch.commit();
-          debugPrint('Ã°Å¸Â§Â¹ [AudioRoom] Background timer cleaned up ${oldDocs.length} old gift docs');
+          debugPrint(
+              'Ã°Å¸Â§Â¹ [AudioRoom] Background timer cleaned up ${oldDocs.length} old gift docs');
         }
       } catch (e) {
         debugPrint('Ã¢Å¡Â Ã¯Â¸  [AudioRoom] Periodic gift cleanup error: $e');
@@ -1311,14 +1662,16 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     debugPrint('Ã°Å¸ââ [AudioRoom] App lifecycle changed to: $state');
 
     if (state == AppLifecycleState.resumed) {
-      debugPrint('Ã°Å¸ââ [AudioRoom] App resumed - refreshing audio session...');
+      debugPrint(
+          'Ã°Å¸ââ [AudioRoom] App resumed - refreshing audio session...');
       Future.delayed(const Duration(milliseconds: 300), () {
         if (_agoraChannelJoined) {
           try {
             AgoraService().engine?.setDefaultAudioRouteToSpeakerphone(true);
             AgoraService().engine?.setEnableSpeakerphone(_isSpeakerOn);
           } catch (e) {
-            debugPrint('Ã¢Å¡Â Ã¯Â¸  [AudioRoom] Error restoring speaker on resume: $e');
+            debugPrint(
+                'Ã¢Å¡Â Ã¯Â¸  [AudioRoom] Error restoring speaker on resume: $e');
           }
         }
       });
@@ -1341,6 +1694,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
     // Cancel timers safely
     try {
+      _videoEffectsController.dispose();
       _flyingGiftsNotifier.dispose();
       _giftCleanupTimer?.cancel();
       _dailyResetTimer?.cancel();
@@ -1362,6 +1716,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       _friendshipLevelsSub?.cancel();
       _coupleLevelsSub?.cancel();
       _roomGiftTransactionsSub?.cancel();
+      _videoPkBattleSub?.cancel();
+      _videoPkInviteSub?.cancel();
     } catch (e) {
       debugPrint('Error canceling subscriptions: $e');
     }
@@ -1395,8 +1751,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
       try {
         if (_agoraChannelJoined) {
-          widget.audioRoomsBloc.add(LeaveAgoraChannel(channelName: _currentRoom.id));
-          debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Leaving Agora channel (actual leave: ${_currentRoom.id})');
+          widget.audioRoomsBloc
+              .add(LeaveAgoraChannel(channelName: _currentRoom.id));
+          debugPrint(
+              'Ã°Å¸Å½Â¤ [AudioRoom] Leaving Agora channel (actual leave: ${_currentRoom.id})');
         } else {
           AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
         }
@@ -1406,7 +1764,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
       }
 
-      if (AgoraService().currentChannelId == null || AgoraService().currentChannelId == _currentRoom.id) {
+      if (AgoraService().currentChannelId == null ||
+          AgoraService().currentChannelId == _currentRoom.id) {
         try {
           BackgroundService().stopService();
         } catch (_) {}
@@ -1428,15 +1787,189 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     }
   }
 
-  /// Handle leaving the room with beautiful bottom sheet
+  bool _isRoomEndedDialogShowing = false;
+
+  /// Show dialog when the live stream has been closed / ended
+  void _showRoomEndedDialog() {
+    if (_isRoomEndedDialogShowing || !mounted) return;
+    _isRoomEndedDialogShowing = true;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: const Color(0xFF1E142B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: Colors.pinkAccent.withValues(alpha: 0.3)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 68,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.videocam_off_rounded,
+                    color: Colors.redAccent,
+                    size: 36,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'This room is closed',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'The host has ended the live stream.',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 14,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    if (mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.pinkAccent,
+                    minimumSize: const Size(double.infinity, 46),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                  ),
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Confirm ending live stream for host
+  void _showEndLiveConfirmationDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return Dialog(
+          backgroundColor: const Color(0xFF1E142B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: Colors.pinkAccent.withValues(alpha: 0.3)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.power_settings_new_rounded,
+                  color: Colors.redAccent,
+                  size: 48,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'End Live Stream?',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Are you sure you want to end your live stream? All participants and viewers will be disconnected.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(dialogCtx).pop(),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(color: Colors.white54, fontSize: 16),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.redAccent,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        onPressed: () {
+                          Navigator.of(dialogCtx).pop();
+                          _handleActualLeave(fromBottomSheet: false);
+                        },
+                        child: const Text(
+                          'End Live',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Handle leaving the room with beautiful bottom sheet or end confirmation
   void _handleLeaveRoom() {
-    _showExitConfirmationBottomSheet();
+    if (_isCurrentUserHost && _currentRoom.category == 'Live') {
+      _showEndLiveConfirmationDialog();
+    } else {
+      _showExitConfirmationBottomSheet();
+    }
   }
 
   /// Show exit & minimize options menu as a right side drawer
   void _showExitConfirmationBottomSheet() {
-    Future<List<AudioRoomV2>> trendingRoomsFuture = AudioRoomsRepository()
-        .getAllRooms();
+    Future<List<AudioRoomV2>> trendingRoomsFuture =
+        AudioRoomsRepository().getAllRooms();
     String selectedCategory = 'All';
     final List<String> categories = [
       'All',
@@ -1523,8 +2056,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               GestureDetector(
                                 onTap: () {
                                   setDialogState(() {
-                                    trendingRoomsFuture = AudioRoomsRepository()
-                                        .getAllRooms();
+                                    trendingRoomsFuture =
+                                        AudioRoomsRepository().getAllRooms();
                                   });
                                 },
                                 child: const Icon(
@@ -1633,13 +2166,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       },
       transitionBuilder: (context, animation, secondaryAnimation, child) {
         return SlideTransition(
-          position:
-              Tween<Offset>(
-                begin: const Offset(1.0, 0.0),
-                end: Offset.zero,
-              ).animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-              ),
+          position: Tween<Offset>(
+            begin: const Offset(1.0, 0.0),
+            end: Offset.zero,
+          ).animate(
+            CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+          ),
           child: child,
         );
       },
@@ -1666,7 +2198,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: const Color(0xFF1E142B), // Harmonious premium dark background
+              color:
+                  const Color(0xFF1E142B), // Harmonious premium dark background
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: Colors.purpleAccent.withAlpha(51),
@@ -1755,8 +2288,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         ),
                         child: ElevatedButton(
                           onPressed: () async {
-                            Navigator.of(dialogContext).pop(); // Close confirmation dialog
-                            Navigator.of(context).pop(); // Close exit bottom sheet
+                            Navigator.of(dialogContext)
+                                .pop(); // Close confirmation dialog
+                            Navigator.of(context)
+                                .pop(); // Close exit bottom sheet
 
                             // 1. Cleanly leave current room completely
                             setState(() {
@@ -1774,14 +2309,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               ),
                             );
 
-                            await AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
-                            await Future.delayed(const Duration(milliseconds: 150));
+                            await AgoraService().leaveChannelAndRelease(
+                                channelName: _currentRoom.id);
+                            await Future.delayed(
+                                const Duration(milliseconds: 150));
 
                             // 2. Initialize new room BLoC and join cleanly like explore flow
                             final newBloc = AudioRoomsBloc(
                               repository: AudioRoomsRepository(),
                             );
-                            final currentUser = AuthController.instance.currentUser;
+                            final currentUser =
+                                AuthController.instance.currentUser;
 
                             if (!targetRoom.isParticipant(currentUser.userId)) {
                               newBloc.add(
@@ -1790,7 +2328,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   userId: currentUser.userId,
                                   userName: currentUser.fullname,
                                   userImageUrl: currentUser.photoUrl,
-                                  userFrameId: currentUser.customization?.selectedFrameId,
+                                  userFrameId: currentUser
+                                      .customization?.selectedFrameId,
                                 ),
                               );
                             }
@@ -1919,7 +2458,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     // Do NOT stop listening to room updates - keep getting real-time updates
 
     debugPrint('Ã°Å¸âÂ½ [AudioRoom] Room minimized: ${_currentRoom.name}');
-    debugPrint('Ã°Å¸âÂ½ [AudioRoom] Agora channel kept active for minimized room');
+    debugPrint(
+        'Ã°Å¸âÂ½ [AudioRoom] Agora channel kept active for minimized room');
 
     // Show floating overlay BEFORE navigating back
     MinimizedRoomOverlay.show(context, widget.audioRoomsBloc);
@@ -1956,6 +2496,30 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       BackgroundService().stopService();
     } catch (_) {}
 
+    // If ending a live video room and PK battle is running, terminate battle
+    if (_currentRoom.category == 'Live' && _activeVideoBattle != null) {
+      _videoPkService.endPkBattle(
+        _activeVideoBattle!.id,
+        _currentUser.userId,
+      );
+    }
+
+    if (_isCurrentUserHost && _currentRoom.category == 'Live') {
+      try {
+        FirebaseFirestore.instance
+            .collection('audio_rooms_v2')
+            .doc(_currentRoom.id)
+            .update({
+          'isActive': false,
+          'participants': [],
+          'joinedUserIds': [],
+          'liveSessionDiamonds': 0,
+          'liveSessionGifts': 0,
+          'updatedAt': Timestamp.now(),
+        }).catchError((_) {});
+      } catch (_) {}
+    }
+
     // Leave the room
     widget.audioRoomsBloc.add(
       LeaveAudioRoom(roomId: _currentRoom.id, userId: _currentUser.userId),
@@ -1965,18 +2529,24 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         if (_isCurrentUserHost && _currentRoom.category == 'Live') {
-          final int duration = DateTime.now()
-              .difference(_currentRoom.createdAt)
-              .inMinutes;
-          final int users = _currentRoom.joinedUserIds.length;
-          final int diamonds = _currentRoom.totalRevenue;
+          final int duration =
+              DateTime.now().difference(_joinTime).inMinutes;
+          final int users = _sessionViewers.isNotEmpty
+              ? _sessionViewers.length
+              : (_currentRoom.joinedUserIds.isNotEmpty
+                  ? _currentRoom.joinedUserIds.length
+                  : 1);
+          final int diamonds = (_currentRoom.totalRevenue >= _sessionInitialRevenue)
+              ? (_currentRoom.totalRevenue - _sessionInitialRevenue)
+              : 0;
+          final int gifts = _sessionGiftsCount;
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (context) => LiveEndedSummaryScreen(
                 durationMinutes: duration,
                 totalUsers: users,
                 totalDiamonds: diamonds,
-                totalGifts: 0, // TODO: Implement real gift tracking
+                totalGifts: gifts,
                 hostName: _currentRoom.creatorName,
                 hostAvatar: _currentRoom.creatorImageUrl,
               ),
@@ -2009,11 +2579,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
   /// Handle mute/unmute
   void _handleMuteToggle() {
-    debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸Å½â¢Ã¯Â¸  Microphone toggle requested...');
+    debugPrint(
+        'Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸Å½â¢Ã¯Â¸  Microphone toggle requested...');
     debugPrint(
       'Ã°Å¸Å½Â¤ [AudioRoom]   - Current state: ${_isMuted ? "MUTED" : "UNMUTED"}',
     );
-    debugPrint('Ã°Å¸Å½Â¤ [AudioRoom]   - Agora connected: $_agoraChannelJoined');
+    debugPrint(
+        'Ã°Å¸Å½Â¤ [AudioRoom]   - Agora connected: $_agoraChannelJoined');
     debugPrint(
       'Ã°Å¸Å½Â¤ [AudioRoom]   - Is seated: ${_currentParticipant?.isSeated ?? false}',
     );
@@ -2022,7 +2594,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     final bool canUserUseMic = _currentParticipant != null &&
         (_currentParticipant!.isSeated ||
             _currentParticipant!.isSpeaker ||
-            (_currentParticipant!.seatNumber != null && _currentParticipant!.seatNumber! >= 0));
+            (_currentParticipant!.seatNumber != null &&
+                _currentParticipant!.seatNumber! >= 0));
 
     if (!canUserUseMic) {
       debugPrint(
@@ -2102,11 +2675,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     debugPrint(
       'Ã°Å¸âÅ  [AudioRoom]   - Current state: ${_isSpeakerOn ? "ON" : "OFF"}',
     );
-    debugPrint('Ã°Å¸âÅ  [AudioRoom]   - Agora connected: $_agoraChannelJoined');
+    debugPrint(
+        'Ã°Å¸âÅ  [AudioRoom]   - Agora connected: $_agoraChannelJoined');
 
     if (_agoraChannelJoined) {
       // Use Agora for speaker toggle
-      debugPrint('Ã°Å¸âÅ  [AudioRoom] Ã°Å¸âÂ§ Sending ToggleSpeaker event to Agora...');
+      debugPrint(
+          'Ã°Å¸âÅ  [AudioRoom] Ã°Å¸âÂ§ Sending ToggleSpeaker event to Agora...');
       widget.audioRoomsBloc.add(const ToggleSpeaker());
     } else {
       // Fallback to local state if Agora not connected
@@ -2466,11 +3041,728 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     );
   }
 
+  /// Show Video Beauty & Retouch Sheet (Khan_Live style)
+  void _showBeautySheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => BeautyEffectSheet(
+        controller: _videoEffectsController,
+      ),
+    );
+  }
+
+  /// Show Video Background Effect Sheet (Virtual background / Blur / Wallpaper)
+  void _showBackgroundSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => BackgroundEffectSheet(
+        controller: _videoEffectsController,
+      ),
+    );
+  }
+
+  /// Show Video Call Guest Management Sheet (Pending requests & Active Call Guests)
+  void _showManageGuestsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => VideoCallManageSheet(
+        room: _currentRoom,
+        audioRoomsBloc: widget.audioRoomsBloc,
+      ),
+    );
+  }
+
+  /// Show Video Room Settings Sheet (Glassmorphic grid matching Khan_Live)
+  void _showVideoRoomSettingsSheet() {
+    final isSeatedGuest = !_isCurrentUserHost &&
+        (_currentParticipant?.isSeated == true ||
+            _currentParticipant?.seatNumber != null);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => VideoRoomSettingsSheet(
+        isHost: _isCurrentUserHost,
+        isSeatedGuest: isSeatedGuest,
+        isMuted: _isCurrentUserMuted,
+        isCameraOff: !_isHostVideoEnabled,
+        isSpeakerMuted: !_isSpeakerOn,
+        joinRequestsCount: _currentRoom.joinRequests.length,
+        onOpenBeauty: _showBeautySheet,
+        onOpenBackground: _showBackgroundSheet,
+        onFlipCamera: () => AgoraService().switchCamera(),
+        onToggleMic: _handleMuteToggle,
+        onToggleCamera: () {
+          setState(() {
+            _isHostVideoEnabled = !_isHostVideoEnabled;
+          });
+          if (_isHostVideoEnabled) {
+            AgoraService().enableVideo();
+          } else {
+            AgoraService().disableVideo();
+          }
+        },
+        onToggleSpeaker: _handleSpeakerToggle,
+        onOpenManageGuests: _showManageGuestsSheet,
+        onEditRoomInfo: _showAnnouncementDialog,
+        onLeaveCall: () {
+          if (_currentParticipant?.seatNumber != null) {
+            _confirmMoveToAudience(_currentParticipant!.seatNumber!);
+          }
+        },
+        onOpenPKBattle: _openVideoPkSheet,
+        onOpenLuckyBag: () {
+          CreateLuckyBagBottomSheet.show(
+            context,
+            roomId: _currentRoom.id,
+            senderId: _currentUser.userId,
+            senderName: _currentUser.fullname,
+            senderAvatar: _currentUser.photoUrl,
+          );
+        },
+      ),
+    );
+  }
+
+  /// Confirmation dialog to leave call seat and return to audience
+  void _confirmMoveToAudience(int seatNumber) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF131722),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Text(
+                'Leave Call Seat?',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'You will leave the call seat and return to the audience.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white60, fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: Colors.white.withOpacity(0.15)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel',
+                          style: TextStyle(color: Colors.white70)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFEF4444),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _leaveSeat();
+                      },
+                      child: const Text('Leave',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Self seat options for a seated guest caller
+  void _showMySeatCallSheet(AudioRoomParticipant participant) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF131722).withOpacity(0.97),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Row(
+                children: [
+                  CachedCircleAvatar(
+                    imageUrl: participant.userImageUrl ?? '',
+                    radius: 23,
+                    borderColor: const Color(0xFFD946EF),
+                    borderWidth: 1.5,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          participant.userName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Call Seat #${participant.seatNumber}',
+                          style: const TextStyle(
+                            color: Color(0xFFD946EF),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isCurrentUserMuted
+                            ? const Color(0xFF10B981)
+                            : Colors.white.withOpacity(0.1),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _handleMuteToggle();
+                      },
+                      icon: Icon(
+                        _isCurrentUserMuted ? Icons.mic : Icons.mic_off,
+                        size: 18,
+                      ),
+                      label: Text(
+                        _isCurrentUserMuted ? 'Unmute' : 'Mute',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor:
+                            const Color(0xFFEF4444).withOpacity(0.15),
+                        foregroundColor: const Color(0xFFEF4444),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: const BorderSide(
+                              color: Color(0xFFEF4444), width: 1),
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        if (participant.seatNumber != null) {
+                          _confirmMoveToAudience(participant.seatNumber!);
+                        }
+                      },
+                      icon: const Icon(Icons.call_end_rounded, size: 18),
+                      label: const Text(
+                        'Leave Call',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Remote moderation sheet when host taps on a seated call guest
+  void _showGuestSeatActionSheet(AudioRoomParticipant participant) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF131722).withOpacity(0.97),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Row(
+                children: [
+                  CachedCircleAvatar(
+                    imageUrl: participant.userImageUrl ?? '',
+                    radius: 23,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          participant.userName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Call Seat #${participant.seatNumber}',
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    participant.isMutedByAdmin ? Icons.mic : Icons.mic_off,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                title: Text(
+                  participant.isMutedByAdmin
+                      ? 'Unmute Guest Mic'
+                      : 'Mute Guest Mic',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  widget.audioRoomsBloc.add(
+                    ToggleAdminMute(
+                      roomId: _currentRoom.id,
+                      participantId: participant.userId,
+                      mutedByAdmin: !participant.isMutedByAdmin,
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.call_end_rounded,
+                    color: Color(0xFFEF4444),
+                    size: 20,
+                  ),
+                ),
+                title: const Text(
+                  'Disconnect from Call (Move to Audience)',
+                  style: TextStyle(
+                    color: Color(0xFFEF4444),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (participant.seatNumber != null) {
+                    widget.audioRoomsBloc.add(
+                      MoveParticipantToSeat(
+                        roomId: _currentRoom.id,
+                        userId: participant.userId,
+                        fromSeat: participant.seatNumber!,
+                        toSeat: -1,
+                      ),
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                            '${participant.userName} removed from call seat'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                  }
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.person_outline_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                title: const Text(
+                  'View Profile',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showParticipantBottomSheet(participant);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Handle Call Join Request tap from RoomControls bottom bar
+  void _handleCallJoinRequest() {
+    if (_isCurrentUserHost) {
+      _showManageGuestsSheet();
+      return;
+    }
+
+    if (_currentParticipant?.isSeated == true ||
+        _currentParticipant?.seatNumber != null) {
+      if (_currentParticipant?.seatNumber != null) {
+        _confirmMoveToAudience(_currentParticipant!.seatNumber!);
+      }
+      return;
+    }
+
+    final hasRequested =
+        _currentRoom.joinRequests.contains(_currentUser.userId);
+    if (hasRequested) {
+      widget.audioRoomsBloc.add(
+        RejectJoinRequest(
+          roomId: _currentRoom.id,
+          userId: _currentUser.userId,
+        ),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Join request cancelled'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    } else {
+      widget.audioRoomsBloc.add(
+        SendJoinRequest(
+          roomId: _currentRoom.id,
+          userId: _currentUser.userId,
+        ),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Join request sent to host!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  /// Floating circular guest seats on the right side of video room (Khan_Live style)
+  Widget _buildLiveCircularGuestSeats() {
+    final seatedGuests = _currentRoom.participants
+        .where((p) => p.isSeated && p.seatNumber != null && p.seatNumber! > 1)
+        .toList()
+      ..sort((a, b) => a.seatNumber!.compareTo(b.seatNumber!));
+
+    return Positioned(
+      right: 12,
+      top: 175,
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Active Call Guests
+            for (final guest in seatedGuests) ...[
+              _buildSingleGuestSeat(guest),
+              const SizedBox(height: 10),
+            ],
+
+            // If current user is host, show + button to manage call guests
+            if (_isCurrentUserHost)
+              GestureDetector(
+                onTap: _showManageGuestsSheet,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.4),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFFD946EF).withOpacity(0.6),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFD946EF).withOpacity(0.2),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.add_call,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                    if (_currentRoom.joinRequests.isNotEmpty)
+                      Positioned(
+                        top: -4,
+                        right: -4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          constraints:
+                              const BoxConstraints(minWidth: 18, minHeight: 18),
+                          child: Center(
+                            child: Text(
+                              '${_currentRoom.joinRequests.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSingleGuestSeat(AudioRoomParticipant guest) {
+    final isMe = guest.userId == _currentUser.userId;
+    final guestUid = _generateUid(guest.userId);
+    final engine = AgoraService().engine;
+    final isSpeaking = !guest.isMuted;
+
+    return GestureDetector(
+      onTap: () {
+        if (isMe) {
+          _showMySeatCallSheet(guest);
+        } else if (_isCurrentUserHost) {
+          _showGuestSeatActionSheet(guest);
+        } else {
+          _showParticipantBottomSheet(guest);
+        }
+      },
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isSpeaking
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFD946EF).withOpacity(0.8),
+                width: isSpeaking ? 2.5 : 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: isSpeaking
+                      ? const Color(0xFF10B981).withOpacity(0.4)
+                      : Colors.black38,
+                  blurRadius: 8,
+                  spreadRadius: isSpeaking ? 2 : 1,
+                ),
+              ],
+            ),
+            child: ClipOval(
+              child: Builder(
+                builder: (_) {
+                  if (engine != null && _agoraChannelJoined) {
+                    if (isMe && _isHostVideoEnabled) {
+                      return AgoraVideoView(
+                        controller: _getVideoController(0, engine),
+                      );
+                    }
+                    final isMuted =
+                        AgoraService().remoteUserVideoMuted[guestUid] ?? true;
+                    if (!isMuted) {
+                      return AgoraVideoView(
+                        controller: _getVideoController(guestUid, engine),
+                      );
+                    }
+                  }
+                  return CachedCircleAvatar(
+                    imageUrl: guest.userImageUrl ?? '',
+                    radius: 26,
+                  );
+                },
+              ),
+            ),
+          ),
+          // Seat number badge (top-left)
+          Positioned(
+            top: -2,
+            left: -2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: const Color(0xFFD946EF),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white, width: 1),
+              ),
+              child: Text(
+                '${guest.seatNumber}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          // Mic status badge (bottom-right)
+          Positioned(
+            bottom: -2,
+            right: -2,
+            child: Container(
+              padding: const EdgeInsets.all(2.5),
+              decoration: BoxDecoration(
+                color: guest.isMuted
+                    ? const Color(0xFFEF4444)
+                    : const Color(0xFF10B981),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1),
+              ),
+              child: Icon(
+                guest.isMuted ? Icons.mic_off : Icons.mic,
+                color: Colors.white,
+                size: 10,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Initialize Agora for the audio room
   void _initializeAgoraForRoom() {
     // Safety check: don't add events to a closed BLoC
     if (widget.audioRoomsBloc.isClosed) {
-      debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã¢ Å Cannot initialize Agora: BLoC is closed');
+      debugPrint(
+          'Ã°Å¸Å½Â¤ [AudioRoom] Ã¢ Å Cannot initialize Agora: BLoC is closed');
       return;
     }
 
@@ -2506,7 +3798,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       return;
     }
 
-    debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸Å¡Âª Attempting to join Agora channel...');
+    debugPrint(
+        'Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸Å¡Âª Attempting to join Agora channel...');
     debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸ââ¹ Join Info:');
     debugPrint('Ã°Å¸Å½Â¤ [AudioRoom]   - Channel: ${_currentRoom.id}');
     debugPrint('Ã°Å¸Å½Â¤ [AudioRoom]   - UID: $_agoraUid');
@@ -2516,9 +3809,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     final currentParticipant = _currentParticipant;
 
     final bool isSeated = (currentParticipant?.isSeated ?? false) ||
-        (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! >= 0);
+        (currentParticipant?.seatNumber != null &&
+            currentParticipant!.seatNumber! >= 0);
 
-    final bool isMuted = isSeated ? (currentParticipant?.isMutedByAdmin == true) : true;
+    final bool isMuted =
+        isSeated ? (currentParticipant?.isMutedByAdmin == true) : true;
     if (isSeated && currentParticipant?.isMutedByAdmin != true) {
       _isMuted = false;
     }
@@ -2636,12 +3931,27 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       value: widget.audioRoomsBloc,
       child: BlocListener<AudioRoomsBloc, AudioRoomsState>(
         listener: (context, state) {
-          // Handle kicked/blocked or room ended state
-          if (state is AudioRoomsError &&
-              (state.errorCode == 'KICKED' ||
-                  state.errorCode == 'ROOM_ENDED')) {
+          // Handle room ended state
+          if (state is AudioRoomsError && state.errorCode == 'ROOM_ENDED') {
             debugPrint(
-              'Ã°Å¸Å¡Âª [UI] User has been kicked, blocked, or room ended. Popping screen...',
+              '🚪 [UI] Room ended. Stopping video and showing room closed dialog...',
+            );
+            setState(() {
+              _canPopScreen = true;
+              _agoraChannelJoined = false;
+            });
+            _videoControllers.clear();
+            try {
+              AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
+            } catch (_) {}
+            _showRoomEndedDialog();
+            return;
+          }
+
+          // Handle kicked/blocked state
+          if (state is AudioRoomsError && state.errorCode == 'KICKED') {
+            debugPrint(
+              '🚪 [UI] User has been kicked or blocked. Popping screen...',
             );
             Navigator.of(context).pop();
             ScaffoldMessenger.of(context).showSnackBar(
@@ -2656,9 +3966,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
           // Handle Agora states
           if (state is AgoraInitializing) {
-            debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸ââ Agora is initializing...');
+            debugPrint(
+                'Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸ââ Agora is initializing...');
           } else if (state is AgoraInitialized) {
-            debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã¢Åâ¦ Agora initialized successfully');
+            debugPrint(
+                'Ã°Å¸Å½Â¤ [AudioRoom] Ã¢Åâ¦ Agora initialized successfully');
             // Auto-join channel after initialization
             _joinAgoraChannel();
           } else if (state is AgoraInitializationFailed) {
@@ -2687,8 +3999,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             debugPrint(
               'Ã°Å¸Å½Â¤ [AudioRoom]   - Users in channel: ${state.users.length}',
             );
-            debugPrint('Ã°Å¸Å½Â¤ [AudioRoom]   - Microphone muted: ${state.isMuted}');
-            debugPrint('Ã°Å¸Å½Â¤ [AudioRoom]   - Speaker on: ${state.isSpeakerOn}');
+            debugPrint(
+                'Ã°Å¸Å½Â¤ [AudioRoom]   - Microphone muted: ${state.isMuted}');
+            debugPrint(
+                'Ã°Å¸Å½Â¤ [AudioRoom]   - Speaker on: ${state.isSpeakerOn}');
             debugPrint(
               'Ã°Å¸Å½Â¤ [AudioRoom]   - Audio quality: ${state.audioQuality}',
             );
@@ -2713,17 +4027,14 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             );
             // Seamless automatic retry after 1.5 seconds if not yet joined
             Future.delayed(const Duration(milliseconds: 1500), () {
-              if (mounted && !_agoraChannelJoined && !widget.audioRoomsBloc.isClosed) {
-                debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸ââ Auto-retrying Agora join channel...');
+              if (mounted &&
+                  !_agoraChannelJoined &&
+                  !widget.audioRoomsBloc.isClosed) {
+                debugPrint(
+                    'Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸ââ Auto-retrying Agora join channel...');
                 _joinAgoraChannel();
               }
             });
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Failed to join audio: ${state.error}'),
-                backgroundColor: Colors.red,
-              ),
-            );
           } else if (state is MicrophoneToggled) {
             debugPrint(
               'Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸Å½â¢Ã¯Â¸  Microphone toggled: ${state.isMuted ? "Ã°Å¸ââ¡ MUTED" : "Ã°Å¸Å½Â¤ UNMUTED"}',
@@ -2815,21 +4126,26 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 }
                 final participantIndex = _currentRoom.participants.indexWhere(
                   (p) =>
-                      (state.user.userId.isNotEmpty && p.userId == state.user.userId) ||
+                      (state.user.userId.isNotEmpty &&
+                          p.userId == state.user.userId) ||
                       generateAgoraUid(p.userId) == state.user.uid ||
                       (p.userId.hashCode.abs() % 1000000) == state.user.uid,
                 );
                 if (participantIndex != -1) {
                   final isMutedNow = state.action == 'muted';
-                  final updatedList = List<AudioRoomParticipant>.from(_currentRoom.participants);
-                  updatedList[participantIndex] = updatedList[participantIndex].copyWith(
+                  final updatedList = List<AudioRoomParticipant>.from(
+                      _currentRoom.participants);
+                  updatedList[participantIndex] =
+                      updatedList[participantIndex].copyWith(
                     isMuted: isMutedNow,
                   );
-                  _currentRoom = _currentRoom.copyWith(participants: updatedList);
+                  _currentRoom =
+                      _currentRoom.copyWith(participants: updatedList);
 
                   // If muted, clear volume immediately so ripple stops instantly
                   if (isMutedNow) {
-                    _userVolumeNotifiers[updatedList[participantIndex].userId]?.value = 0.0;
+                    _userVolumeNotifiers[updatedList[participantIndex].userId]
+                        ?.value = 0.0;
                   }
                 }
               }
@@ -2863,19 +4179,22 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   if (p != null) {
                     targetUserId = p.userId;
                   } else if (generateAgoraUid(_currentRoom.creatorId) == uid ||
-                      (_currentRoom.creatorId.hashCode.abs() % 1000000) == uid ||
+                      (_currentRoom.creatorId.hashCode.abs() % 1000000) ==
+                          uid ||
                       _currentRoom.creatorId == uid.toString()) {
                     targetUserId = _currentRoom.creatorId;
                   } else {
                     // 2. Fallback to active Agora users map if resolved
-                    final agoraUser = _agoraUsers.firstWhereOrNull((u) => u.uid == uid);
+                    final agoraUser =
+                        _agoraUsers.firstWhereOrNull((u) => u.uid == uid);
                     if (agoraUser != null &&
                         agoraUser.userId.isNotEmpty &&
                         !agoraUser.userId.startsWith('user_')) {
                       targetUserId = agoraUser.userId;
                     } else {
                       // 3. Fallback to AgoraService remote users map
-                      final remoteUser = widget.audioRoomsBloc.agoraService.remoteUsers[uid];
+                      final remoteUser =
+                          widget.audioRoomsBloc.agoraService.remoteUsers[uid];
                       if (remoteUser != null &&
                           remoteUser.userId.isNotEmpty &&
                           !remoteUser.userId.startsWith('user_')) {
@@ -2899,12 +4218,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                       if (p != null && p.isMuted) {
                         final idx = _currentRoom.participants.indexOf(p);
                         if (idx != -1) {
-                          final updatedList = List<AudioRoomParticipant>.from(_currentRoom.participants);
+                          final updatedList = List<AudioRoomParticipant>.from(
+                              _currentRoom.participants);
                           updatedList[idx] = p.copyWith(isMuted: false);
-                          _currentRoom = _currentRoom.copyWith(participants: updatedList);
-                          if (mounted) {
-                            setState(() {});
-                          }
+                          _currentRoom =
+                              _currentRoom.copyWith(participants: updatedList);
                         }
                       }
                     } else {
@@ -2932,7 +4250,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
             // Reset volume notifier to 0.0 for users who stopped speaking
             _userVolumeNotifiers.forEach((userId, notifier) {
-              if (!activeSpeakingUserIds.contains(userId) && notifier.value != 0.0) {
+              if (!activeSpeakingUserIds.contains(userId) &&
+                  notifier.value != 0.0) {
                 notifier.value = 0.0;
               }
             });
@@ -2954,9 +4273,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               );
             }
           } else if (state is TokenPrivilegeWillExpire) {
-            debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã¢Å¡Â Ã¯Â¸Â Token will expire soon, renewing...');
+            debugPrint(
+                'Ã°Å¸Å½Â¤ [AudioRoom] Ã¢Å¡Â Ã¯Â¸Â Token will expire soon, renewing...');
           } else if (state is TokenRenewed) {
-            debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã¢Åâ¦ Token renewed successfully');
+            debugPrint(
+                'Ã°Å¸Å½Â¤ [AudioRoom] Ã¢Åâ¦ Token renewed successfully');
           } else if (state is AgoraError) {
             debugPrint(
               'Ã°Å¸Å½Â¤ [AudioRoom] Ã¢ÂÅ Agora Error: ${state.message} (Code: ${state.code})',
@@ -2974,7 +4295,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               }
             }
           } else if (state is AgoraChannelLeft) {
-            debugPrint('Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸ââ¹ Left Agora channel successfully');
+            debugPrint(
+                'Ã°Å¸Å½Â¤ [AudioRoom] Ã°Å¸ââ¹ Left Agora channel successfully');
             setState(() {
               _agoraChannelJoined = false;
               _agoraUsers.clear();
@@ -2991,26 +4313,44 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
             _currentRoom = newRoom;
 
+            // Track live session unique viewers
+            for (final p in newRoom.participants) {
+              _sessionViewers.add(p.userId);
+            }
+            if (newRoom.joinedUserIds.isNotEmpty) {
+              _sessionViewers.addAll(newRoom.joinedUserIds);
+            }
+
             if (mounted) {
               setState(() {});
               WidgetsBinding.instance.scheduleFrame();
             }
 
-
+            if (!newRoom.isActive && !_isCurrentUserHost && newRoom.category == 'Live') {
+              debugPrint('🚪 [UI] Live room is inactive. Stopping video and showing room closed dialog...');
+              setState(() {
+                _canPopScreen = true;
+                _agoraChannelJoined = false;
+              });
+              _videoControllers.clear();
+              try {
+                AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
+              } catch (_) {}
+              _showRoomEndedDialog();
+              return;
+            }
 
             if (newRoom.activeYoutubeVideoId != null) {
               final hostParticipant = newRoom.participants.firstWhereOrNull(
                 (p) => p.userId == newRoom.creatorId,
               );
-              final isHostInSeat1 =
-                  hostParticipant != null &&
+              final isHostInSeat1 = hostParticipant != null &&
                   hostParticipant.isSeated &&
                   hostParticipant.seatNumber == 1;
 
               if (!isHostInSeat1) {
                 final isHostInRoom = hostParticipant != null;
-                final shouldIUpdate =
-                    (isHostInRoom && _isCurrentUserHost) ||
+                final shouldIUpdate = (isHostInRoom && _isCurrentUserHost) ||
                     (!isHostInRoom &&
                         newRoom.participants.isNotEmpty &&
                         newRoom.participants.first.userId ==
@@ -3040,10 +4380,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 );
                 final shouldCloseCarrom =
                     (isHostInRoom && _isCurrentUserHost) ||
-                    (!isHostInRoom &&
-                        newRoom.participants.isNotEmpty &&
-                        newRoom.participants.first.userId ==
-                            _currentUser.userId);
+                        (!isHostInRoom &&
+                            newRoom.participants.isNotEmpty &&
+                            newRoom.participants.first.userId ==
+                                _currentUser.userId);
 
                 if (shouldCloseCarrom) {
                   AudioRoomsRepository().updateCarromState(
@@ -3128,15 +4468,16 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 DefaultCacheManager()
                     .getSingleFile(newBackgroundUrl)
                     .catchError((error) {
-                      debugPrint(
-                        'Ã°Å¸âÂ¼Ã¯Â¸Â Failed to preload updated background: $error',
-                      );
-                      throw error;
-                    });
+                  debugPrint(
+                    'Ã°Å¸âÂ¼Ã¯Â¸Â Failed to preload updated background: $error',
+                  );
+                  throw error;
+                });
               }
             }
           } else if (state is AudioRoomLeft) {
-            debugPrint('Ã°Å¸Å½Â¯ Successfully left room (screen already popped)');
+            debugPrint(
+                'Ã°Å¸Å½Â¯ Successfully left room (screen already popped)');
             // Removed Navigator.of(context).pop() to fix double-pop white screen bug
           } else if (state is AudioRoomJoined) {
             debugPrint(
@@ -3184,13 +4525,24 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             // Show immediate feedback - no debug prints for speed
           } else if (state is AudioRoomsError) {
             debugPrint('🎯 Room error: ${state.message}');
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.message),
-                backgroundColor: Colors.red,
-                duration: const Duration(seconds: 3),
-              ),
-            );
+            final lowerMsg = state.message.toLowerCase();
+            final bool isTechnicalError = lowerMsg.contains('livekit') ||
+                lowerMsg.contains('firestore') ||
+                lowerMsg.contains('firebase') ||
+                lowerMsg.contains('agora') ||
+                lowerMsg.contains('exception') ||
+                lowerMsg.contains('socket') ||
+                lowerMsg.contains('failed to connect') ||
+                lowerMsg.contains('timed out');
+            if (!isTechnicalError && state.message.trim().isNotEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(state.message),
+                  backgroundColor: Colors.red,
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            }
             if (state.errorCode == 'KICKED') {
               debugPrint(
                 '🚪 [AudioRoom] Kicked state detected, safely exiting room screen...',
@@ -3199,7 +4551,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 _canPopScreen = true;
               });
               _getMinimizedController().clearMinimizedRoom();
-              AgoraService().leaveChannelAndRelease(channelName: _currentRoom.id);
+              AgoraService()
+                  .leaveChannelAndRelease(channelName: _currentRoom.id);
               Navigator.of(context).pop();
             }
           } else if (state is ParticipantMovedToSeat) {
@@ -3209,7 +4562,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             if (state.userId == _currentUser.userId) {
               if (state.toSeat >= 0) {
                 // Moving onto a seat: unmuted by default unless muted by admin
-                final bool isMutedByAdmin = _currentParticipant?.isMutedByAdmin == true;
+                final bool isMutedByAdmin =
+                    _currentParticipant?.isMutedByAdmin == true;
                 _isMuted = isMutedByAdmin;
               } else {
                 // Leaving seat: muted
@@ -3224,7 +4578,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     seatNumber: state.toSeat,
                     isSeated: true,
                     isSpeaker: true,
-                    isMuted: state.userId == _currentUser.userId ? _isMuted : (p.isMutedByAdmin ? true : false),
+                    isMuted: state.userId == _currentUser.userId
+                        ? _isMuted
+                        : (p.isMutedByAdmin ? true : false),
                   );
                 } else {
                   return p.copyWith(
@@ -3237,7 +4593,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               }
               return p;
             }).toList();
-            _currentRoom = _currentRoom.copyWith(participants: updatedParticipants);
+            _currentRoom =
+                _currentRoom.copyWith(participants: updatedParticipants);
             // Force UI refresh to update seat display immediately
             if (mounted) {
               setState(() {});
@@ -3258,7 +4615,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               }
               return p;
             }).toList();
-            _currentRoom = _currentRoom.copyWith(participants: updatedParticipants);
+            _currentRoom =
+                _currentRoom.copyWith(participants: updatedParticipants);
             if (state.participantId == _currentUser.userId) {
               _isMuted = true;
             }
@@ -3281,8 +4639,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           canPop: _canPopScreen,
           onPopInvokedWithResult: (bool didPop, dynamic result) {
             if (!didPop) {
-              // Pressing the back button/gesture automatically minimizes the room
-              _handleMinimize();
+              if (_isCurrentUserHost && _currentRoom.category == 'Live') {
+                _showEndLiveConfirmationDialog();
+              } else {
+                // Pressing the back button/gesture automatically minimizes the room
+                _handleMinimize();
+              }
             }
           },
           child: AnnotatedRegion<SystemUiOverlayStyle>(
@@ -3319,7 +4681,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         setState(() {
           if (!_currentRoom.joinedUserIds.contains(_currentUser.userId)) {
             _currentRoom = _currentRoom.copyWith(
-              joinedUserIds: [..._currentRoom.joinedUserIds, _currentUser.userId],
+              joinedUserIds: [
+                ..._currentRoom.joinedUserIds,
+                _currentUser.userId
+              ],
             );
           }
         });
@@ -3418,185 +4783,353 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             children: [
               // Left: Room Icon + Name + ID + Level Badge + Join '+' Button
               Expanded(
-                child: GestureDetector(
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => RoomMemberScreen(
-                          roomId: _currentRoom.id,
-                          currentUserId: _currentUser.userId,
-                        ),
-                      ),
-                    );
-                  },
-                  behavior: HitTestBehavior.opaque,
-                  child: Row(
-                    children: [
-                      // Room Avatar
-                      Container(
-                        width: 38,
-                        height: 38,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          image: _currentRoom.imageUrl != null &&
-                                  _currentRoom.imageUrl!.isNotEmpty
-                              ? DecorationImage(
-                                  image: NetworkImage(_currentRoom.imageUrl!),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
-                          color: _currentRoom.imageUrl == null ? Colors.red : null,
-                        ),
-                        child: _currentRoom.imageUrl == null
-                            ? const Icon(
-                                Icons.group,
-                                color: Colors.white,
-                                size: 20,
-                              )
-                            : null,
-                      ),
-                      const SizedBox(width: 8),
+                child: _currentRoom.category == 'Live'
+                    ? StreamBuilder<DocumentSnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('Users')
+                            .doc(_currentRoom.creatorId)
+                            .snapshots(),
+                        builder: (context, userSnap) {
+                          Map<String, dynamic>? userData;
+                          if (userSnap.hasData &&
+                              userSnap.data?.exists == true) {
+                            userData = userSnap.data!.data()
+                                as Map<String, dynamic>?;
+                          }
+                          final String hostSearchId =
+                              (userData?['searchId'] ?? '').toString().trim();
+                          final String hostAvatar =
+                              (userData?['photoUrl'] ?? '').toString().trim();
+                          final String hostName =
+                              (userData?['fullname'] ?? '').toString().trim();
+                          final String displayId = hostSearchId.isNotEmpty
+                              ? hostSearchId
+                              : _currentRoom.creatorId;
+                          final String avatarUrl = hostAvatar.isNotEmpty
+                              ? hostAvatar
+                              : (_currentRoom.imageUrl ?? '');
 
-                      // Room Title and ID
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _currentRoom.name,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'Inter',
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
+                          return GestureDetector(
+                            onTap: () {
+                              AudioRoomParticipant? hostParticipant;
+                              for (final p in _currentRoom.participants) {
+                                if (p.userId == _currentRoom.creatorId) {
+                                  hostParticipant = p;
+                                  break;
+                                }
+                              }
+                              if (hostParticipant == null) {
+                                hostParticipant = AudioRoomParticipant(
+                                  userId: _currentRoom.creatorId,
+                                  userName: hostName.isNotEmpty
+                                      ? hostName
+                                      : _currentRoom.creatorName,
+                                  userImageUrl: avatarUrl.isNotEmpty
+                                      ? avatarUrl
+                                      : (_currentRoom.creatorImageUrl ??
+                                          _currentRoom.imageUrl),
+                                  joinedAt: DateTime.now(),
+                                  isHost: true,
+                                  isSpeaker: true,
+                                  isSeated: true,
+                                  seatNumber: 1,
+                                );
+                              }
+                              _showParticipantBottomSheet(hostParticipant);
+                            },
+                            behavior: HitTestBehavior.opaque,
+                            child: Row(
                               children: [
-                                Flexible(
-                                  child: StreamBuilder<DocumentSnapshot>(
-                                    stream: FirebaseFirestore.instance
-                                        .collection('premium_room_ids')
-                                        .doc(_currentRoom.id)
-                                        .snapshots(),
-                                    builder: (context, snapshot) {
-                                      if (snapshot.hasData &&
-                                          snapshot.data!.exists &&
-                                          snapshot.data!.data() != null) {
-                                        final model = PremiumRoomIdModel.fromMap(
-                                          snapshot.data!.data()
-                                              as Map<String, dynamic>,
-                                          snapshot.data!.id,
-                                        );
-                                        if (!model.isExpired &&
-                                            model.customId.isNotEmpty) {
-                                          return AnimatedPremiumId(
-                                            idStr: model.customId,
-                                          );
-                                        }
-                                      }
+                                // Room / Host Avatar
+                                Container(
+                                  width: 38,
+                                  height: 38,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(10),
+                                    image: avatarUrl.isNotEmpty
+                                        ? DecorationImage(
+                                            image: NetworkImage(avatarUrl),
+                                            fit: BoxFit.cover,
+                                          )
+                                        : null,
+                                    color:
+                                        avatarUrl.isEmpty ? Colors.red : null,
+                                  ),
+                                  child: avatarUrl.isEmpty
+                                      ? const Icon(
+                                          Icons.person,
+                                          color: Colors.white,
+                                          size: 20,
+                                        )
+                                      : null,
+                                ),
+                                const SizedBox(width: 8),
 
-                                      return Text(
-                                        'ID: ${_currentRoom.id.length > 8 ? _currentRoom.id.substring(0, 8) : _currentRoom.id}',
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.6,
-                                          ),
-                                          fontSize: 10,
+                                // Room Title and ID
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        _currentRoom.name,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
                                           fontFamily: 'Inter',
                                         ),
+                                        maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                      );
-                                    },
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Row(
+                                        children: [
+                                          UserIdBadgeWidget(
+                                            searchId: displayId,
+                                            badgeHeight: 18,
+                                            showCopyIcon: false,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          _getDynamicRoomLevelBadgeUrl() != null
+                                              ? CachedNetworkImage(
+                                                  imageUrl:
+                                                      _getDynamicRoomLevelBadgeUrl()!,
+                                                  width: 36,
+                                                  height: 20,
+                                                  fit: BoxFit.contain,
+                                                )
+                                              : Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 4,
+                                                    vertical: 1,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        Colors.blue.withValues(
+                                                      alpha: 0.6,
+                                                    ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                      4,
+                                                    ),
+                                                    border: Border.all(
+                                                      color: Colors.white24,
+                                                      width: 0.5,
+                                                    ),
+                                                  ),
+                                                  child: Text(
+                                                    'Lv.${AudioRoomV2.calculateRoomLevel(_currentRoom.totalRevenue, _roomLevelConfigData)}',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 8,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontFamily: 'Inter',
+                                                    ),
+                                                  ),
+                                                ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(width: 4),
-                                _getDynamicRoomLevelBadgeUrl() != null
-                                    ? CachedNetworkImage(
-                                        imageUrl:
-                                            _getDynamicRoomLevelBadgeUrl()!,
-                                        width: 36,
-                                        height: 20,
-                                        fit: BoxFit.contain,
+                              ],
+                            ),
+                          );
+                        },
+                      )
+                    : GestureDetector(
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => RoomMemberScreen(
+                                roomId: _currentRoom.id,
+                                currentUserId: _currentUser.userId,
+                              ),
+                            ),
+                          );
+                        },
+                        behavior: HitTestBehavior.opaque,
+                        child: Row(
+                          children: [
+                            // Room Avatar
+                            Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                image: _currentRoom.imageUrl != null &&
+                                        _currentRoom.imageUrl!.isNotEmpty
+                                    ? DecorationImage(
+                                        image: NetworkImage(
+                                            _currentRoom.imageUrl!),
+                                        fit: BoxFit.cover,
                                       )
-                                    : Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 4,
-                                          vertical: 1,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.blue.withValues(
-                                            alpha: 0.6,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                          border: Border.all(
-                                            color: Colors.white24,
-                                            width: 0.5,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          'Lv.${AudioRoomV2.calculateRoomLevel(_currentRoom.totalRevenue, _roomLevelConfigData)}',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 8,
-                                            fontWeight: FontWeight.bold,
-                                            fontFamily: 'Inter',
-                                          ),
+                                    : null,
+                                color: _currentRoom.imageUrl == null
+                                    ? Colors.red
+                                    : null,
+                              ),
+                              child: _currentRoom.imageUrl == null
+                                  ? const Icon(
+                                      Icons.group,
+                                      color: Colors.white,
+                                      size: 20,
+                                    )
+                                  : null,
+                            ),
+                            const SizedBox(width: 8),
+
+                            // Room Title and ID
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _currentRoom.name,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      fontFamily: 'Inter',
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: StreamBuilder<DocumentSnapshot>(
+                                          stream: FirebaseFirestore.instance
+                                              .collection('premium_room_ids')
+                                              .doc(_currentRoom.id)
+                                              .snapshots(),
+                                          builder: (context, snapshot) {
+                                            if (snapshot.hasData &&
+                                                snapshot.data!.exists &&
+                                                snapshot.data!.data() != null) {
+                                              final model =
+                                                  PremiumRoomIdModel.fromMap(
+                                                snapshot.data!.data()
+                                                    as Map<String, dynamic>,
+                                                snapshot.data!.id,
+                                              );
+                                              if (!model.isExpired &&
+                                                  model.customId.isNotEmpty) {
+                                                return AnimatedPremiumId(
+                                                  idStr: model.customId,
+                                                );
+                                              }
+                                            }
+
+                                            return Text(
+                                              'ID: ${_currentRoom.id.length > 8 ? _currentRoom.id.substring(0, 8) : _currentRoom.id}',
+                                              style: TextStyle(
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.6,
+                                                ),
+                                                fontSize: 10,
+                                                fontFamily: 'Inter',
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            );
+                                          },
                                         ),
                                       ),
+                                      const SizedBox(width: 4),
+                                      _getDynamicRoomLevelBadgeUrl() != null
+                                          ? CachedNetworkImage(
+                                              imageUrl:
+                                                  _getDynamicRoomLevelBadgeUrl()!,
+                                              width: 36,
+                                              height: 20,
+                                              fit: BoxFit.contain,
+                                            )
+                                          : Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 4,
+                                                vertical: 1,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.blue.withValues(
+                                                  alpha: 0.6,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                  4,
+                                                ),
+                                                border: Border.all(
+                                                  color: Colors.white24,
+                                                  width: 0.5,
+                                                ),
+                                              ),
+                                              child: Text(
+                                                'Lv.${AudioRoomV2.calculateRoomLevel(_currentRoom.totalRevenue, _roomLevelConfigData)}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 8,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontFamily: 'Inter',
+                                                ),
+                                              ),
+                                            ),
 
-                                // Plus button if user is not in joined members
-                                StreamBuilder<DocumentSnapshot>(
-                                  stream: FirebaseFirestore.instance
-                                      .collection('audio_rooms_v2')
-                                      .doc(_currentRoom.id)
-                                      .snapshots(),
-                                  builder: (context, snapshot) {
-                                    List<dynamic> joinedUserIds =
-                                        _currentRoom.joinedUserIds;
-                                    String creatorId = _currentRoom.creatorId;
-                                    if (snapshot.hasData &&
-                                        snapshot.data?.exists == true) {
-                                      final data = snapshot.data!.data()
-                                          as Map<String, dynamic>?;
-                                      if (data != null) {
-                                        joinedUserIds = (data['joinedUserIds']
-                                                as List<dynamic>?) ??
-                                            joinedUserIds;
-                                        creatorId =
-                                            (data['creatorId'] as String?) ??
-                                                creatorId;
-                                      }
-                                    }
+                                      // Plus button if user is not in joined members
+                                      StreamBuilder<DocumentSnapshot>(
+                                        stream: FirebaseFirestore.instance
+                                            .collection('audio_rooms_v2')
+                                            .doc(_currentRoom.id)
+                                            .snapshots(),
+                                        builder: (context, snapshot) {
+                                          List<dynamic> joinedUserIds =
+                                              _currentRoom.joinedUserIds;
+                                          String creatorId =
+                                              _currentRoom.creatorId;
+                                          if (snapshot.hasData &&
+                                              snapshot.data?.exists == true) {
+                                            final data = snapshot.data!.data()
+                                                as Map<String, dynamic>?;
+                                            if (data != null) {
+                                              joinedUserIds =
+                                                  (data['joinedUserIds']
+                                                          as List<dynamic>?) ??
+                                                      joinedUserIds;
+                                              creatorId = (data['creatorId']
+                                                      as String?) ??
+                                                  creatorId;
+                                            }
+                                          }
 
-                                    final bool isMember = joinedUserIds
-                                            .contains(_currentUser.userId) ||
-                                        creatorId == _currentUser.userId;
+                                          final bool isMember = joinedUserIds
+                                                  .contains(
+                                                      _currentUser.userId) ||
+                                              creatorId == _currentUser.userId;
 
-                                    if (isMember) {
-                                      return const SizedBox.shrink();
-                                    }
+                                          if (isMember) {
+                                            return const SizedBox.shrink();
+                                          }
 
-                                    return Padding(
-                                      padding: const EdgeInsets.only(left: 4.0),
-                                      child: _buildJoinRoomClubButton(),
-                                    );
-                                  },
-                                ),
-                              ],
+                                          return Padding(
+                                            padding: const EdgeInsets.only(
+                                                left: 4.0),
+                                            child: _buildJoinRoomClubButton(),
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
               ),
 
               const SizedBox(width: 8),
@@ -3619,21 +5152,6 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     ),
                     const SizedBox(width: 4),
                   ],
-                  if (_currentRoom.category == 'Live' &&
-                      _isCurrentUserHost) ...[
-                    GestureDetector(
-                      onTap: _showCameraOptionsBottomSheet,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        child: const Icon(
-                          Icons.flip_camera_ios_rounded,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                  ],
                   GestureDetector(
                     onTap: (_currentRoom.isGroupRoom || _currentRoom.isPrivate)
                         ? () {
@@ -3648,20 +5166,21 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         : _showShareBottomSheet,
                     child: Container(
                       padding: const EdgeInsets.all(4),
-                      child: (_currentRoom.isGroupRoom || _currentRoom.isPrivate)
-                          ? const Icon(
-                              Icons.lock_rounded,
-                              color: Colors.white,
-                              size: 20,
-                            )
-                          : Transform.scale(
-                              scaleX: -1,
-                              child: const Icon(
-                                Icons.reply_rounded,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                            ),
+                      child:
+                          (_currentRoom.isGroupRoom || _currentRoom.isPrivate)
+                              ? const Icon(
+                                  Icons.lock_rounded,
+                                  color: Colors.white,
+                                  size: 20,
+                                )
+                              : Transform.scale(
+                                  scaleX: -1,
+                                  child: const Icon(
+                                    Icons.reply_rounded,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -3952,7 +5471,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           shape: BoxShape.circle,
                           color: const Color(0xFF38265E),
                           border: Border.all(
-                            color: const Color(0xFF675296).withValues(alpha: 0.7),
+                            color:
+                                const Color(0xFF675296).withValues(alpha: 0.7),
                             width: 1.2,
                           ),
                           boxShadow: [
@@ -3997,7 +5517,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     return Stack(
       children: [
         // Background with loading state
-        _buildBackgroundWithLoading(),
+        RepaintBoundary(
+          child: _buildBackgroundWithLoading(),
+        ),
         // Content overlay
         Positioned.fill(
           child: GestureDetector(
@@ -4010,29 +5532,45 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.3),
-                    Colors.black.withValues(alpha: 0.7),
-                  ],
+                  colors: _currentRoom.category == 'Live'
+                      ? const [
+                          Colors.transparent,
+                          Colors.transparent,
+                        ]
+                      : [
+                          Colors.black.withValues(alpha: 0.3),
+                          Colors.black.withValues(alpha: 0.7),
+                        ],
                 ),
               ),
               child: SafeArea(
                 child: Column(
                   children: [
                     // Custom header
-                    _buildCustomHeader(),
+                    RepaintBoundary(
+                      child: _buildCustomHeader(),
+                    ),
+
+                    // Live Room Video PK Split Screen
+                    if (_currentRoom.category == 'Live' &&
+                        _activeVideoBattle != null &&
+                        (_activeVideoBattle!.isActive ||
+                            _activeVideoBattle!.isPunishment))
+                      _buildVideoPkSection(),
 
                     if (_currentRoom.isLudoActive)
                       LudoGameWidget(
                         room: _currentRoom,
-                        isHost: _isCurrentUserHostOrAdmin || (_currentParticipant?.seatNumber == 1),
+                        isHost: _isCurrentUserHostOrAdmin ||
+                            (_currentParticipant?.seatNumber == 1),
                         repository: AudioRoomsRepository(),
                         currentUserId: _currentUser.userId,
                       )
                     else if (_currentRoom.isCarromActive)
                       CarromGameWidget(
                         room: _currentRoom,
-                        isHost: _isCurrentUserHostOrAdmin || (_currentParticipant?.seatNumber == 1),
+                        isHost: _isCurrentUserHostOrAdmin ||
+                            (_currentParticipant?.seatNumber == 1),
                         repository: AudioRoomsRepository(),
                         currentUserId: _currentUser.userId,
                       )
@@ -4045,24 +5583,33 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         onSearch: _showYoutubeSheet,
                       ),
 
-                    // PK Battle Overlay
-                    PKBattleOverlay(
-                      room: _currentRoom,
-                      currentUserId: _currentUser.userId,
-                      onSeatTap: (seatNumber) => _moveToSeat(seatNumber),
-                    ),
+                    // PK Battle Overlay (Voice / Audio rooms only)
+                    if (_currentRoom.category != 'Live')
+                      PKBattleOverlay(
+                        room: _currentRoom,
+                        currentUserId: _currentUser.userId,
+                        onSeatTap: (seatNumber) => _moveToSeat(seatNumber),
+                      ),
 
                     if (_currentRoom.activeYoutubeVideoId == null &&
                         !_currentRoom.isLudoActive &&
-                        !_currentRoom.isCarromActive)
+                        !_currentRoom.isCarromActive &&
+                        !(_currentRoom.category == 'Live' &&
+                            _activeVideoBattle != null &&
+                            (_activeVideoBattle!.isActive ||
+                                _activeVideoBattle!.isPunishment)))
                       const SizedBox(height: 20),
 
                     // Participants grid (without chat)
                     Expanded(
                       child: _currentRoom.category == 'Live'
-                          ? (_currentRoom.settings.isLiveMultipleMode
-                                ? _buildLiveMultipleModeGrid()
-                                : const SizedBox.expand())
+                          ? (_activeVideoBattle != null &&
+                                  (_activeVideoBattle!.isActive ||
+                                      _activeVideoBattle!.isPunishment)
+                              ? const SizedBox.shrink()
+                              : (_currentRoom.settings.isLiveMultipleMode
+                                  ? _buildLiveMultipleModeGrid()
+                                  : const SizedBox.expand()))
                           : _buildParticipantsGrid(),
                     ),
 
@@ -4073,6 +5620,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             ),
           ),
         ), // Closes Positioned.fill
+        // Video Room Floating Circular Guest Seats (Right side, matching Khan_Live)
+        if (_currentRoom.category == 'Live') _buildLiveCircularGuestSeats(),
+
         // Floating Music Player
         if (_showMusicPlayer && _isCurrentUserHostOrAdmin) ...[
           // ... music player code is separate ...
@@ -4093,57 +5643,59 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    RoomControls(
-                      key: _roomControlsKey,
-                      isMuted: _isCurrentUserMuted,
-                      isMutedByAdmin:
-                          _currentParticipant?.isMutedByAdmin ?? false,
-                      isSpeakerOn: _isSpeakerOn,
-                      isHost: _isCurrentUserHost,
-                      isSpeaker: _isCurrentUserSpeaker,
-                      isSeated: _isCurrentUserHost ||
-                          _isCurrentUserSpeaker ||
-                          (_currentParticipant?.isSeated ?? false) ||
-                          (_currentParticipant?.seatNumber != null),
-                      onMuteToggle: _handleMuteToggle,
-                      onGrabTopSeat: _grabTopSeat,
-                      onSpeakerToggle: _handleSpeakerToggle,
-                      onLeave: _handleLeaveRoom,
-                      onRequestToSpeak: _isCurrentUserSpeaker
-                          ? null
-                          : _handleRequestToSpeak,
-                      chatMessages: _chatMessages,
-                      participants: _currentRoom.participants,
-                      totalSeats: _currentRoom.settings.roomMode.seatCount,
-                      onSendMessage: _sendChatMessage,
-                      roomId: _currentRoom.id,
-                      currentUserId: _currentUser.userId,
-                      currentUserName: _currentUser.fullname,
-                      currentUserImageUrl: _currentUser.photoUrl,
-                      currentUserLevelBadgeUrl: _currentUserLevelBadgeUrl,
-                      selectedUserId:
-                          _currentRoom.creatorId, // Always send gifts to host
-                      selectedUserName: _currentRoom.creatorName, // Host name
-                      selectedUserImageUrl:
-                          _currentRoom.creatorImageUrl, // Host image
-                      creatorId: _currentRoom.creatorId,
-                      adminIds: _currentRoom.settings.adminIds,
-                      onMessageTap: _handleMessageTap,
-                      isLive: _currentRoom.category == 'Live',
-                      hasRequestedToJoin: _currentRoom.joinRequests.contains(
-                        _currentUser.userId,
+                    RepaintBoundary(
+                      child: RoomControls(
+                        key: _roomControlsKey,
+                        isMuted: _isCurrentUserMuted,
+                        isMutedByAdmin:
+                            _currentParticipant?.isMutedByAdmin ?? false,
+                        isSpeakerOn: _isSpeakerOn,
+                        isHost: _isCurrentUserHost,
+                        isSpeaker: _isCurrentUserSpeaker,
+                        isSeated: _isCurrentUserHost ||
+                            _isCurrentUserSpeaker ||
+                            (_currentParticipant?.isSeated ?? false) ||
+                            (_currentParticipant?.seatNumber != null),
+                        onMuteToggle: _handleMuteToggle,
+                        onGrabTopSeat: _grabTopSeat,
+                        onSpeakerToggle: _handleSpeakerToggle,
+                        onLeave: _handleLeaveRoom,
+                        onRequestToSpeak:
+                            _isCurrentUserSpeaker ? null : _handleRequestToSpeak,
+                        chatMessages: _chatMessages,
+                        participants: _currentRoom.participants,
+                        totalSeats: _currentRoom.settings.roomMode.seatCount,
+                        onSendMessage: _sendChatMessage,
+                        roomId: _currentRoom.id,
+                        currentUserId: _currentUser.userId,
+                        currentUserName: _currentUser.fullname,
+                        currentUserImageUrl: _currentUser.photoUrl,
+                        currentUserLevelBadgeUrl: _currentUserLevelBadgeUrl,
+                        selectedUserId:
+                            _currentRoom.creatorId, // Always send gifts to host
+                        selectedUserName: _currentRoom.creatorName, // Host name
+                        selectedUserImageUrl:
+                            _currentRoom.creatorImageUrl, // Host image
+                        creatorId: _currentRoom.creatorId,
+                        adminIds: _currentRoom.settings.adminIds,
+                        onMessageTap: _handleMessageTap,
+                        isLive: _currentRoom.category == 'Live',
+                        hasRequestedToJoin: _currentRoom.joinRequests.contains(
+                          _currentUser.userId,
+                        ),
+                        joinRequestsCount: _currentRoom.joinRequests.length,
+                        onLiveMicTapped: _showManageGuestsSheet,
+                        onJoinRequestTapped: _handleCallJoinRequest,
+                        isGameActive: _currentRoom.isCarromActive ||
+                            _currentRoom.isLudoActive ||
+                            _currentRoom.activeYoutubeVideoId != null,
+                        isPKActive: _currentRoom.pkBattleState.isActive,
+                        isProMode: _currentRoom.settings.roomLayoutType == 'pro',
+                        selectedChatTab: _selectedProChatTab,
+                        announcement: _currentRoom.settings.announcement,
+                        onEditAnnouncement: _showAnnouncementDialog,
+                        onOpenVideoRoomSettings: _showVideoRoomSettingsSheet,
                       ),
-                      joinRequestsCount: _currentRoom.joinRequests.length,
-                      onLiveMicTapped: _showLiveMicOptionsBottomSheet,
-                      onJoinRequestTapped: _handleRequestToSpeak,
-                      isGameActive: _currentRoom.isCarromActive ||
-                          _currentRoom.isLudoActive ||
-                          _currentRoom.activeYoutubeVideoId != null,
-                      isPKActive: _currentRoom.pkBattleState.isActive,
-                      isProMode: _currentRoom.settings.roomLayoutType == 'pro',
-                      selectedChatTab: _selectedProChatTab,
-                      announcement: _currentRoom.settings.announcement,
-                      onEditAnnouncement: _showAnnouncementDialog,
                     ),
                   ],
                 ),
@@ -4240,10 +5792,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
         // Roulette Overlay
         RouletteWidget(
-          controller:
-              Get.isRegistered<RouletteController>(
-                tag: 'roulette_${widget.room.id}',
-              )
+          controller: Get.isRegistered<RouletteController>(
+            tag: 'roulette_${widget.room.id}',
+          )
               ? Get.find<RouletteController>(tag: 'roulette_${widget.room.id}')
               : Get.put(
                   RouletteController(
@@ -4271,7 +5822,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           stream: _giftService.getGiftTransactions(widget.room.id),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              debugPrint('Ã¢ÂÅ [AudioRoom] Gift transactions stream error: ${snapshot.error}');
+              debugPrint(
+                  'Ã¢ÂÅ [AudioRoom] Gift transactions stream error: ${snapshot.error}');
               return const SizedBox.shrink();
             }
 
@@ -4286,7 +5838,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               child: GiftAnimationOverlay(
                 transactions: recentTransactions,
                 onTransactionFinished: (completedTx) {
-                  debugPrint('Ã°Å¸Å½Â [AudioRoom] Gift animation completed for tx: ${completedTx.id}');
+                  debugPrint(
+                      'Ã°Å¸Å½Â [AudioRoom] Gift animation completed for tx: ${completedTx.id}');
                 },
                 onGiftFlightTriggered: _triggerGiftFlightAnimation,
               ),
@@ -4313,7 +5866,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             }
 
             if (!snapshot.hasData) {
-              debugPrint('Ã°Å¸Å½Â¬ [AudioRoom] StreamBuilder: No entrance data yet');
+              debugPrint(
+                  'Ã°Å¸Å½Â¬ [AudioRoom] StreamBuilder: No entrance data yet');
               return const SizedBox.shrink();
             }
 
@@ -4323,7 +5877,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             final recentEffects = allEffects.where((effect) {
               final timeDiff = now.difference(effect.timestamp).inSeconds;
               debugPrint('Ã°Å¸Å½Â¬ [EntranceDebug] Effect: ${effect.userName}');
-              debugPrint('Ã°Å¸Å½Â¬ [EntranceDebug] Time diff: $timeDiff seconds');
+              debugPrint(
+                  'Ã°Å¸Å½Â¬ [EntranceDebug] Time diff: $timeDiff seconds');
               return timeDiff.abs() <= 30; // Increased from 10 to 30 seconds
             }).toList();
 
@@ -4339,7 +5894,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
               child: EntranceEffectOverlay(
                 effects: recentEffects,
                 onAnimationComplete: () {
-                  debugPrint('Ã°Å¸Å½Â¬ [AudioRoom] Entrance animation completed');
+                  debugPrint(
+                      'Ã°Å¸Å½Â¬ [AudioRoom] Entrance animation completed');
                   // Auto-delete the displayed entrance effects
                   _deleteDisplayedEntranceEffects(recentEffects);
                 },
@@ -4350,6 +5906,30 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
         // Flying PNG gifts layer
         _buildFlyingGiftsLayer(),
+
+        // Live Room Video PK Animation Overlay (Countdown, Opening, Winner)
+        if (_currentRoom.category == 'Live' &&
+            _videoAnimationPhase != VideoPkAnimationPhase.none)
+          Positioned.fill(
+            child: VideoPkAnimationOverlay(
+              phase: _videoAnimationPhase,
+              winnerName: _activeVideoBattle?.winnerId == _activeVideoBattle?.host1Id
+                  ? _activeVideoBattle?.host1Name
+                  : _activeVideoBattle?.host2Name,
+              winnerPhotoUrl: _activeVideoBattle?.winnerId == _activeVideoBattle?.host1Id
+                  ? _activeVideoBattle?.host1Photo
+                  : _activeVideoBattle?.host2Photo,
+              onCountdownComplete: () {
+                _triggerVideoPkPhase(VideoPkAnimationPhase.opening);
+              },
+              onOpeningComplete: () {
+                _triggerVideoPkPhase(VideoPkAnimationPhase.none);
+              },
+              onWinnerComplete: () {
+                _triggerVideoPkPhase(VideoPkAnimationPhase.none);
+              },
+            ),
+          ),
       ],
     );
   }
@@ -4413,7 +5993,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       try {
         if (seatNumber != null && _seatKeys.containsKey(seatNumber)) {
           final key = _seatKeys[seatNumber];
-          final renderBox = key?.currentContext?.findRenderObject() as RenderBox?;
+          final renderBox =
+              key?.currentContext?.findRenderObject() as RenderBox?;
           if (renderBox != null && renderBox.hasSize && renderBox.attached) {
             final seatPosition = renderBox.localToGlobal(Offset.zero);
             final seatSize = renderBox.size;
@@ -4426,7 +6007,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           }
         } else if (_seatKeys.containsKey(1)) {
           final key = _seatKeys[1];
-          final renderBox = key?.currentContext?.findRenderObject() as RenderBox?;
+          final renderBox =
+              key?.currentContext?.findRenderObject() as RenderBox?;
           if (renderBox != null && renderBox.hasSize && renderBox.attached) {
             final seatPosition = renderBox.localToGlobal(Offset.zero);
             final seatSize = renderBox.size;
@@ -4627,8 +6209,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           final isAdmin = _isSeatOccupiedByHost(currentSeat);
 
           return SizedBox(
-            width:
-                MediaQuery.of(context).size.width /
+            width: MediaQuery.of(context).size.width /
                 10, // Force 10 items per screen width
             child: OverflowBox(
               maxWidth: double.infinity,
@@ -4703,9 +6284,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     }
     final isCouple = type == 'couple';
 
-    final String? customImageUrl = isCouple
-        ? _coupleLevelImages[level]
-        : _friendshipLevelImages[level];
+    final String? customImageUrl =
+        isCouple ? _coupleLevelImages[level] : _friendshipLevelImages[level];
 
     if (customImageUrl != null && customImageUrl.isNotEmpty) {
       if (customImageUrl.toLowerCase().contains('.svga')) {
@@ -4897,8 +6477,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     ? _currentRoom.settings.seatDecorUrl
                     : null;
 
-    final bool hasCustomSeatDecor = seatSpecificDecorUrl != null &&
-        seatSpecificDecorUrl.trim().isNotEmpty;
+    final bool hasCustomSeatDecor =
+        seatSpecificDecorUrl != null && seatSpecificDecorUrl.trim().isNotEmpty;
     final bool isGoldenMode =
         _currentRoom.settings.seatColorMode == SeatColorMode.golden;
     final bool isPurpleMode =
@@ -4911,9 +6491,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         _currentRoom.settings.seatColorMode == SeatColorMode.dashedOrange;
 
     final bool isSeatAnimated = _currentRoom.settings.isSeatAnimated;
-    final String animationType = _currentRoom.settings.seatAnimationType ?? 'beamSweep';
+    final String animationType =
+        _currentRoom.settings.seatAnimationType ?? 'beamSweep';
     final double animationSpeed = _currentRoom.settings.seatAnimationSpeed;
-    final Color animationColor = _parseHexColor(_currentRoom.settings.seatAnimationColor ?? '#FFD700');
+    final Color animationColor =
+        _parseHexColor(_currentRoom.settings.seatAnimationColor ?? '#FFD700');
 
     // Find participant by seat number
     try {
@@ -4944,373 +6526,445 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         child: SizedBox(
           width: size + 30,
           child: Column(
-          children: [
-            // Seat circle
-            SizedBox(
-              width: size + 8,
-              height: size + 8,
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  // 1. Background Seat Decor with Dynamic Real-Time Animation
-                  AnimatedSeatDecorWidget(
-                    size: size + 8,
-                    isAnimated: isSeatAnimated,
-                    animationType: animationType,
-                    animationSpeed: animationSpeed,
-                    glowColor: animationColor,
-                    child: hasCustomSeatDecor
-                        ? CachedNetworkImage(
-                            imageUrl: seatSpecificDecorUrl,
-                            width: size + 8,
-                            height: size + 8,
-                            fit: BoxFit.contain,
-                            placeholder: (context, url) => _buildSeatFallbackWidget(
-                              size + 8,
-                              _currentRoom.settings.seatColorMode,
-                            ),
-                            errorWidget: (context, url, error) =>
-                                _buildSeatFallbackWidget(
-                              size + 8,
-                              _currentRoom.settings.seatColorMode,
-                            ),
-                          )
-                        : (!isOccupied
-                            ? (isPurpleMode
-                                ? NeonPurpleGlassOrbWidget(
-                                    size: size + 6,
-                                    isLocked: isLocked,
-                                  )
-                                : (isGoldenMode
-                                    ? GoldenGlassOrbWidget(
-                                        size: size + 6,
-                                        isLocked: isLocked,
-                                      )
-                                    : (isCyberEmeraldMode
-                                        ? CyberEmeraldDiamondOrbWidget(
-                                            size: size + 6,
-                                            isLocked: isLocked,
-                                          )
-                                        : (isDashedPink || isDashedOrange
-                                            ? Container(
-                                                width: size,
-                                                height: size,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color: (isDashedPink ? Colors.pink : Colors.orange)
-                                                      .withValues(alpha: 0.05),
-                                                  border: Border.all(
-                                                    color: isDashedPink ? Colors.pink : Colors.orange,
-                                                    width: 1.5,
+            children: [
+              // Seat circle
+              SizedBox(
+                width: size + 8,
+                height: size + 8,
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    // 1. Background Seat Decor with Dynamic Real-Time Animation
+                    AnimatedSeatDecorWidget(
+                      size: size + 8,
+                      isAnimated: isSeatAnimated,
+                      animationType: animationType,
+                      animationSpeed: animationSpeed,
+                      glowColor: animationColor,
+                      child: hasCustomSeatDecor
+                          ? CachedNetworkImage(
+                              imageUrl: seatSpecificDecorUrl,
+                              width: size + 8,
+                              height: size + 8,
+                              fit: BoxFit.contain,
+                              placeholder: (context, url) =>
+                                  _buildSeatFallbackWidget(
+                                size + 8,
+                                _currentRoom.settings.seatColorMode,
+                              ),
+                              errorWidget: (context, url, error) =>
+                                  _buildSeatFallbackWidget(
+                                size + 8,
+                                _currentRoom.settings.seatColorMode,
+                              ),
+                            )
+                          : (!isOccupied
+                              ? (isPurpleMode
+                                  ? NeonPurpleGlassOrbWidget(
+                                      size: size + 6,
+                                      isLocked: isLocked,
+                                    )
+                                  : (isGoldenMode
+                                      ? GoldenGlassOrbWidget(
+                                          size: size + 6,
+                                          isLocked: isLocked,
+                                        )
+                                      : (isCyberEmeraldMode
+                                          ? CyberEmeraldDiamondOrbWidget(
+                                              size: size + 6,
+                                              isLocked: isLocked,
+                                            )
+                                          : (isDashedPink || isDashedOrange
+                                              ? Container(
+                                                  width: size,
+                                                  height: size,
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color: (isDashedPink
+                                                            ? Colors.pink
+                                                            : Colors.orange)
+                                                        .withValues(
+                                                            alpha: 0.05),
+                                                    border: Border.all(
+                                                      color: isDashedPink
+                                                          ? Colors.pink
+                                                          : Colors.orange,
+                                                      width: 1.5,
+                                                    ),
                                                   ),
-                                                ),
-                                              )
-                                            : Container(
-                                                width: size + 4,
-                                                height: size + 4,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color: Colors.white.withValues(alpha: 0.16),
-                                                  border: Border.all(
-                                                    color: isLocked
-                                                        ? Colors.white.withValues(alpha: 0.45)
-                                                        : Colors.white.withValues(alpha: 0.35),
-                                                    width: 1.5,
+                                                )
+                                              : Container(
+                                                  width: size + 4,
+                                                  height: size + 4,
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color: Colors.white
+                                                        .withValues(
+                                                            alpha: 0.16),
+                                                    border: Border.all(
+                                                      color: isLocked
+                                                          ? Colors.white
+                                                              .withValues(
+                                                                  alpha: 0.45)
+                                                          : Colors.white
+                                                              .withValues(
+                                                                  alpha: 0.35),
+                                                      width: 1.5,
+                                                    ),
                                                   ),
-                                                ),
-                                              )))))
-                            : const SizedBox.shrink()),
-                  ),
+                                                )))))
+                              : const SizedBox.shrink()),
+                    ),
 
-                  // 2. Avatar (if occupied) or Lock/Sofa icon (if empty)
-                  if (isOccupied && occupant != null)
-                    SizedBox(
-                      width: size,
-                      height: size,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          SpeakingRippleAnimation(
-                            key: ValueKey('speaking_ripple_${occupant.userId}_$seatNumber'),
-                            isSpeaking: !isOccupantMuted,
-                            volumeNotifier: _getVolumeNotifier(occupant.userId),
-                            minRadius: size / 2,
-                            rippleColor: const Color(0xFF00FF7F).withValues(alpha: 0.8),
-                            userId: occupant.userId,
-                            child: Builder(
-                              builder: (context) {
-                                return CachedCircleAvatar(
-                                  imageUrl: occupant?.userImageUrl ?? '',
-                                  radius: size / 2,
-                                  backgroundColor: Colors.grey[300],
-                                  frameId: occupant?.frameId,
-                                  userId: occupant?.userId,
-                                  frameScale: 1.4,
-                                  borderWidth: 0,
-                                  padding: 0,
+                    // 2. Avatar (if occupied) or Lock/Sofa icon (if empty)
+                    if (isOccupied && occupant != null)
+                      SizedBox(
+                        width: size,
+                        height: size,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            SpeakingRippleAnimation(
+                              key: ValueKey(
+                                  'speaking_ripple_${occupant.userId}_$seatNumber'),
+                              isSpeaking: !isOccupantMuted,
+                              volumeNotifier:
+                                  _getVolumeNotifier(occupant.userId),
+                              minRadius: size / 2,
+                              rippleColor: const Color(0xFF00FF7F)
+                                  .withValues(alpha: 0.8),
+                              userId: occupant.userId,
+                              child: Builder(
+                                builder: (context) {
+                                  return CachedCircleAvatar(
+                                    imageUrl: occupant?.userImageUrl ?? '',
+                                    radius: size / 2,
+                                    backgroundColor: Colors.grey[300],
+                                    frameId: occupant?.frameId,
+                                    userId: occupant?.userId,
+                                    frameScale: 1.4,
+                                    borderWidth: 0,
+                                    padding: 0,
+                                  );
+                                },
+                              ),
+                            ),
+                            ValueListenableBuilder<double>(
+                              valueListenable:
+                                  _getVolumeNotifier(occupant.userId),
+                              builder: (context, currentVol, _) {
+                                final bool showMuted =
+                                    isOccupantMuted && currentVol <= 0.02;
+                                if (!showMuted) return const SizedBox.shrink();
+                                return Positioned(
+                                  bottom: -4,
+                                  right: 0,
+                                  child: Container(
+                                    width: 12,
+                                    height: 12,
+                                    decoration: BoxDecoration(
+                                      color: const Color.fromARGB(
+                                        200,
+                                        223,
+                                        10,
+                                        235,
+                                      ),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 1,
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.mic_off,
+                                      color: Colors.white,
+                                      size: 7,
+                                    ),
+                                  ),
                                 );
                               },
                             ),
-                          ),
-                          ValueListenableBuilder<double>(
-                            valueListenable: _getVolumeNotifier(occupant.userId),
-                            builder: (context, currentVol, _) {
-                              final bool showMuted = isOccupantMuted && currentVol <= 0.02;
-                              if (!showMuted) return const SizedBox.shrink();
-                              return Positioned(
-                                bottom: -4,
-                                right: 0,
-                                child: Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: const Color.fromARGB(
-                                      200,
-                                      223,
-                                      10,
-                                      235,
-                                    ),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.white,
-                                      width: 1,
-                                    ),
+                            if (occupant.activeEmojiUrl != null)
+                              Positioned.fill(
+                                child: Align(
+                                  alignment: Alignment.center,
+                                  child: TweenAnimationBuilder<double>(
+                                    key: ValueKey(occupant.activeEmojiUrl!),
+                                    tween: Tween(begin: 0.0, end: 1.0),
+                                    duration: const Duration(milliseconds: 600),
+                                    curve: Curves.elasticOut,
+                                    builder: (context, value, child) {
+                                      return Transform.scale(
+                                        scale: value * 1.8,
+                                        child: (occupant!.activeEmojiUrl!
+                                                    .startsWith(
+                                                        'local_dice:') ||
+                                                occupant.activeEmojiUrl ==
+                                                    'local_dice_action')
+                                            ? SpinningDiceWidget(
+                                                targetNumber: occupant
+                                                        .activeEmojiUrl!
+                                                        .contains(':')
+                                                    ? (int.tryParse(occupant
+                                                            .activeEmojiUrl!
+                                                            .split(':')[1]) ??
+                                                        6)
+                                                    : 6,
+                                                size: size * 0.8,
+                                                diceStyle: 'classic',
+                                              )
+                                            : (occupant.activeEmojiUrl!
+                                                        .startsWith(
+                                                            'local_blue_dice:') ||
+                                                    occupant.activeEmojiUrl ==
+                                                        'local_blue_dice_action')
+                                                ? SpinningDiceWidget(
+                                                    targetNumber: occupant
+                                                            .activeEmojiUrl!
+                                                            .contains(':')
+                                                        ? (int.tryParse(occupant
+                                                                .activeEmojiUrl!
+                                                                .split(
+                                                                    ':')[1]) ??
+                                                            6)
+                                                        : 6,
+                                                    size: size * 0.8,
+                                                    diceStyle: 'blue',
+                                                  )
+                                                : CachedNetworkImage(
+                                                    imageUrl: occupant
+                                                        .activeEmojiUrl!,
+                                                    width: size * 0.8,
+                                                    height: size * 0.8,
+                                                    fit: BoxFit.contain,
+                                                    placeholder:
+                                                        (context, url) =>
+                                                            const SizedBox(),
+                                                    errorWidget:
+                                                        (context, url, error) {
+                                                      return const Icon(
+                                                        Icons.image,
+                                                        color: Colors.amber,
+                                                        size: 24,
+                                                      );
+                                                    },
+                                                  ),
+                                      );
+                                    },
                                   ),
-                                  child: const Icon(
-                                    Icons.mic_off,
-                                    color: Colors.white,
-                                    size: 7,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          if (occupant.activeEmojiUrl != null)
-                            Positioned.fill(
-                              child: Align(
-                                alignment: Alignment.center,
-                                child: TweenAnimationBuilder<double>(
-                                  key: ValueKey(occupant.activeEmojiUrl!),
-                                  tween: Tween(begin: 0.0, end: 1.0),
-                                  duration: const Duration(milliseconds: 600),
-                                  curve: Curves.elasticOut,
-                                  builder: (context, value, child) {
-                                    return Transform.scale(
-                                      scale: value * 1.8,
-                                      child: (occupant!.activeEmojiUrl!.startsWith('local_dice:') || occupant.activeEmojiUrl == 'local_dice_action')
-                                          ? SpinningDiceWidget(
-                                              targetNumber: occupant.activeEmojiUrl!.contains(':')
-                                                  ? (int.tryParse(occupant.activeEmojiUrl!.split(':')[1]) ?? 6)
-                                                  : 6,
-                                              size: size * 0.8,
-                                              diceStyle: 'classic',
-                                            )
-                                          : (occupant.activeEmojiUrl!.startsWith('local_blue_dice:') || occupant.activeEmojiUrl == 'local_blue_dice_action')
-                                              ? SpinningDiceWidget(
-                                                  targetNumber: occupant.activeEmojiUrl!.contains(':')
-                                                      ? (int.tryParse(occupant.activeEmojiUrl!.split(':')[1]) ?? 6)
-                                                      : 6,
-                                                  size: size * 0.8,
-                                                  diceStyle: 'blue',
-                                                )
-                                              : CachedNetworkImage(
-                                              imageUrl:
-                                                  occupant.activeEmojiUrl!,
-                                              width: size * 0.8,
-                                              height: size * 0.8,
-                                              fit: BoxFit.contain,
-                                              placeholder: (context, url) =>
-                                                  const SizedBox(),
-                                              errorWidget:
-                                                  (context, url, error) {
-                                                    return const Icon(
-                                                      Icons.image,
-                                                      color: Colors.amber,
-                                                      size: 24,
-                                                    );
-                                                  },
-                                            ),
-                                    );
-                                  },
                                 ),
                               ),
-                            ),
-                        ],
-                      ),
-                    )
-                  else if (!isOccupied && !hasCustomSeatDecor)
-                    if (isPurpleMode)
-                      (isLocked
-                          ? const GoldenLockIcon(key: ValueKey('lock_purple'), width: 26, height: 29, isNeonPurple: true)
-                          : (seatNumber == 1
-                              ? const GoldenHomeIcon(key: ValueKey('home_purple'), width: 28, height: 28, isNeonPurple: true)
-                              : const GoldenSofaIcon(key: ValueKey('sofa_purple'), width: 30, height: 27, isNeonPurple: true)))
-                    else if (isGoldenMode)
-                      (isLocked
-                          ? const GoldenLockIcon(key: ValueKey('lock_golden'), width: 26, height: 29)
-                          : (seatNumber == 1
-                              ? const GoldenHomeIcon(key: ValueKey('home_golden'), width: 28, height: 28)
-                              : const GoldenSofaIcon(key: ValueKey('sofa_golden'), width: 30, height: 27)))
-                    else if (isCyberEmeraldMode)
-                      (isLocked
-                          ? const Icon(Icons.lock, color: Color(0xFF00FFE0), size: 22)
-                          : (seatNumber == 1
-                              ? const Icon(Icons.home_rounded, color: Color(0xFF00FFE0), size: 24)
-                              : Image.asset(
-                                  'assets/icons/sofa_ic.webp',
-                                  width: 28,
-                                  height: 28,
-                                  color: const Color(0xFF00FFE0),
-                                )))
-                    else if (isDashedPink)
-                      (isLocked
-                          ? const Icon(Icons.lock, color: Colors.pink, size: 20)
-                          : const Icon(Icons.music_note, color: Colors.pink, size: 28))
-                    else if (isDashedOrange)
-                      (isLocked
-                          ? const Icon(Icons.lock, color: Colors.orange, size: 20)
-                          : Image.asset(
-                              'assets/icons/sofa_ic.webp',
-                              width: 28,
-                              height: 28,
-                              color: Colors.orange,
-                            ))
-                    else
-                      // Classic frosted mode
-                      (isLocked
-                          ? Icon(
-                              Icons.lock_rounded,
-                              color: Colors.white.withValues(alpha: 0.85),
-                              size: 26,
-                            )
-                          : (seatNumber == 1
-                              ? Icon(
-                                  Icons.home_rounded,
-                                  color: Colors.white.withValues(alpha: 0.9),
-                                  size: 28,
-                                )
-                              : Icon(
-                                  Icons.mic_rounded,
-                                  color: Colors.white.withValues(alpha: 0.75),
-                                  size: 26,
-                                )))
-                  else if (isLocked &&
-                      hasCustomSeatDecor &&
-                      (_currentRoom.settings.lockedSeatDecorUrl == null ||
-                          _currentRoom.settings.lockedSeatDecorUrl!.trim().isEmpty ||
-                          _currentRoom.settings.lockedSeatDecorUrl == _currentRoom.settings.seatDecorUrl))
-                    Container(
-                      width: size + 8,
-                      height: size + 8,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.black.withValues(alpha: 0.4),
-                      ),
-                      child: Icon(
-                        Icons.lock_rounded,
-                        color: Colors.white.withValues(alpha: 0.85),
-                        size: 20,
-                      ),
-                    ),
-                  if (rightRelationship != null)
-                    Positioned(
-                      right: -27,
-                      child: _buildSeatConnectorBadge(rightRelationship),
-                    ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 5),
-
-            // User name or seat label
-            if (isOccupied && occupant != null) ...[
-              Builder(
-                builder: (context) {
-                  final validOccupant = occupant;
-                  if (validOccupant == null) return const SizedBox.shrink();
-
-                  final bool isSeatOwner = _currentRoom.creatorId.isNotEmpty &&
-                      validOccupant.userId == _currentRoom.creatorId;
-                  final bool isSeatAdmin = !isSeatOwner &&
-                      ((_currentRoom.settings.adminIds.any(
-                              (id) => id.toString() == validOccupant.userId)) ||
-                          validOccupant.isHost);
-
-                  return Container(
-                    constraints: BoxConstraints(maxWidth: size + 30),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        if (isSeatOwner) ...[
-                          const Icon(
-                            Icons.person,
-                            color: Color(0xFFFFD700), // Gold icon for Room Owner
-                            size: 13.0,
-                          ),
-                          const SizedBox(width: 2.0),
-                        ] else if (isSeatAdmin) ...[
-                          const Icon(
-                            Icons.person,
-                            color: Color(0xFF2196F3), // Blue icon for Room Admin
-                            size: 13.0,
-                          ),
-                          const SizedBox(width: 2.0),
-                        ],
-                        Flexible(
-                          child: AnimatedSvipName.fromUserId(
-                            userId: validOccupant.userId,
-                            defaultName: validOccupant.userName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-              if (_currentRoom.settings.roomLayoutType == 'pro')
-                _buildProSeatGiftBadge(_getUserReceivedGiftDiamonds(occupant.userId)),
-            ] else ...[
-              Text(
-                (_currentRoom.settings.roomLayoutType == 'pro')
-                    ? '$seatNumber'
-                    : ((isGoldenMode || isPurpleMode || isCyberEmeraldMode)
-                        ? (seatNumber == 1 ? 'Host' : 'No.$seatNumber')
-                        : ((_currentRoom.settings.roomMode == RoomMode.lite ||
-                                _currentRoom.settings.roomMode.seatCount == 9)
-                            ? (seatNumber == 1 ? 'Owner' : 'No.${seatNumber - 1}')
-                            : (seatNumber == 1 ? 'Host' : 'No.$seatNumber'))),
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  shadows: const [
-                    Shadow(
-                      color: Colors.black87,
-                      blurRadius: 4,
-                      offset: Offset(0, 1),
-                    ),
+                      )
+                    else if (!isOccupied && !hasCustomSeatDecor)
+                      if (isPurpleMode)
+                        (isLocked
+                            ? const GoldenLockIcon(
+                                key: ValueKey('lock_purple'),
+                                width: 26,
+                                height: 29,
+                                isNeonPurple: true)
+                            : (seatNumber == 1
+                                ? const GoldenHomeIcon(
+                                    key: ValueKey('home_purple'),
+                                    width: 28,
+                                    height: 28,
+                                    isNeonPurple: true)
+                                : const GoldenSofaIcon(
+                                    key: ValueKey('sofa_purple'),
+                                    width: 30,
+                                    height: 27,
+                                    isNeonPurple: true)))
+                      else if (isGoldenMode)
+                        (isLocked
+                            ? const GoldenLockIcon(
+                                key: ValueKey('lock_golden'),
+                                width: 26,
+                                height: 29)
+                            : (seatNumber == 1
+                                ? const GoldenHomeIcon(
+                                    key: ValueKey('home_golden'),
+                                    width: 28,
+                                    height: 28)
+                                : const GoldenSofaIcon(
+                                    key: ValueKey('sofa_golden'),
+                                    width: 30,
+                                    height: 27)))
+                      else if (isCyberEmeraldMode)
+                        (isLocked
+                            ? const Icon(Icons.lock,
+                                color: Color(0xFF00FFE0), size: 22)
+                            : (seatNumber == 1
+                                ? const Icon(Icons.home_rounded,
+                                    color: Color(0xFF00FFE0), size: 24)
+                                : Image.asset(
+                                    'assets/icons/sofa_ic.webp',
+                                    width: 28,
+                                    height: 28,
+                                    color: const Color(0xFF00FFE0),
+                                  )))
+                      else if (isDashedPink)
+                        (isLocked
+                            ? const Icon(Icons.lock,
+                                color: Colors.pink, size: 20)
+                            : const Icon(Icons.music_note,
+                                color: Colors.pink, size: 28))
+                      else if (isDashedOrange)
+                        (isLocked
+                            ? const Icon(Icons.lock,
+                                color: Colors.orange, size: 20)
+                            : Image.asset(
+                                'assets/icons/sofa_ic.webp',
+                                width: 28,
+                                height: 28,
+                                color: Colors.orange,
+                              ))
+                      else
+                        // Classic frosted mode
+                        (isLocked
+                            ? Icon(
+                                Icons.lock_rounded,
+                                color: Colors.white.withValues(alpha: 0.85),
+                                size: 26,
+                              )
+                            : (seatNumber == 1
+                                ? Icon(
+                                    Icons.home_rounded,
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                    size: 28,
+                                  )
+                                : Icon(
+                                    Icons.mic_rounded,
+                                    color: Colors.white.withValues(alpha: 0.75),
+                                    size: 26,
+                                  )))
+                    else if (isLocked &&
+                        hasCustomSeatDecor &&
+                        (_currentRoom.settings.lockedSeatDecorUrl == null ||
+                            _currentRoom.settings.lockedSeatDecorUrl!
+                                .trim()
+                                .isEmpty ||
+                            _currentRoom.settings.lockedSeatDecorUrl ==
+                                _currentRoom.settings.seatDecorUrl))
+                      Container(
+                        width: size + 8,
+                        height: size + 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black.withValues(alpha: 0.4),
+                        ),
+                        child: Icon(
+                          Icons.lock_rounded,
+                          color: Colors.white.withValues(alpha: 0.85),
+                          size: 20,
+                        ),
+                      ),
+                    if (rightRelationship != null)
+                      Positioned(
+                        right: -27,
+                        child: _buildSeatConnectorBadge(rightRelationship),
+                      ),
                   ],
                 ),
               ),
-              if (_currentRoom.settings.roomLayoutType == 'pro')
-                _buildProSeatGiftBadge(0),
+
+              const SizedBox(height: 5),
+
+              // User name or seat label
+              if (isOccupied && occupant != null) ...[
+                Builder(
+                  builder: (context) {
+                    final validOccupant = occupant;
+                    if (validOccupant == null) return const SizedBox.shrink();
+
+                    final bool isSeatOwner =
+                        _currentRoom.creatorId.isNotEmpty &&
+                            validOccupant.userId == _currentRoom.creatorId;
+                    final bool isSeatAdmin = !isSeatOwner &&
+                        ((_currentRoom.settings.adminIds.any((id) =>
+                                id.toString() == validOccupant.userId)) ||
+                            validOccupant.isHost);
+
+                    return Container(
+                      constraints: BoxConstraints(maxWidth: size + 30),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          if (isSeatOwner) ...[
+                            const Icon(
+                              Icons.person,
+                              color:
+                                  Color(0xFFFFD700), // Gold icon for Room Owner
+                              size: 13.0,
+                            ),
+                            const SizedBox(width: 2.0),
+                          ] else if (isSeatAdmin) ...[
+                            const Icon(
+                              Icons.person,
+                              color:
+                                  Color(0xFF2196F3), // Blue icon for Room Admin
+                              size: 13.0,
+                            ),
+                            const SizedBox(width: 2.0),
+                          ],
+                          Flexible(
+                            child: AnimatedSvipName.fromUserId(
+                              userId: validOccupant.userId,
+                              defaultName: validOccupant.userName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                if (_currentRoom.settings.roomLayoutType == 'pro')
+                  _buildProSeatGiftBadge(
+                      _getUserReceivedGiftDiamonds(occupant.userId)),
+              ] else ...[
+                Text(
+                  (_currentRoom.settings.roomLayoutType == 'pro')
+                      ? '$seatNumber'
+                      : ((isGoldenMode || isPurpleMode || isCyberEmeraldMode)
+                          ? (seatNumber == 1 ? 'Host' : 'No.$seatNumber')
+                          : ((_currentRoom.settings.roomMode == RoomMode.lite ||
+                                  _currentRoom.settings.roomMode.seatCount == 9)
+                              ? (seatNumber == 1
+                                  ? 'Owner'
+                                  : 'No.${seatNumber - 1}')
+                              : (seatNumber == 1 ? 'Host' : 'No.$seatNumber'))),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    shadows: const [
+                      Shadow(
+                        color: Colors.black87,
+                        blurRadius: 4,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_currentRoom.settings.roomLayoutType == 'pro')
+                  _buildProSeatGiftBadge(0),
+              ],
             ],
-          ],
+          ),
         ),
       ),
-    ),
     );
   }
 
@@ -5649,13 +7303,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
                 // 2. WEEKLY RANK (All contributors ranked by weekly contribution > 0)
                 final List<Map<String, dynamic>> weeklyRankList = [];
-                final List<String> weeklyContributors = transactionsBySender
-                    .keys
-                    .where((userId) {
-                      final txs = transactionsBySender[userId] ?? [];
-                      return sumCredits(txs, last7days) > 0;
-                    })
-                    .toList();
+                final List<String> weeklyContributors =
+                    transactionsBySender.keys.where((userId) {
+                  final txs = transactionsBySender[userId] ?? [];
+                  return sumCredits(txs, last7days) > 0;
+                }).toList();
 
                 weeklyContributors.sort((a, b) {
                   final conA = sumCredits(
@@ -5688,12 +7340,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
                 // 3. TOTAL RANK (All contributors ranked by lifetime contribution > 0)
                 final List<Map<String, dynamic>> totalRankList = [];
-                final List<String> totalContributors = transactionsBySender.keys
-                    .where((userId) {
-                      final txs = transactionsBySender[userId] ?? [];
-                      return sumCredits(txs, null) > 0;
-                    })
-                    .toList();
+                final List<String> totalContributors =
+                    transactionsBySender.keys.where((userId) {
+                  final txs = transactionsBySender[userId] ?? [];
+                  return sumCredits(txs, null) > 0;
+                }).toList();
 
                 totalContributors.sort((a, b) {
                   final conA = sumCredits(transactionsBySender[a] ?? [], null);
@@ -5847,8 +7498,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                 activeTabIndex == 0
                                     ? 'Ranked by the value of gifts contributed by online users'
                                     : activeTabIndex == 1
-                                    ? 'Ranked by the value of weekly gifts contributed in this room'
-                                    : 'Ranked by the value of lifetime gifts contributed in this room',
+                                        ? 'Ranked by the value of weekly gifts contributed in this room'
+                                        : 'Ranked by the value of lifetime gifts contributed in this room',
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.5),
                                   fontSize: 12,
@@ -6107,7 +7758,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         }
       }
     } catch (e) {
-      debugPrint('Ã¢ÂÅ Error loading level images in _AudioRoomScreenState: $e');
+      debugPrint(
+          'Ã¢ÂÅ Error loading level images in _AudioRoomScreenState: $e');
     }
 
     return result;
@@ -6219,66 +7871,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             runSpacing: 4,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              if (sendImageUrl != null &&
-                                  sendImageUrl.isNotEmpty)
-                                CachedNetworkImage(
-                                  imageUrl: sendImageUrl,
-                                  height: 18,
-                                  fit: BoxFit.contain,
-                                  errorWidget: (context, url, err) =>
-                                      const SizedBox.shrink(),
-                                )
-                              else
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(
-                                      0xFFFFD700,
-                                    ).withValues(alpha: 0.15),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'Send Lv.$sendLvl',
-                                    style: const TextStyle(
-                                      color: Color(0xFFFFD700),
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              if (receiveImageUrl != null &&
-                                  receiveImageUrl.isNotEmpty)
-                                CachedNetworkImage(
-                                  imageUrl: receiveImageUrl,
-                                  height: 18,
-                                  fit: BoxFit.contain,
-                                  errorWidget: (context, url, err) =>
-                                      const SizedBox.shrink(),
-                                )
-                              else
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(
-                                      0xFFEA4C89,
-                                    ).withValues(alpha: 0.15),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'Recv Lv.$receiveLvl',
-                                    style: const TextStyle(
-                                      color: Color(0xFFEA4C89),
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
+                              // 1. VIP / Store Nameplates FIRST (before user levels)
                               if (selectedNameplateIds.isNotEmpty) ...[
                                 FutureBuilder<List<String>>(
                                   future: NameplateHelper.getNameplateUrls(
@@ -6315,16 +7908,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                                     .map(
                                                       (url) => Padding(
                                                         padding:
-                                                            const EdgeInsets.only(
-                                                              right: 3,
-                                                            ),
-                                                        child: CachedNetworkImage(
-                                                          imageUrl: url,
-                                                          height: 14,
-                                                          fit: BoxFit.contain,
-                                                          errorWidget:
-                                                              (_, __, ___) =>
-                                                                  const SizedBox.shrink(),
+                                                            const EdgeInsets
+                                                                .only(
+                                                          right: 3,
+                                                        ),
+                                                        child: SizedBox(
+                                                          height: 16,
+                                                          child:
+                                                              UniversalAssetWidget(
+                                                            url: url,
+                                                            fit: BoxFit.contain,
+                                                          ),
                                                         ),
                                                       ),
                                                     )
@@ -6337,6 +7931,68 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   },
                                 ),
                               ],
+                              // 2. Sending Level Badge
+                              if (sendImageUrl != null &&
+                                  sendImageUrl.isNotEmpty)
+                                CachedNetworkImage(
+                                  imageUrl: sendImageUrl,
+                                  height: 18,
+                                  fit: BoxFit.contain,
+                                  errorWidget: (context, url, err) =>
+                                      const SizedBox.shrink(),
+                                )
+                              else
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(
+                                      0xFFFFD700,
+                                    ).withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Send Lv.$sendLvl',
+                                    style: const TextStyle(
+                                      color: Color(0xFFFFD700),
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              // 3. Receiving Level Badge
+                              if (receiveImageUrl != null &&
+                                  receiveImageUrl.isNotEmpty)
+                                CachedNetworkImage(
+                                  imageUrl: receiveImageUrl,
+                                  height: 18,
+                                  fit: BoxFit.contain,
+                                  errorWidget: (context, url, err) =>
+                                      const SizedBox.shrink(),
+                                )
+                              else
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(
+                                      0xFFEA4C89,
+                                    ).withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Recv Lv.$receiveLvl',
+                                    style: const TextStyle(
+                                      color: Color(0xFFEA4C89),
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ],
@@ -6354,10 +8010,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             fit: BoxFit.contain,
                             errorBuilder: (context, error, stackTrace) =>
                                 const Icon(
-                                  Icons.diamond_outlined,
-                                  color: Color(0xFF00BCD4),
-                                  size: 16,
-                                ),
+                              Icons.diamond_outlined,
+                              color: Color(0xFF00BCD4),
+                              size: 16,
+                            ),
                           ),
                           const SizedBox(width: 4),
                           Text(
@@ -6530,11 +8186,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Confirm admin seat takeover
   void _confirmAdminSeatTakeover(int seatNumber) {
     try {
-      debugPrint('Ã°Å¸Âªâ [UI] Admin confirming seat takeover for seat $seatNumber');
+      debugPrint(
+          'Ã°Å¸Âªâ [UI] Admin confirming seat takeover for seat $seatNumber');
 
       // Find current seat of admin
       final currentParticipant = _currentParticipant;
-      final currentSeat = (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! > 0)
+      final currentSeat = (currentParticipant?.seatNumber != null &&
+              currentParticipant!.seatNumber! > 0)
           ? currentParticipant.seatNumber!
           : -1;
 
@@ -6577,13 +8235,15 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       );
 
       if (!_currentRoom.canUserMoveToSeat(_currentUser.userId, seatNumber)) {
-        final bool isUserCreatorOrAdmin = _currentRoom.isCreator(_currentUser.userId) ||
-            _currentRoom.settings.adminIds.contains(_currentUser.userId);
+        final bool isUserCreatorOrAdmin =
+            _currentRoom.isCreator(_currentUser.userId) ||
+                _currentRoom.settings.adminIds.contains(_currentUser.userId);
         if (seatNumber == 1 && !isUserCreatorOrAdmin) {
           debugPrint('Ã°Å¸Âªâ [UI] Seat 1 is reserved for Host/Admin only');
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Seat 1 is reserved for Room Host and Admins only.'),
+              content:
+                  Text('Seat 1 is reserved for Room Host and Admins only.'),
               backgroundColor: Colors.orange,
               duration: Duration(seconds: 2),
             ),
@@ -6602,7 +8262,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
           );
           _showOccupiedSeatMessage(seatNumber);
         } else {
-          debugPrint('Ã°Å¸Âªâ [UI] Seat $seatNumber unavailable for unknown reason');
+          debugPrint(
+              'Ã°Å¸Âªâ [UI] Seat $seatNumber unavailable for unknown reason');
           _showLockedSeatMessage(seatNumber);
         }
         return;
@@ -6625,7 +8286,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
       // Find current seat of user
       final currentParticipant = _currentParticipant;
-      final currentSeat = (currentParticipant?.seatNumber != null && currentParticipant!.seatNumber! > 0)
+      final currentSeat = (currentParticipant?.seatNumber != null &&
+              currentParticipant!.seatNumber! > 0)
           ? currentParticipant.seatNumber!
           : -1;
 
@@ -6659,7 +8321,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       // If the user was previously muted by admin (as a listener/participant),
       // ensure this status carries over to the new seat assignment.
       if (currentParticipant != null && currentParticipant.isMutedByAdmin) {
-        debugPrint('Ã°Å¸Âªâ [UI] User was muted by admin - re-applying mute status');
+        debugPrint(
+            'Ã°Å¸Âªâ [UI] User was muted by admin - re-applying mute status');
         // We need to wait slightly for the move to process or just send the update
         // The bloc might process these sequentially.
         Future.delayed(const Duration(milliseconds: 500), () {
@@ -6773,8 +8436,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color:
-                                  (_currentRoom.isCreator(occupant.userId) ||
+                              color: (_currentRoom.isCreator(occupant.userId) ||
                                       occupant.isHost)
                                   ? Colors.purple.withValues(alpha: 0.1)
                                   : Colors.grey.withValues(alpha: 0.1),
@@ -6782,9 +8444,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               border: Border.all(
                                 color:
                                     (_currentRoom.isCreator(occupant.userId) ||
-                                        occupant.isHost)
-                                    ? Colors.purple.withValues(alpha: 0.5)
-                                    : Colors.grey.withValues(alpha: 0.5),
+                                            occupant.isHost)
+                                        ? Colors.purple.withValues(alpha: 0.5)
+                                        : Colors.grey.withValues(alpha: 0.5),
                               ),
                             ),
                             child: Text(
@@ -6795,9 +8457,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                 fontSize: 10,
                                 color:
                                     (_currentRoom.isCreator(occupant.userId) ||
-                                        occupant.isHost)
-                                    ? Colors.purple
-                                    : Colors.grey[700],
+                                            occupant.isHost)
+                                        ? Colors.purple
+                                        : Colors.grey[700],
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -6855,12 +8517,18 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
               // Mute/Unmute
               _buildMenuOption(
-                icon: (occupant.isMutedByAdmin || occupant.isMuted) ? Icons.mic : Icons.mic_off,
-                title: (occupant.isMutedByAdmin || occupant.isMuted) ? 'Unmute' : 'Mute',
+                icon: (occupant.isMutedByAdmin || occupant.isMuted)
+                    ? Icons.mic
+                    : Icons.mic_off,
+                title: (occupant.isMutedByAdmin || occupant.isMuted)
+                    ? 'Unmute'
+                    : 'Mute',
                 subtitle: (occupant.isMutedByAdmin || occupant.isMuted)
                     ? 'Allow participant to speak'
                     : 'Prevent participant from speaking',
-                color: (occupant.isMutedByAdmin || occupant.isMuted) ? Colors.green : Colors.red,
+                color: (occupant.isMutedByAdmin || occupant.isMuted)
+                    ? Colors.green
+                    : Colors.red,
                 onTap: () {
                   Navigator.pop(context);
                   _toggleParticipantMute(occupant);
@@ -6960,7 +8628,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, color: Colors.grey[400], size: 22),
+              Icon(Icons.chevron_right_rounded,
+                  color: Colors.grey[400], size: 22),
             ],
           ),
         ),
@@ -7000,7 +8669,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     AudioRoomParticipant participant,
   ) {
     try {
-      debugPrint('Ã°Å¸Âªâ Removing ${participant.userName} from seat $seatNumber');
+      debugPrint(
+          'Ã°Å¸Âªâ Removing ${participant.userName} from seat $seatNumber');
 
       widget.audioRoomsBloc.add(
         RemoveParticipantFromSeat(
@@ -7310,7 +8980,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         ),
                         Text(
                           'Seat $seatNumber',
-                          style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                          style:
+                              TextStyle(color: Colors.grey[600], fontSize: 13),
                         ),
                       ],
                     ),
@@ -7676,9 +9347,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     });
                   },
             style: ElevatedButton.styleFrom(
-              backgroundColor: isInvited
-                  ? Colors.grey[800]
-                  : Colors.purpleAccent,
+              backgroundColor:
+                  isInvited ? Colors.grey[800] : Colors.purpleAccent,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
@@ -7761,9 +9431,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             });
                           },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isInvited
-                          ? Colors.grey[800]
-                          : Colors.purpleAccent,
+                      backgroundColor:
+                          isInvited ? Colors.grey[800] : Colors.purpleAccent,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(20),
@@ -7839,9 +9508,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                         });
                       },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isInvited
-                      ? Colors.grey[800]
-                      : Colors.purpleAccent,
+                  backgroundColor:
+                      isInvited ? Colors.grey[800] : Colors.purpleAccent,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(20),
@@ -7885,20 +9553,20 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 );
 
           // Weekly Ranking
-          final weeklyContributors =
-              allContributors.where((c) => c.weeklyContribution > 0).toList()
-                ..sort(
-                  (a, b) =>
-                      b.weeklyContribution.compareTo(a.weeklyContribution),
-                );
+          final weeklyContributors = allContributors
+              .where((c) => c.weeklyContribution > 0)
+              .toList()
+            ..sort(
+              (a, b) => b.weeklyContribution.compareTo(a.weeklyContribution),
+            );
 
           // Monthly Ranking
-          final monthlyContributors =
-              allContributors.where((c) => c.monthlyContribution > 0).toList()
-                ..sort(
-                  (a, b) =>
-                      b.monthlyContribution.compareTo(a.monthlyContribution),
-                );
+          final monthlyContributors = allContributors
+              .where((c) => c.monthlyContribution > 0)
+              .toList()
+            ..sort(
+              (a, b) => b.monthlyContribution.compareTo(a.monthlyContribution),
+            );
 
           // All Time Ranking
           final allTimeContributors =
@@ -8299,12 +9967,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       SendChatMessage(
         roomId: _currentRoom.id,
         userId: _currentUser.userId,
-        username: _currentUser.fullname.isNotEmpty
-            ? _currentUser.fullname
-            : 'User',
-        userAvatar: _currentUser.photoUrl.isNotEmpty
-            ? _currentUser.photoUrl
-            : null,
+        username:
+            _currentUser.fullname.isNotEmpty ? _currentUser.fullname : 'User',
+        userAvatar:
+            _currentUser.photoUrl.isNotEmpty ? _currentUser.photoUrl : null,
         message: message.trim(),
       ),
     );
@@ -8338,13 +10004,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       transitionDuration: const Duration(milliseconds: 300),
       pageBuilder: (context, animation, secondaryAnimation) {
         return SlideTransition(
-          position:
-              Tween<Offset>(
-                begin: const Offset(0, -1),
-                end: const Offset(0, 0),
-              ).animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeInOut),
-              ),
+          position: Tween<Offset>(
+            begin: const Offset(0, -1),
+            end: const Offset(0, 0),
+          ).animate(
+            CurvedAnimation(parent: animation, curve: Curves.easeInOut),
+          ),
           child: Align(
             alignment: Alignment.topCenter,
             child: Material(
@@ -8446,8 +10111,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
 
                               final Map<String, Map<String, dynamic>>
                                   roomGamesMap = {};
-                              final List<DocumentSnapshot>
-                                  customRoomGameDocs = [];
+                              final List<DocumentSnapshot> customRoomGameDocs =
+                                  [];
                               final Set<String> builtInKeys = {
                                 'ludo',
                                 'carrom',
@@ -8459,7 +10124,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               };
 
                               if (roomGamesSnapshot.hasData) {
-                                for (final doc in roomGamesSnapshot.data!.docs) {
+                                for (final doc
+                                    in roomGamesSnapshot.data!.docs) {
                                   final data =
                                       (doc.data() as Map<String, dynamic>?) ??
                                           {};
@@ -8538,7 +10204,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               final List<Widget> modeItems = [];
                               if (isGameActive('ludo')) {
                                 modeItems.add(
-                                  _buildCustomizeItem('Ludo', Icons.gamepad, 'mode'),
+                                  _buildCustomizeItem(
+                                      'Ludo', Icons.gamepad, 'mode'),
                                 );
                               }
                               if (isGameActive('carrom')) {
@@ -8567,7 +10234,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                 final cat = (data['category'] ?? '')
                                     .toString()
                                     .toLowerCase();
-                                if (cat != 'mode' && cat != 'room_mode') continue;
+                                if (cat != 'mode' && cat != 'room_mode')
+                                  continue;
 
                                 if (data['isActive'] == false ||
                                     data['isActive'] == 0 ||
@@ -8656,7 +10324,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               }
                               if (isGameActive('dice')) {
                                 gameItems.add(
-                                  _buildCustomizeItem('Dice', Icons.casino, 'game'),
+                                  _buildCustomizeItem(
+                                      'Dice', Icons.casino, 'game'),
                                 );
                               }
                               if (isGameActive('custom_roulette')) {
@@ -8685,7 +10354,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                 final cat = (data['category'] ?? '')
                                     .toString()
                                     .toLowerCase();
-                                if (cat == 'mode' || cat == 'room_mode') continue;
+                                if (cat == 'mode' || cat == 'room_mode')
+                                  continue;
 
                                 if (data['isActive'] == false ||
                                     data['isActive'] == 0 ||
@@ -8787,7 +10457,6 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                     ),
                                     const SizedBox(height: 15),
                                   ],
-
                                   if (gameItems.isNotEmpty) ...[
                                     _buildSectionHeader('Room Game'),
                                     const SizedBox(height: 10),
@@ -9378,8 +11047,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     final hostParticipant = _currentRoom.participants.firstWhereOrNull(
       (p) => p.userId == _currentRoom.creatorId,
     );
-    final isHostInSeat1 =
-        hostParticipant != null &&
+    final isHostInSeat1 = hostParticipant != null &&
         hostParticipant.isSeated &&
         hostParticipant.seatNumber == 1;
 
@@ -9536,8 +11204,6 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     return null;
   }
 
-
-
   Widget _buildSectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -9588,7 +11254,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         }
 
         // Execute action based on title
-        if (title == 'Ludo Champion' || title == 'Ludo' || title == 'Ludo Game' || title == 'ludugame-1') {
+        if (title == 'Ludo Champion' ||
+            title == 'Ludo' ||
+            title == 'Ludo Game' ||
+            title == 'ludugame-1') {
           if (!_currentRoom.isLudoActive) {
             LudoSetupBottomSheet.show(context, _currentRoom);
           }
@@ -9601,10 +11270,9 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             VotingSetupSheet.show(context, _currentRoom, _currentUser.userId);
           }
         } else if (title == 'Custom Roulette') {
-          final rouletteController =
-              Get.isRegistered<RouletteController>(
-                tag: 'roulette_${widget.room.id}',
-              )
+          final rouletteController = Get.isRegistered<RouletteController>(
+            tag: 'roulette_${widget.room.id}',
+          )
               ? Get.find<RouletteController>(tag: 'roulette_${widget.room.id}')
               : Get.put(
                   RouletteController(
@@ -9629,9 +11297,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             username: _currentUser.fullname.isNotEmpty
                 ? _currentUser.fullname
                 : 'User',
-            userAvatar: _currentUser.photoUrl.isNotEmpty
-                ? _currentUser.photoUrl
-                : null,
+            userAvatar:
+                _currentUser.photoUrl.isNotEmpty ? _currentUser.photoUrl : null,
             rolledNumber: rolledNumber,
           );
           ScaffoldMessenger.of(context).showSnackBar(
@@ -9690,9 +11357,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 themeIconUrl = _getCustomIconUrl(themeService, settingKey);
               }
 
-              final effectiveIconUrl = (customThumbnailUrl != null && customThumbnailUrl.isNotEmpty)
-                  ? customThumbnailUrl
-                  : themeIconUrl;
+              final effectiveIconUrl =
+                  (customThumbnailUrl != null && customThumbnailUrl.isNotEmpty)
+                      ? customThumbnailUrl
+                      : themeIconUrl;
 
               // Determine icon container styling
               Widget iconWidget;
@@ -9945,6 +11613,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   }
 
   void _showPKTypeSelectionSheet() {
+    if (_currentRoom.category == 'Live') {
+      _openVideoPkSheet();
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF0F1724),
@@ -10077,9 +11750,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     int selectedTeamSize = 1;
     String? leftUserId;
     String? rightUserId;
-    final seatedUsers = _currentRoom.participants
-        .where((p) => p.isSeated)
-        .toList();
+    final seatedUsers =
+        _currentRoom.participants.where((p) => p.isSeated).toList();
 
     showModalBottomSheet(
       context: context,
@@ -10195,9 +11867,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                             vertical: 8,
                           ),
                           decoration: BoxDecoration(
-                            color: isSelected
-                                ? Colors.blueAccent
-                                : Colors.white12,
+                            color:
+                                isSelected ? Colors.blueAccent : Colors.white12,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
                               color: isSelected
@@ -10265,17 +11936,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                   color: isLeft
                                       ? Colors.blueAccent.withValues(alpha: 0.2)
                                       : (isRight
-                                            ? Colors.redAccent.withValues(
-                                                alpha: 0.2,
-                                              )
-                                            : Colors.white12),
+                                          ? Colors.redAccent.withValues(
+                                              alpha: 0.2,
+                                            )
+                                          : Colors.white12),
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: isLeft
                                         ? Colors.blueAccent
                                         : (isRight
-                                              ? Colors.redAccent
-                                              : Colors.transparent),
+                                            ? Colors.redAccent
+                                            : Colors.transparent),
                                     width: 2,
                                   ),
                                 ),
@@ -10308,8 +11979,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                         color: isLeft
                                             ? Colors.blueAccent
                                             : (isRight
-                                                  ? Colors.redAccent
-                                                  : Colors.white54),
+                                                ? Colors.redAccent
+                                                : Colors.white54),
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -10349,12 +12020,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           startTime: DateTime.now(),
                           leftTeamScore: 0,
                           rightTeamScore: 0,
-                          leftTeamUserIds: leftUserId != null
-                              ? [leftUserId!]
-                              : [],
-                          rightTeamUserIds: rightUserId != null
-                              ? [rightUserId!]
-                              : [],
+                          leftTeamUserIds:
+                              leftUserId != null ? [leftUserId!] : [],
+                          rightTeamUserIds:
+                              rightUserId != null ? [rightUserId!] : [],
                         );
 
                         widget.audioRoomsBloc.add(
@@ -10481,8 +12150,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               Navigator.pop(sheetContext);
 
                               final currentState = _currentRoom.pkBattleState;
-                              final newDuration =
-                                  currentState.durationMinutes + additionalDuration;
+                              final newDuration = currentState.durationMinutes +
+                                  additionalDuration;
 
                               widget.audioRoomsBloc.add(
                                 UpdatePKBattleState(
@@ -10500,7 +12169,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                 borderRadius: BorderRadius.circular(24),
                               ),
                             ),
-                            icon: const Icon(Icons.add_alarm, color: Colors.white, size: 18),
+                            icon: const Icon(Icons.add_alarm,
+                                color: Colors.white, size: 18),
                             label: const Text(
                               'Extend Time',
                               style: TextStyle(
@@ -10527,7 +12197,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                 borderRadius: BorderRadius.circular(24),
                               ),
                             ),
-                            icon: const Icon(Icons.stop_circle_outlined, color: Colors.white, size: 18),
+                            icon: const Icon(Icons.stop_circle_outlined,
+                                color: Colors.white, size: 18),
                             label: const Text(
                               'End PK Battle',
                               style: TextStyle(
@@ -10567,7 +12238,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            child:
+                const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -10590,9 +12262,12 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
             ),
-            child: const Text('End PK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text('End PK',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -10682,9 +12357,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                 UpdateRoomAnnouncement(
                   roomId: _currentRoom.id,
                   userId: _currentUser.userId,
-                  announcement: newAnnouncement.isEmpty
-                      ? null
-                      : newAnnouncement,
+                  announcement:
+                      newAnnouncement.isEmpty ? null : newAnnouncement,
                 ),
               );
               ScaffoldMessenger.of(context).showSnackBar(
@@ -10713,8 +12387,6 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
     );
   }
 
-
-
   /// Show music settings
 
   // Announcement dialog removed - replaced with live comments
@@ -10725,10 +12397,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             RoomModeSelectorPage(
-              currentRoom: _currentRoom,
-              audioRoomsBloc: widget.audioRoomsBloc,
-              currentUser: _currentUser,
-            ),
+          currentRoom: _currentRoom,
+          audioRoomsBloc: widget.audioRoomsBloc,
+          currentUser: _currentUser,
+        ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           // Cool slide up animation
           return SlideTransition(
@@ -10791,7 +12463,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                          icon: const Icon(Icons.close,
+                              color: Colors.white70, size: 20),
                           onPressed: () => Navigator.pop(context),
                         ),
                       ],
@@ -10801,9 +12474,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     // 1. Pro Mode Option
                     _buildRoomModeOptionCard(
                       title: 'Pro Mode',
-                      subtitle: 'Seat gift counters & filtered chat tabs (All/Chat/Gifts)',
+                      subtitle:
+                          'Seat gift counters & filtered chat tabs (All/Chat/Gifts)',
                       icon: Icons.workspace_premium_rounded,
-                      iconGradient: const [Color(0xFFFF007A), Color(0xFFFF5252)],
+                      iconGradient: const [
+                        Color(0xFFFF007A),
+                        Color(0xFFFF5252)
+                      ],
                       isSelected: currentLayout == 'pro',
                       isComingSoon: false,
                       badgeText: 'PRO',
@@ -10835,9 +12512,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     // 2. Party Mode Option (Current default)
                     _buildRoomModeOptionCard(
                       title: 'Party Mode',
-                      subtitle: 'Standard audio room layout with live animations',
+                      subtitle:
+                          'Standard audio room layout with live animations',
                       icon: Icons.celebration_rounded,
-                      iconGradient: const [Color(0xFF00BCD4), Color(0xFF00E5FF)],
+                      iconGradient: const [
+                        Color(0xFF00BCD4),
+                        Color(0xFF00E5FF)
+                      ],
                       isSelected: currentLayout == 'party',
                       isComingSoon: false,
                       badgeText: 'DEFAULT',
@@ -10869,9 +12550,13 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                     // 3. Event Mode Option (Coming Soon)
                     _buildRoomModeOptionCard(
                       title: 'Event Mode',
-                      subtitle: 'Special concert and tournament event stage layout',
+                      subtitle:
+                          'Special concert and tournament event stage layout',
                       icon: Icons.event_available_rounded,
-                      iconGradient: const [Color(0xFFFF9800), Color(0xFFFFC107)],
+                      iconGradient: const [
+                        Color(0xFFFF9800),
+                        Color(0xFFFFC107)
+                      ],
                       isSelected: currentLayout == 'event',
                       isComingSoon: true,
                       badgeText: 'COMING SOON',
@@ -11077,6 +12762,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
   /// Build background with instant cached loading
   Widget _buildBackgroundWithLoading() {
     if (_currentRoom.category == 'Live') {
+      if (_activeVideoBattle != null &&
+          (_activeVideoBattle!.isActive || _activeVideoBattle!.isPunishment)) {
+        return Container(color: const Color(0xFF0F0B1E));
+      }
+
       final engine = AgoraService().engine;
       if (engine != null && _agoraChannelJoined) {
         if (_isCurrentUserHost) {
@@ -11084,7 +12774,10 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
             return _buildHostProfilePlaceholder();
           }
           return SizedBox.expand(
-            child: AgoraVideoView(controller: _getVideoController(0, engine)),
+            child: VideoFilterColorOverlay(
+              controller: _videoEffectsController,
+              child: AgoraVideoView(controller: _getVideoController(0, engine)),
+            ),
           );
         } else {
           final hostUid = _generateUid(_currentRoom.creatorId);
@@ -11203,32 +12896,26 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => FutureBuilder<void>(
-        future: () async {
-          // Clear any existing status to ensure fresh data
-          _followController.clearFollowStatus(participant.userId);
-          // Load fresh status from server
-          await _followController.loadFollowStatusFromServer(
-            currentUserId: _currentUser.userId,
-            targetUserId: participant.userId,
-          );
-        }(),
-        builder: (context, snapshot) {
-          return _participantProfileBottomSheet(
-            participant: participant,
-            isParticipantHost: isParticipantHost,
-            currentUserId: _currentUser.userId,
-            followController: _followController,
-            onMessage: () => _handleMessageUser(participant),
-            onMention: (username) => _handleMentionUser(username),
-            onSendGift: () {
-              Navigator.pop(context);
-              _showGiftSelection(participant);
-            },
-            onInviteToMic: (p) => _inviteToSeat(p, 0),
-          );
-        },
-      ),
+      builder: (context) {
+        _followController.clearFollowStatus(participant.userId);
+        _followController.loadFollowStatusFromServer(
+          currentUserId: _currentUser.userId,
+          targetUserId: participant.userId,
+        );
+        return _participantProfileBottomSheet(
+          participant: participant,
+          isParticipantHost: isParticipantHost,
+          currentUserId: _currentUser.userId,
+          followController: _followController,
+          onMessage: () => _handleMessageUser(participant),
+          onMention: (username) => _handleMentionUser(username),
+          onSendGift: () {
+            Navigator.pop(context);
+            _showGiftSelection(participant);
+          },
+          onInviteToMic: (p) => _inviteToSeat(p, 0),
+        );
+      },
     );
   }
 
@@ -11670,19 +13357,17 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            final String searchText = searchController.text
-                .trim()
-                .toLowerCase();
+            final String searchText =
+                searchController.text.trim().toLowerCase();
 
             // Filter chats by search query
-            final List<chat_model.Chat> filteredChats = chatController.chats
-                .where((chat) {
-                  if (chat.receiver == null) return false;
-                  return chat.receiver!.fullname.toLowerCase().contains(
+            final List<chat_model.Chat> filteredChats =
+                chatController.chats.where((chat) {
+              if (chat.receiver == null) return false;
+              return chat.receiver!.fullname.toLowerCase().contains(
                     searchText,
                   );
-                })
-                .toList();
+            }).toList();
 
             return Container(
               height: MediaQuery.of(context).size.height * 0.75,
@@ -11769,7 +13454,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               Clipboard.setData(ClipboardData(text: link));
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text('Room link copied to clipboard'),
+                                  content:
+                                      Text('Room link copied to clipboard'),
                                   backgroundColor: Colors.green,
                                   duration: Duration(seconds: 2),
                                 ),
@@ -11817,7 +13503,8 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                               Navigator.pop(context);
                               SharePlus.instance.share(
                                 ShareParams(
-                                  text: 'Join my voice room "${_currentRoom.name}" on imChat:\n$link',
+                                  text:
+                                      'Join my voice room "${_currentRoom.name}" on imChat:\n$link',
                                 ),
                               );
                             },
@@ -11997,13 +13684,11 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                                 roomName: _currentRoom.name,
                                                 roomImage:
                                                     _currentRoom.imageUrl ??
-                                                    _currentRoom
-                                                        .creatorImageUrl ??
-                                                    '',
-                                                description:
-                                                    _currentRoom
-                                                        .description
-                                                        .isNotEmpty
+                                                        _currentRoom
+                                                            .creatorImageUrl ??
+                                                        '',
+                                                description: _currentRoom
+                                                        .description.isNotEmpty
                                                     ? _currentRoom.description
                                                     : 'Come join my Voice Room!',
                                               );
@@ -12012,8 +13697,7 @@ class _AudioRoomScreenState extends State<AudioRoomScreen>
                                                 msgId: AppHelper.generateID,
                                                 senderId: _currentUser.userId,
                                                 type: message_model
-                                                    .MessageType
-                                                    .roomShare,
+                                                    .MessageType.roomShare,
                                                 textMsg:
                                                     'Shared a Voice Room: ${_currentRoom.name}',
                                                 roomShare: roomShare,
@@ -12155,23 +13839,18 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         .doc('${targetId}_$currentId')
         .snapshots();
 
-    return rx.Rx.combineLatest3<
-      DocumentSnapshot,
-      DocumentSnapshot,
-      DocumentSnapshot,
-      Map<String, dynamic>
-    >(contactStream, sentRequestStream, receivedRequestStream, (
+    return rx.Rx.combineLatest3<DocumentSnapshot, DocumentSnapshot,
+            DocumentSnapshot, Map<String, dynamic>>(
+        contactStream, sentRequestStream, receivedRequestStream, (
       contactSnap,
       sentSnap,
       receivedSnap,
     ) {
       return {
         'isFriend': contactSnap.exists,
-        'sentPending':
-            sentSnap.exists &&
+        'sentPending': sentSnap.exists &&
             (sentSnap.data() as Map<String, dynamic>?)?['status'] == 'pending',
-        'receivedPending':
-            receivedSnap.exists &&
+        'receivedPending': receivedSnap.exists &&
             (receivedSnap.data() as Map<String, dynamic>?)?['status'] ==
                 'pending',
       };
@@ -12274,13 +13953,13 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       ),
     );
 
-    _slideUp = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
-        .animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.2, 0.7, curve: Curves.easeOutCubic),
-          ),
-        );
+    _slideUp =
+        Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.2, 0.7, curve: Curves.easeOutCubic),
+      ),
+    );
 
     _buttonsFade = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
@@ -12298,6 +13977,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
     _controller.dispose();
     super.dispose();
   }
+
   Future<Map<String, dynamic>> _getBadgeFuture(DocumentSnapshot? doc) {
     if (_badgeFuture != null && _lastDocSnapshot == doc) {
       return _badgeFuture!;
@@ -12320,12 +14000,25 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         (userData?['receivingLevel'] as Map?)?['level'] as int?,
       );
 
-      bool isPositionNameplate(String id, Map<String, dynamic>? itemDetails, String url) {
+      bool isPositionNameplate(
+          String id, Map<String, dynamic>? itemDetails, String url) {
         final idLower = id.toLowerCase();
         final urlLower = url.toLowerCase();
-        final name = (itemDetails?['name'] ?? itemDetails?['title'] ?? itemDetails?['storeItemName'] ?? '').toString().toLowerCase();
-        final subCat = (itemDetails?['subCategory'] ?? itemDetails?['badgeSubCategory'] ?? itemDetails?['category'] ?? '').toString().toLowerCase();
-        final tag = (itemDetails?['tag'] ?? itemDetails?['badgeTag'] ?? '').toString().toLowerCase();
+        final name = (itemDetails?['name'] ??
+                itemDetails?['title'] ??
+                itemDetails?['storeItemName'] ??
+                '')
+            .toString()
+            .toLowerCase();
+        final subCat = (itemDetails?['subCategory'] ??
+                itemDetails?['badgeSubCategory'] ??
+                itemDetails?['category'] ??
+                '')
+            .toString()
+            .toLowerCase();
+        final tag = (itemDetails?['tag'] ?? itemDetails?['badgeTag'] ?? '')
+            .toString()
+            .toLowerCase();
 
         final bool isVipOrSvip = idLower.startsWith('vip_') ||
             idLower.startsWith('svip_') ||
@@ -12363,8 +14056,9 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         return false;
       }
 
+      final List<String> vipNameplateUrls = [];
       final List<String> positionNameplateUrls = [];
-      final List<String> equippedNameplateUrls = [];
+      final List<String> otherNameplateUrls = [];
 
       // 1. Fetch all equipped nameplate URLs
       List<String> allEquippedUrls = [];
@@ -12372,18 +14066,20 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         allEquippedUrls = await NameplateHelper.getNameplateUrls(nameplateIds);
       }
       if (allEquippedUrls.isEmpty) {
-        final single = customizationMap?['selectedNameplate'] ?? customizationMap?['selectedNameplateUrl'];
+        final single = customizationMap?['selectedNameplate'] ??
+            customizationMap?['selectedNameplateUrl'];
         if (single is String && single.isNotEmpty) {
           allEquippedUrls = [single];
         } else {
-          final fallbackUrls = await NameplateHelper.getNameplateUrlsFromUserId(widget.participant.userId);
+          final fallbackUrls = await NameplateHelper.getNameplateUrlsFromUserId(
+              widget.participant.userId);
           if (fallbackUrls.isNotEmpty) {
             allEquippedUrls = fallbackUrls;
           }
         }
       }
 
-      // 2. Classify: Only Agency, Host, Seller positions go to position line, ALL other equipped/assigned/event nameplates go to equipped line below
+      // 2. Classify: VIP -> vip line, Agency/Host/Seller -> position line, ALL other equipped/assigned/event nameplates -> other line below
       for (int i = 0; i < allEquippedUrls.length; i++) {
         final url = allEquippedUrls[i];
         final id = (i < nameplateIds.length) ? nameplateIds[i] : '';
@@ -12391,13 +14087,35 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         if (id.isNotEmpty) {
           details = await StoreService().getStoreItemDetails(id);
         }
-        if (isPositionNameplate(id, details, url)) {
+        final idLower = id.toLowerCase();
+        final urlLower = url.toLowerCase();
+        final name = (details?['name'] ?? details?['title'] ?? '')
+            .toString()
+            .toLowerCase();
+        final subCat = (details?['subCategory'] ?? '').toString().toLowerCase();
+
+        final bool isVip = idLower.startsWith('vip_') ||
+            idLower.startsWith('svip_') ||
+            idLower.contains('svip') ||
+            idLower.contains('vip') ||
+            name.contains('svip') ||
+            name.contains('vip') ||
+            subCat.contains('svip') ||
+            subCat.contains('vip') ||
+            urlLower.contains('svip') ||
+            urlLower.contains('vip');
+
+        if (isVip) {
+          if (!vipNameplateUrls.contains(url)) {
+            vipNameplateUrls.add(url);
+          }
+        } else if (isPositionNameplate(id, details, url)) {
           if (!positionNameplateUrls.contains(url)) {
             positionNameplateUrls.add(url);
           }
         } else {
-          if (!equippedNameplateUrls.contains(url)) {
-            equippedNameplateUrls.add(url);
+          if (!otherNameplateUrls.contains(url)) {
+            otherNameplateUrls.add(url);
           }
         }
       }
@@ -12412,7 +14130,11 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         for (final doc in posSnap.docs) {
           final data = doc.data();
           final storeItemId = (data['storeItemId'] ?? doc.id).toString();
-          String url = (data['imageUrl'] ?? data['fileUrl'] ?? data['thumbnailUrl'] ?? '').toString();
+          String url = (data['imageUrl'] ??
+                  data['fileUrl'] ??
+                  data['thumbnailUrl'] ??
+                  '')
+              .toString();
           if (url.isEmpty) {
             url = await NameplateHelper.getNameplateUrl(storeItemId) ?? '';
           }
@@ -12426,19 +14148,22 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         debugPrint('Error fetching user position nameplates: $e');
       }
 
-      final badgeUrls = await _loadUserBadgeUrls(widget.participant.userId, userData);
+      final badgeUrls =
+          await _loadUserBadgeUrls(widget.participant.userId, userData);
       return {
         'sendImageUrl': levelImages['sending'],
         'receiveImageUrl': levelImages['receiving'],
+        'vipNameplateUrls': vipNameplateUrls,
         'positionNameplateUrls': positionNameplateUrls,
-        'equippedNameplateUrls': equippedNameplateUrls,
+        'otherNameplateUrls': otherNameplateUrls,
         'badgeUrls': badgeUrls,
       };
     }();
     return _badgeFuture!;
   }
 
-  Future<List<String>> _loadUserBadgeUrls(String userId, Map<String, dynamic>? userData) async {
+  Future<List<String>> _loadUserBadgeUrls(
+      String userId, Map<String, dynamic>? userData) async {
     final List<Map<String, dynamic>> badgeList = [];
     try {
       String extractMediaUrl(Map<String, dynamic> data) {
@@ -12466,12 +14191,24 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       }
 
       int getBadgeTier(Map<String, dynamic> item) {
-        final name = (item['name'] ?? item['storeItemName'] ?? item['title'] ?? '').toString().toLowerCase();
-        final cat = (item['subCategory'] ?? item['category'] ?? item['badgeSubCategory'] ?? '').toString().toLowerCase();
-        final id = (item['storeItemId'] ?? item['id'] ?? '').toString().toLowerCase();
-        final tag = (item['tag'] ?? item['badgeTag'] ?? '').toString().toLowerCase();
+        final name =
+            (item['name'] ?? item['storeItemName'] ?? item['title'] ?? '')
+                .toString()
+                .toLowerCase();
+        final cat = (item['subCategory'] ??
+                item['category'] ??
+                item['badgeSubCategory'] ??
+                '')
+            .toString()
+            .toLowerCase();
+        final id =
+            (item['storeItemId'] ?? item['id'] ?? '').toString().toLowerCase();
+        final tag =
+            (item['tag'] ?? item['badgeTag'] ?? '').toString().toLowerCase();
 
-        final bool isOfficialOrVerif = (cat == 'verification' && !cat.contains('svip') && !cat.contains('vip')) ||
+        final bool isOfficialOrVerif = (cat == 'verification' &&
+                !cat.contains('svip') &&
+                !cat.contains('vip')) ||
             cat.contains('official') ||
             name.contains('official') ||
             name.contains('verif') ||
@@ -12508,7 +14245,14 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       }
 
       int getVerifyLevel(Map<String, dynamic> item) {
-        for (final key in ['verifyLevel', 'verificationLevel', 'officialLevel', 'badgeLevel', 'levelNum', 'level']) {
+        for (final key in [
+          'verifyLevel',
+          'verificationLevel',
+          'officialLevel',
+          'badgeLevel',
+          'levelNum',
+          'level'
+        ]) {
           final val = item[key];
           if (val is num && val > 0) return val.toInt();
           if (val is String && val.isNotEmpty) {
@@ -12539,7 +14283,10 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
             }
           } else {
             try {
-              final mDoc = await FirebaseFirestore.instance.collection('market_items').doc(item).get();
+              final mDoc = await FirebaseFirestore.instance
+                  .collection('market_items')
+                  .doc(item)
+                  .get();
               if (mDoc.exists && mDoc.data() != null) {
                 final data = mDoc.data()!;
                 final u = extractMediaUrl(data);
@@ -12548,13 +14295,17 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                     'url': u,
                     'name': data['name'] ?? '',
                     'subCategory': data['subCategory'] ?? '',
-                    'verifyLevel': data['verifyLevel'] ?? data['verificationLevel'] ?? 0,
+                    'verifyLevel':
+                        data['verifyLevel'] ?? data['verificationLevel'] ?? 0,
                     'tier': getBadgeTier(data),
                     'order': data['order'] ?? data['sortOrder'] ?? 0,
                   });
                 }
               } else {
-                final oDoc = await FirebaseFirestore.instance.collection('official_items').doc(item).get();
+                final oDoc = await FirebaseFirestore.instance
+                    .collection('official_items')
+                    .doc(item)
+                    .get();
                 if (oDoc.exists && oDoc.data() != null) {
                   final data = oDoc.data()!;
                   final u = extractMediaUrl(data);
@@ -12563,7 +14314,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                       'url': u,
                       'name': data['name'] ?? '',
                       'subCategory': data['subCategory'] ?? '',
-                      'verifyLevel': data['verifyLevel'] ?? data['verificationLevel'] ?? 0,
+                      'verifyLevel':
+                          data['verifyLevel'] ?? data['verificationLevel'] ?? 0,
                       'tier': getBadgeTier(data),
                       'order': data['order'] ?? data['sortOrder'] ?? 0,
                     });
@@ -12585,10 +14337,12 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 
         for (final doc in snap.docs) {
           final data = doc.data();
-          final type = (data['itemType'] ?? data['type'] ?? '').toString().toLowerCase();
+          final type =
+              (data['itemType'] ?? data['type'] ?? '').toString().toLowerCase();
           if (type == 'badge') {
             final expiresAt = data['expiresAt'];
-            if (expiresAt is Timestamp && expiresAt.toDate().isBefore(DateTime.now())) {
+            if (expiresAt is Timestamp &&
+                expiresAt.toDate().isBefore(DateTime.now())) {
               continue;
             }
             String url = extractMediaUrl(data);
@@ -12597,12 +14351,18 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
               final storeItemId = (data['storeItemId'] ?? '').toString();
               if (storeItemId.isNotEmpty) {
                 try {
-                  final mDoc = await FirebaseFirestore.instance.collection('market_items').doc(storeItemId).get();
+                  final mDoc = await FirebaseFirestore.instance
+                      .collection('market_items')
+                      .doc(storeItemId)
+                      .get();
                   if (mDoc.exists && mDoc.data() != null) {
                     itemMeta.addAll(mDoc.data()!);
                     url = extractMediaUrl(mDoc.data()!);
                   } else {
-                    final oDoc = await FirebaseFirestore.instance.collection('official_items').doc(storeItemId).get();
+                    final oDoc = await FirebaseFirestore.instance
+                        .collection('official_items')
+                        .doc(storeItemId)
+                        .get();
                     if (oDoc.exists && oDoc.data() != null) {
                       itemMeta.addAll(oDoc.data()!);
                       url = extractMediaUrl(oDoc.data()!);
@@ -12615,8 +14375,13 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
               badgeList.add({
                 'url': url,
                 'name': itemMeta['name'] ?? itemMeta['storeItemName'] ?? '',
-                'subCategory': itemMeta['badgeSubCategory'] ?? itemMeta['subCategory'] ?? itemMeta['category'] ?? '',
-                'verifyLevel': itemMeta['verifyLevel'] ?? itemMeta['verificationLevel'] ?? 0,
+                'subCategory': itemMeta['badgeSubCategory'] ??
+                    itemMeta['subCategory'] ??
+                    itemMeta['category'] ??
+                    '',
+                'verifyLevel': itemMeta['verifyLevel'] ??
+                    itemMeta['verificationLevel'] ??
+                    0,
                 'tier': getBadgeTier(itemMeta),
                 'order': itemMeta['order'] ?? itemMeta['sortOrder'] ?? 0,
               });
@@ -12628,8 +14393,12 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       }
 
       // 3. Fallback to SVIP badge if user has one
-      final svipBadge = userData?['svipBadge'] ?? customization?['svipBadge'] ?? userData?['svip']?['badgeUrl'];
-      if (svipBadge is String && svipBadge.isNotEmpty && !badgeList.any((b) => b['url'] == svipBadge)) {
+      final svipBadge = userData?['svipBadge'] ??
+          customization?['svipBadge'] ??
+          userData?['svip']?['badgeUrl'];
+      if (svipBadge is String &&
+          svipBadge.isNotEmpty &&
+          !badgeList.any((b) => b['url'] == svipBadge)) {
         badgeList.add({
           'url': svipBadge,
           'name': 'SVIP Badge',
@@ -12650,7 +14419,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 
         final ordA = a['order'];
         final ordB = b['order'];
-        if (ordA is num && ordB is num && ordA != ordB) return ordA.compareTo(ordB);
+        if (ordA is num && ordB is num && ordA != ordB)
+          return ordA.compareTo(ordB);
 
         return 0;
       });
@@ -12731,9 +14501,14 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
 
   Widget _buildRoleBadge(AudioRoomParticipant p) {
     final bool isRoomCreator = widget.currentRoom.isCreator(p.userId);
-    final bool isAdmin = widget.currentRoom.settings.adminIds.contains(p.userId) || widget.isParticipantHost;
-    final bool isSpeaker = p.isSpeaker || widget.currentRoom.participants.any((part) => part.userId == p.userId && part.isSpeaker);
-    final bool isMember = isSpeaker || widget.currentRoom.joinedUserIds.contains(p.userId);
+    final bool isAdmin =
+        widget.currentRoom.settings.adminIds.contains(p.userId) ||
+            widget.isParticipantHost;
+    final bool isSpeaker = p.isSpeaker ||
+        widget.currentRoom.participants
+            .any((part) => part.userId == p.userId && part.isSpeaker);
+    final bool isMember =
+        isSpeaker || widget.currentRoom.joinedUserIds.contains(p.userId);
 
     String roleText = 'Viewer';
     Color roleColor = const Color(0xFF29B6F6);
@@ -12777,7 +14552,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
   static const double _avatarOverlap = 20.0;
 
   void _showModerationSheet(BuildContext context, AudioRoomParticipant p) {
-    final bool isCurrentOwner = widget.currentUserId == widget.currentRoom.creatorId;
+    final bool isCurrentOwner =
+        widget.currentUserId == widget.currentRoom.creatorId;
     final bool isTargetAdminOrOwner = widget.currentRoom.isCreator(p.userId) ||
         widget.currentRoom.creatorId == p.userId ||
         widget.currentRoom.settings.adminIds.contains(p.userId) ||
@@ -12795,8 +14571,7 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
         return StatefulBuilder(
           builder: (context, setSheetState) {
             // Get fresh status of participant from current room
-            final currentP =
-                widget.currentRoom.participants
+            final currentP = widget.currentRoom.participants
                     .where((part) => part.userId == p.userId)
                     .firstOrNull ??
                 p;
@@ -12873,13 +14648,17 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                       ),
                     ListTile(
                       leading: Icon(
-                        (currentP.isMutedByAdmin || currentP.isMuted) ? Icons.mic : Icons.mic_off,
+                        (currentP.isMutedByAdmin || currentP.isMuted)
+                            ? Icons.mic
+                            : Icons.mic_off,
                         color: (currentP.isMutedByAdmin || currentP.isMuted)
                             ? Colors.green
                             : Colors.red,
                       ),
                       title: Text(
-                        (currentP.isMutedByAdmin || currentP.isMuted) ? 'Unmute' : 'Mute',
+                        (currentP.isMutedByAdmin || currentP.isMuted)
+                            ? 'Unmute'
+                            : 'Mute',
                         style: const TextStyle(color: Colors.white),
                       ),
                       onTap: () {
@@ -12935,8 +14714,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                                 .doc(widget.currentRoom.id);
 
                                         // 1. Remove from settings.adminIds
-                                        final List<dynamic>
-                                        updatedAdminIds = List.from(
+                                        final List<dynamic> updatedAdminIds =
+                                            List.from(
                                           widget.currentRoom.settings.adminIds,
                                         );
                                         updatedAdminIds.remove(currentP.userId);
@@ -13026,8 +14805,8 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                                 .doc(widget.currentRoom.id);
 
                                         // 1. Add to settings.adminIds
-                                        final List<dynamic>
-                                        updatedAdminIds = List.from(
+                                        final List<dynamic> updatedAdminIds =
+                                            List.from(
                                           widget.currentRoom.settings.adminIds,
                                         );
                                         if (!updatedAdminIds.contains(
@@ -13206,17 +14985,53 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
       if (data == null) return;
 
       final customization = data['customization'] as Map<String, dynamic>?;
-      final themeId = (customization?['selectedBackgroundThemeId'] ?? customization?['selectedBackgroundTheme']) as String?;
+
+      // Check direct background theme / skin URLs first
+      if (customization?['selectedBackgroundThemeUrl'] != null &&
+          (customization!['selectedBackgroundThemeUrl'] as String).isNotEmpty) {
+        if (mounted)
+          setState(() => _profileSkinUrl =
+              customization['selectedBackgroundThemeUrl'] as String);
+        return;
+      }
+      if (customization?['selectedProfileSkinUrl'] != null &&
+          (customization!['selectedProfileSkinUrl'] as String).isNotEmpty) {
+        if (mounted)
+          setState(() => _profileSkinUrl =
+              customization['selectedProfileSkinUrl'] as String);
+        return;
+      }
+      if (customization?['selectedRoomProfileBackgroundUrl'] != null &&
+          (customization!['selectedRoomProfileBackgroundUrl'] as String)
+              .isNotEmpty) {
+        if (mounted)
+          setState(() => _profileSkinUrl =
+              customization['selectedRoomProfileBackgroundUrl'] as String);
+        return;
+      }
+
+      final themeId = (customization?['selectedBackgroundThemeId'] ??
+          customization?['selectedBackgroundTheme'] ??
+          customization?['selectedProfileSkinId'] ??
+          customization?['selectedRoomProfileBackgroundId'] ??
+          customization?['selectedCardSkinId'] ??
+          customization?['shortProfileThemeId']) as String?;
+
       if (themeId == null || themeId.isEmpty) return;
 
-      if (themeId.startsWith('http://') || themeId.startsWith('https://') || themeId.startsWith('assets/')) {
+      if (themeId.startsWith('http://') ||
+          themeId.startsWith('https://') ||
+          themeId.startsWith('assets/')) {
         if (mounted) setState(() => _profileSkinUrl = themeId);
         return;
       }
 
       // 1. Try StoreService (supports market_items, VIP, SVIP configs)
       final details = await StoreService().getStoreItemDetails(themeId);
-      String? url = details?['fileUrl'] ?? details?['thumbnailUrl'] ?? details?['imageUrl'] ?? details?['svgUrl'];
+      String? url = details?['fileUrl'] ??
+          details?['thumbnailUrl'] ??
+          details?['imageUrl'] ??
+          details?['svgUrl'];
 
       // 2. Fallback to market_items directly if not found
       if (url == null || url.isEmpty) {
@@ -13259,463 +15074,449 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
   @override
   Widget build(BuildContext context) {
     final p = widget.participant;
+    final bool hasSkin = _profileSkinUrl != null && _profileSkinUrl!.isNotEmpty;
+    final String skinUrlLower = (_profileSkinUrl ?? '').toLowerCase();
+    final bool isVideoSkin = hasSkin &&
+        (skinUrlLower.endsWith('.mp4') ||
+            skinUrlLower.contains('.mp4?') ||
+            skinUrlLower.contains('.webm') ||
+            skinUrlLower.contains('.mov'));
 
-    const Color textColor = Color(0xFF1F1F24);
-    const Color subTextColor = Color(0xFF75757F);
-    final Color borderColor = Colors.black.withValues(alpha: 0.1);
-    final Color pillBgColor = Colors.black.withValues(alpha: 0.05);
-    final Color handleBarColor = Colors.black.withValues(alpha: 0.15);
+    final double headerTopOffset =
+        isVideoSkin ? (_avatarOverlap + 54) : (_avatarOverlap + 14);
 
-    final bool isCurrentOwner = widget.currentUserId == widget.currentRoom.creatorId;
-    final bool isCurrentAdmin = widget.currentRoom.settings.adminIds.contains(widget.currentUserId);
+    final Color textColor = hasSkin ? Colors.white : const Color(0xFF1F1F24);
+    final Color subTextColor =
+        hasSkin ? Colors.white.withValues(alpha: 0.7) : const Color(0xFF75757F);
+    final Color borderColor = hasSkin
+        ? Colors.white.withValues(alpha: 0.15)
+        : Colors.black.withValues(alpha: 0.1);
+    final Color pillBgColor = hasSkin
+        ? Colors.white.withValues(alpha: 0.12)
+        : Colors.black.withValues(alpha: 0.05);
+    final Color handleBarColor = hasSkin
+        ? Colors.white.withValues(alpha: 0.3)
+        : Colors.black.withValues(alpha: 0.15);
+
+    final bool isCurrentOwner =
+        widget.currentUserId == widget.currentRoom.creatorId;
+    final bool isCurrentAdmin =
+        widget.currentRoom.settings.adminIds.contains(widget.currentUserId);
 
     final bool isTargetOwner = widget.currentRoom.isCreator(p.userId) ||
         widget.currentRoom.creatorId == p.userId;
-    final bool isTargetAdmin = widget.currentRoom.settings.adminIds.contains(p.userId) ||
-        p.isHost ||
-        widget.isParticipantHost;
+    final bool isTargetAdmin =
+        widget.currentRoom.settings.adminIds.contains(p.userId) ||
+            p.isHost ||
+            widget.isParticipantHost;
     final bool isTargetSelf = p.userId == widget.currentUserId;
 
-    final bool canInviteToMic = !isTargetSelf && !p.isSeated && (isCurrentOwner || isCurrentAdmin);
-    final bool canModerate = !isTargetSelf && (
-      isCurrentOwner ||
-      (isCurrentAdmin && !isTargetOwner && !isTargetAdmin)
-    );
+    final bool canInviteToMic =
+        !isTargetSelf && !p.isSeated && (isCurrentOwner || isCurrentAdmin);
+    final bool canModerate = !isTargetSelf &&
+        (isCurrentOwner ||
+            (isCurrentAdmin && !isTargetOwner && !isTargetAdmin));
 
     return Stack(
       clipBehavior: Clip.none,
       alignment: Alignment.topCenter,
       children: [
-        // Sheet body Ã¢â¬â pushed down to make room for the avatar overlap
+        // 1. Full Room Profile Skin / Background Theme that sits at the very background & overflows transparently above (for MP4 videos)
+        if (isVideoSkin)
+          Positioned.fill(
+            top: -45,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              child: UniversalAssetWidget(
+                key: ValueKey(_profileSkinUrl),
+                url: _profileSkinUrl!,
+                fit: BoxFit.fill,
+                isAlphaVideo: true,
+                looping: true,
+                errorWidget: const SizedBox.shrink(),
+              ),
+            ),
+          ),
+
+        // 2. Sheet base body container (card content) - rendered ON TOP of the background skin
         Container(
           margin: const EdgeInsets.only(top: _avatarOverlap),
-          // Use ClipRRect so the skin image respects the border radius
           clipBehavior: Clip.antiAlias,
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.only(
+          decoration: BoxDecoration(
+            color: isVideoSkin
+                ? Colors.transparent
+                : (hasSkin
+                    ? const Color(0xFF131722).withValues(alpha: 0.95)
+                    : Colors.white),
+            borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(28),
               topRight: Radius.circular(28),
             ),
-          ),
-          child: Stack(
-            children: [
-              if (_profileSkinUrl != null)
-                Positioned.fill(
-                  child: _profileSkinUrl!.toLowerCase().endsWith('.svg')
-                      ? SvgPicture.network(
-                          _profileSkinUrl!,
-                          fit: BoxFit.cover,
-                          placeholderBuilder: (_) =>
-                              Container(color: Colors.white),
-                        )
-                      : _profileSkinUrl!.toLowerCase().contains('.mp4')
-                      ? _SkinVideoPlayer(url: _profileSkinUrl!)
-                      : _profileSkinUrl!.toLowerCase().contains('.svga')
-                      ? SVGAEasyPlayer(
-                          resUrl: _profileSkinUrl!,
-                          fit: BoxFit.cover,
-                        )
-                      : Image.network(
-                          _profileSkinUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              Container(color: Colors.white),
-                        ),
-                ),
-
-              // Top-Left Header: Mention Button & Role Badge (Owner, Admin, Member, Viewer)
-              Positioned(
-                top: 24,
-                left: 16,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    if (widget.participant.userId != widget.currentUserId) ...[
-                      IconButton(
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        icon: const Icon(Icons.alternate_email, color: textColor, size: 20),
-                        onPressed: () {
-                          Navigator.pop(context);
-                          widget.onMention?.call(widget.participant.userName);
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    _buildRoleBadge(p),
+            boxShadow: isVideoSkin
+                ? null
+                : [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      blurRadius: 24,
+                      offset: const Offset(0, -4),
+                    ),
                   ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: handleBarColor,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
 
-              // Top-Right Header Actions (Invite to Mic button + Settings button)
-              if (widget.participant.userId != widget.currentUserId)
-                Positioned(
-                  top: 24,
-                  right: 16,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Invite to Mic Button (yellow pill matching screenshot 2)
-                      if (canInviteToMic)
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.pop(context);
-                            widget.onInviteToMic?.call(p);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF9800),
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFFFF9800).withValues(alpha: 0.3),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                Icon(Icons.mic, color: Colors.white, size: 14),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Invite',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      // Settings Button for Admin/Owner
-                      if (canModerate) ...[
-                        const SizedBox(width: 8),
-                        IconButton(
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          icon: const Icon(Icons.settings, color: textColor, size: 22),
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _showModerationSheet(context, widget.participant);
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
+              // Space for the avatar + frame that sits above
+              SizedBox(height: _avatarRadius - _avatarOverlap + 55),
 
-              // Ã¢ââ¬Ã¢ââ¬ Sheet content Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬Ã¢ââ¬
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Handle bar
-                  Container(
-                    margin: const EdgeInsets.only(top: 12),
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: handleBarColor,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-
-                  // Space for the avatar + frame that sits above
-                  SizedBox(height: _avatarRadius - _avatarOverlap + 55),
-
-                  // Name, ID, badges - slide up + fade
-                  SlideTransition(
-                    position: _slideUp,
-                    child: FadeTransition(
-                      opacity: _fadeIn,
-                      child: StreamBuilder<DocumentSnapshot>(
-                        stream: FirebaseFirestore.instance
-                            .collection('Users')
-                            .doc(p.userId)
-                            .snapshots(),
-                        builder: (context, snapshot) {
-                          final userData = snapshot.data?.data() as Map<String, dynamic>?;
-                          final searchId = userData?['searchId']?.toString().isNotEmpty == true
+              // Name, ID, badges - slide up + fade
+              SlideTransition(
+                position: _slideUp,
+                child: FadeTransition(
+                  opacity: _fadeIn,
+                  child: StreamBuilder<DocumentSnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('Users')
+                        .doc(p.userId)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      final userData =
+                          snapshot.data?.data() as Map<String, dynamic>?;
+                      final searchId =
+                          userData?['searchId']?.toString().isNotEmpty == true
                               ? userData!['searchId'].toString()
                               : p.userId;
-                          final followersCount = userData?['followers'] ?? 0;
-                          final agencyName = userData?['agencyName'];
-                          final bool isVerified = userData?['isVerified'] == true;
+                      final rawFollowers = userData?['followers'] ??
+                          userData?['followersCount'] ??
+                          userData?['followers_count'];
+                      final int followersCount = rawFollowers is num
+                          ? rawFollowers.toInt()
+                          : (rawFollowers is String
+                              ? int.tryParse(rawFollowers) ?? 0
+                              : 0);
+                      final agencyName = userData?['agencyName'];
+                      final bool isVerified = userData?['isVerified'] == true;
 
-                          return Column(
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 1. Name, Verified Badge, Gender/Age, Country Flag Row
+                          Row(
                             mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              // 1. Name, Verified Badge, Gender/Age, Country Flag Row
-                              Row(
+                              // Name (Tap to open full profile)
+                              GestureDetector(
+                                onTap: () {
+                                  Navigator.pop(context); // close bottom sheet
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ProfilePageForRoom(
+                                        userID: p.userId,
+                                        userName: p.userName,
+                                        userImage: p.userImageUrl ?? '',
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: AnimatedSvipName.fromUserId(
+                                  userId: p.userId,
+                                  defaultName: p.userName,
+                                  style: TextStyle(
+                                    color: textColor,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ),
+                              if (isVerified) ...[
+                                const SizedBox(width: 6),
+                                const Icon(
+                                  Icons.verified,
+                                  color: Colors.blue,
+                                  size: 18,
+                                ),
+                              ],
+                              // Gender & Age Pill
+                              Builder(builder: (context) {
+                                final gender =
+                                    (userData?['gender'] ?? '').toString();
+                                final birthday =
+                                    (userData?['birthday'] ?? '').toString();
+                                final bool isBoy =
+                                    gender.toLowerCase() == 'boy' ||
+                                        gender.toLowerCase() == 'male' ||
+                                        gender.isEmpty;
+                                int age = 18;
+                                if (birthday.isNotEmpty) {
+                                  try {
+                                    final parts = birthday.split('-');
+                                    if (parts.isNotEmpty) {
+                                      final year = int.tryParse(parts[0]);
+                                      if (year != null) {
+                                        age = DateTime.now().year - year;
+                                      }
+                                    }
+                                  } catch (_) {}
+                                }
+                                return Padding(
+                                  padding: const EdgeInsets.only(left: 6),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isBoy
+                                          ? const Color(0xFF42A5F5)
+                                          : const Color(0xFFEC407A),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          isBoy ? Icons.male : Icons.female,
+                                          color: Colors.white,
+                                          size: 11,
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '$age',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }),
+                              // Country Pill
+                              Builder(builder: (context) {
+                                final country =
+                                    (userData?['country'] ?? 'BD').toString();
+                                final countryData =
+                                    CountryHelper.getCountryDataByNameOrCode(
+                                        country);
+                                return Padding(
+                                  padding: const EdgeInsets.only(left: 6),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: pillBgColor,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: borderColor,
+                                        width: 1,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '${countryData.code} ${countryData.flag}',
+                                      style: TextStyle(
+                                        color: textColor,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+
+                          const SizedBox(height: 8),
+
+                          // 2. ID and Followers Row
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              UserIdBadgeWidget(
+                                searchId: searchId,
+                                badgeHeight: 25,
+                                showCopyIcon: false,
+                              ),
+                              const SizedBox(width: 5),
+                              GestureDetector(
+                                onTap: () {
+                                  Clipboard.setData(
+                                    ClipboardData(text: searchId),
+                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('ID Copied'),
+                                      backgroundColor: Colors.black87,
+                                      duration: Duration(milliseconds: 1000),
+                                    ),
+                                  );
+                                },
+                                child: Icon(
+                                  Icons.copy,
+                                  color: subTextColor,
+                                  size: 14,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'Followers $followersCount',
+                                style: TextStyle(
+                                  color: subTextColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          // 3. Levels, Roles, and Badges Wall
+                          FutureBuilder<Map<String, dynamic>>(
+                            future: _getBadgeFuture(snapshot.data),
+                            builder: (context, badgeSnapshot) {
+                              final bData = badgeSnapshot.data;
+                              final sendImageUrl =
+                                  bData?['sendImageUrl'] as String?;
+                              final receiveImageUrl =
+                                  bData?['receiveImageUrl'] as String?;
+                              final List<String> vipNameplateUrls =
+                                  (bData?['vipNameplateUrls']
+                                          as List<String>?) ??
+                                      [];
+                              final List<String> positionNameplateUrls =
+                                  (bData?['positionNameplateUrls']
+                                          as List<String>?) ??
+                                      [];
+                              final List<String> otherNameplateUrls =
+                                  (bData?['otherNameplateUrls']
+                                          as List<String>?) ??
+                                      [];
+                              final List<String> badgeUrls =
+                                  (bData?['badgeUrls'] as List<String>?) ?? [];
+
+                              return Column(
                                 mainAxisSize: MainAxisSize.min,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  // Name (Tap to open full profile)
+                                  // 1. VIP, Sending Lv, Receiving Lv, and Position Nameplates (Upper Serial)
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    alignment: WrapAlignment.center,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      // 1. VIP Nameplate FIRST
+                                      if (vipNameplateUrls.isNotEmpty)
+                                        ...vipNameplateUrls
+                                            .map((npUrl) => SizedBox(
+                                                  height: 18,
+                                                  child: UniversalAssetWidget(
+                                                    url: npUrl,
+                                                    fit: BoxFit.contain,
+                                                  ),
+                                                )),
+                                      // 2. Sending Level
+                                      if (sendImageUrl != null)
+                                        _buildLevelImageBadge(sendImageUrl),
+                                      // 3. Receiving Level
+                                      if (receiveImageUrl != null)
+                                        _buildLevelImageBadge(receiveImageUrl),
+                                      // 4. Position Nameplates (Agency, Host, Seller)
+                                      if (positionNameplateUrls.isNotEmpty)
+                                        ...positionNameplateUrls
+                                            .map((npUrl) => SizedBox(
+                                                  height: 18,
+                                                  child: UniversalAssetWidget(
+                                                    url: npUrl,
+                                                    fit: BoxFit.contain,
+                                                  ),
+                                                )),
+                                    ],
+                                  ),
+
+                                  // 2. All other nameplates (Lower Serial)
+                                  if (otherNameplateUrls.isNotEmpty) ...[
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      alignment: WrapAlignment.center,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: otherNameplateUrls
+                                          .map((npUrl) => Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 2),
+                                                child: SizedBox(
+                                                  height: 22,
+                                                  child: UniversalAssetWidget(
+                                                    url: npUrl,
+                                                    fit: BoxFit.contain,
+                                                  ),
+                                                ),
+                                              ))
+                                          .toList(),
+                                    ),
+                                  ],
+
+                                  const SizedBox(height: 10),
+
+                                  // Badges / Medals Wall Row
                                   GestureDetector(
                                     onTap: () {
-                                      Navigator.pop(context); // close bottom sheet
                                       Navigator.push(
                                         context,
                                         MaterialPageRoute(
-                                          builder: (_) => ProfilePageForRoom(
+                                          builder: (_) => BadgeWallPage(
                                             userID: p.userId,
                                             userName: p.userName,
-                                            userImage: p.userImageUrl ?? '',
+                                            badgeItems: const [],
                                           ),
                                         ),
                                       );
                                     },
-                                    child: AnimatedSvipName.fromUserId(
-                                      userId: p.userId,
-                                      defaultName: p.userName,
-                                      style: const TextStyle(
-                                        color: textColor,
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 0.3,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: pillBgColor,
+                                        borderRadius: BorderRadius.circular(20),
                                       ),
-                                    ),
-                                  ),
-                                  if (isVerified) ...[
-                                    const SizedBox(width: 6),
-                                    const Icon(
-                                      Icons.verified,
-                                      color: Colors.blue,
-                                      size: 18,
-                                    ),
-                                  ],
-                                  // Gender & Age Pill
-                                  Builder(builder: (context) {
-                                    final gender = (userData?['gender'] ?? '').toString();
-                                    final birthday = (userData?['birthday'] ?? '').toString();
-                                    final bool isBoy = gender.toLowerCase() == 'boy' ||
-                                        gender.toLowerCase() == 'male' ||
-                                        gender.isEmpty;
-                                    int age = 18;
-                                    if (birthday.isNotEmpty) {
-                                      try {
-                                        final parts = birthday.split('-');
-                                        if (parts.isNotEmpty) {
-                                          final year = int.tryParse(parts[0]);
-                                          if (year != null) {
-                                            age = DateTime.now().year - year;
-                                          }
-                                        }
-                                      } catch (_) {}
-                                    }
-                                    return Padding(
-                                      padding: const EdgeInsets.only(left: 6),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: isBoy
-                                              ? const Color(0xFF42A5F5)
-                                              : const Color(0xFFEC407A),
-                                          borderRadius: BorderRadius.circular(10),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              isBoy ? Icons.male : Icons.female,
-                                              color: Colors.white,
-                                              size: 11,
-                                            ),
-                                            const SizedBox(width: 2),
-                                            Text(
-                                              '$age',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  }),
-                                  // Country Pill
-                                  Builder(builder: (context) {
-                                    final country = (userData?['country'] ?? 'BD').toString();
-                                    final countryData = CountryHelper.getCountryDataByNameOrCode(country);
-                                    return Padding(
-                                      padding: const EdgeInsets.only(left: 6),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: pillBgColor,
-                                          borderRadius: BorderRadius.circular(10),
-                                          border: Border.all(
-                                            color: borderColor,
-                                            width: 1,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '${countryData.code} ${countryData.flag}',
-                                          style: const TextStyle(
-                                            color: textColor,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }),
-                                ],
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              // 2. ID and Followers Row
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  UserIdBadgeWidget(
-                                    searchId: searchId,
-                                    badgeHeight: 25,
-                                    showCopyIcon: false,
-                                  ),
-                                  const SizedBox(width: 5),
-                                  GestureDetector(
-                                    onTap: () {
-                                      Clipboard.setData(
-                                        ClipboardData(text: searchId),
-                                      );
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('ID Copied'),
-                                          backgroundColor: Colors.black87,
-                                          duration: Duration(milliseconds: 1000),
-                                        ),
-                                      );
-                                    },
-                                    child: Icon(
-                                      Icons.copy,
-                                      color: subTextColor,
-                                      size: 14,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    'Followers $followersCount',
-                                    style: const TextStyle(
-                                      color: subTextColor,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-
-                              const SizedBox(height: 10),
-
-                              // 3. Levels, Roles, and Badges Wall
-                              FutureBuilder<Map<String, dynamic>>(
-                                future: _getBadgeFuture(snapshot.data),
-                                builder: (context, badgeSnapshot) {
-                                  final bData = badgeSnapshot.data;
-                                  final sendImageUrl = bData?['sendImageUrl'] as String?;
-                                  final receiveImageUrl = bData?['receiveImageUrl'] as String?;
-                                  final List<String> positionNameplateUrls = (bData?['positionNameplateUrls'] as List<String>?) ?? [];
-                                  final List<String> equippedNameplateUrls = (bData?['equippedNameplateUrls'] as List<String>?) ?? [];
-                                  final List<String> badgeUrls = (bData?['badgeUrls'] as List<String>?) ?? [];
-
-                                  return Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      // 1. Levels and Position Nameplates (Agency, Host, Seller) Row
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 6,
-                                        alignment: WrapAlignment.center,
-                                        crossAxisAlignment: WrapCrossAlignment.center,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
                                         children: [
-                                          if (sendImageUrl != null)
-                                            _buildLevelImageBadge(sendImageUrl),
-                                          if (receiveImageUrl != null)
-                                            _buildLevelImageBadge(receiveImageUrl),
-                                          // Position Nameplates (Agency, Host, Seller)
-                                          if (positionNameplateUrls.isNotEmpty)
-                                            ...positionNameplateUrls.map((npUrl) => SizedBox(
-                                              height: 18,
-                                              child: UniversalAssetWidget(
-                                                url: npUrl,
-                                                fit: BoxFit.contain,
-                                              ),
-                                            )),
-                                        ],
-                                      ),
-
-                                      // 2. Nameplate Row (under Levels - for official items assigned to user, event nameplates, store items, etc.)
-                                      if (equippedNameplateUrls.isNotEmpty) ...[
-                                        const SizedBox(height: 8),
-                                        Wrap(
-                                          spacing: 6,
-                                          runSpacing: 6,
-                                          alignment: WrapAlignment.center,
-                                          crossAxisAlignment: WrapCrossAlignment.center,
-                                          children: equippedNameplateUrls.map((npUrl) => Padding(
-                                            padding: const EdgeInsets.symmetric(horizontal: 2),
-                                            child: SizedBox(
-                                              height: 24,
-                                              child: UniversalAssetWidget(
-                                                url: npUrl,
-                                                fit: BoxFit.contain,
-                                              ),
-                                            ),
-                                          )).toList(),
-                                        ),
-                                      ],
-
-                                      const SizedBox(height: 10),
-
-                                      // Badges / Medals Wall Row
-                                      GestureDetector(
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) => BadgeWallPage(
-                                                userID: p.userId,
-                                                userName: p.userName,
-                                                badgeItems: const [],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                          decoration: BoxDecoration(
-                                            color: pillBgColor,
-                                            borderRadius: BorderRadius.circular(20),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            crossAxisAlignment: CrossAxisAlignment.center,
-                                            children: [
-                                              if (badgeUrls.isNotEmpty)
-                                                ...badgeUrls.take(5).map((url) => Padding(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                                          if (badgeUrls.isNotEmpty)
+                                            ...badgeUrls.take(5).map((url) =>
+                                                Padding(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(horizontal: 3),
                                                   child: SizedBox(
                                                     width: 36,
                                                     height: 36,
@@ -13725,50 +15526,128 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                                     ),
                                                   ),
                                                 ))
-                                              else ...[
-                                                const Icon(Icons.military_tech_rounded, color: Colors.amber, size: 22),
-                                                const SizedBox(width: 4),
-                                                const Text(
-                                                  'Badge Wall',
-                                                  style: TextStyle(
-                                                    color: subTextColor,
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                ),
-                                              ],
-                                              const SizedBox(width: 4),
-                                              Icon(
-                                                Icons.chevron_right,
-                                                color: subTextColor.withValues(alpha: 0.6),
-                                                size: 18,
+                                          else ...[
+                                            const Icon(
+                                                Icons.military_tech_rounded,
+                                                color: Colors.amber,
+                                                size: 22),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              'Badge Wall',
+                                              style: TextStyle(
+                                                color: subTextColor,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
                                               ),
-                                            ],
+                                            ),
+                                          ],
+                                          const SizedBox(width: 4),
+                                          Icon(
+                                            Icons.chevron_right,
+                                            color: subTextColor.withValues(
+                                                alpha: 0.6),
+                                            size: 18,
                                           ),
-                                        ),
+                                        ],
                                       ),
-                                    ],
-                                  );
-                                },
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ],
+                      );
+                    },
                   ),
+                ),
+              ),
 
-                  const SizedBox(height: 20),
+              const SizedBox(height: 20),
 
-                  // Action buttons - fade in last
-                  FadeTransition(
-                    opacity: _buttonsFade,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: p.userId == widget.currentUserId
-                          ? // Own profile: single wide Send Gift button
-                          SizedBox(
-                              width: double.infinity,
+              // Action buttons - fade in last
+              FadeTransition(
+                opacity: _buttonsFade,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: p.userId == widget.currentUserId
+                      ? // Own profile: single wide Send Gift button
+                      SizedBox(
+                          width: double.infinity,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [
+                                  Color(0xFF6C63FF),
+                                  Color(0xFFE91E63),
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF6C63FF)
+                                      .withValues(alpha: 0.35),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: ElevatedButton.icon(
+                              onPressed: widget.onSendGift,
+                              icon: const Icon(
+                                Icons.card_giftcard,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                              label: const Text(
+                                'Send Gift to Room',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.transparent,
+                                shadowColor: Colors.transparent,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      : // Other user: 3 horizontal buttons side-by-side: [ Follow ] [ Send Gift ] [ Message ]
+                      Row(
+                          children: [
+                            // 1. Follow button (Left)
+                            Expanded(
+                              flex: 3,
+                              child: FollowButton(
+                                currentUserId: widget.currentUserId,
+                                targetUserId: p.userId,
+                                targetUserName: p.userName,
+                                followController: widget.followController,
+                                initialFollowStatus: widget.followController
+                                    .isFollowing(p.userId),
+                                textColor: hasSkin
+                                    ? Colors.white
+                                    : const Color(0xFF6C63FF),
+                                borderColor: borderColor,
+                                backgroundColor: pillBgColor,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 11),
+                                borderRadius: BorderRadius.circular(14),
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+
+                            // 2. Send Gift button (Center)
+                            Expanded(
+                              flex: 4,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
                                   gradient: const LinearGradient(
@@ -13777,12 +15656,13 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                       Color(0xFFE91E63),
                                     ],
                                   ),
-                                  borderRadius: BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(14),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: const Color(0xFF6C63FF).withValues(alpha: 0.3),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 4),
+                                      color: const Color(0xFF6C63FF)
+                                          .withValues(alpha: 0.3),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 3),
                                     ),
                                   ],
                                 ),
@@ -13791,140 +15671,186 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                                   icon: const Icon(
                                     Icons.card_giftcard,
                                     color: Colors.white,
-                                    size: 20,
+                                    size: 16,
                                   ),
                                   label: const Text(
                                     'Send Gift',
                                     style: TextStyle(
                                       color: Colors.white,
-                                      fontSize: 16,
+                                      fontSize: 13,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.transparent,
                                     shadowColor: Colors.transparent,
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 11),
                                     shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(16),
+                                      borderRadius: BorderRadius.circular(14),
                                     ),
                                   ),
                                 ),
                               ),
-                            )
-                          : // Other user: 3 horizontal buttons side-by-side: [ Follow ] [ Send Gift ] [ Message ]
-                          Row(
-                              children: [
-                                // 1. Follow button (Left)
-                                Expanded(
-                                  flex: 3,
-                                  child: FollowButton(
-                                    currentUserId: widget.currentUserId,
-                                    targetUserId: p.userId,
-                                    targetUserName: p.userName,
-                                    followController: widget.followController,
-                                    initialFollowStatus: widget.followController.isFollowing(p.userId),
-                                    textColor: const Color(0xFF6C63FF),
-                                    borderColor: Colors.black.withValues(alpha: 0.1),
-                                    backgroundColor: Colors.black.withValues(alpha: 0.04),
-                                    padding: const EdgeInsets.symmetric(vertical: 11),
-                                    borderRadius: BorderRadius.circular(14),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-
-                                // 2. Send Gift button (Center)
-                                Expanded(
-                                  flex: 4,
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [
-                                          Color(0xFF6C63FF),
-                                          Color(0xFFE91E63),
-                                        ],
-                                      ),
-                                      borderRadius: BorderRadius.circular(14),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: const Color(0xFF6C63FF).withValues(alpha: 0.3),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 3),
-                                        ),
-                                      ],
-                                    ),
-                                    child: ElevatedButton.icon(
-                                      onPressed: widget.onSendGift,
-                                      icon: const Icon(
-                                        Icons.card_giftcard,
-                                        color: Colors.white,
-                                        size: 16,
-                                      ),
-                                      label: const Text(
-                                        'Send Gift',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.transparent,
-                                        shadowColor: Colors.transparent,
-                                        padding: const EdgeInsets.symmetric(vertical: 11),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(14),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-
-                                // 3. Message button (Right)
-                                Expanded(
-                                  flex: 3,
-                                  child: OutlinedButton.icon(
-                                    onPressed: widget.onMessage,
-                                    icon: const Icon(
-                                      Icons.chat_bubble_outline,
-                                      color: Color(0xFF6C63FF),
-                                      size: 16,
-                                    ),
-                                    label: const Text(
-                                      'Message',
-                                      style: TextStyle(
-                                        color: Color(0xFF6C63FF),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    style: OutlinedButton.styleFrom(
-                                      backgroundColor: Colors.black.withValues(alpha: 0.04),
-                                      side: BorderSide(
-                                        color: Colors.black.withValues(alpha: 0.1),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(vertical: 11),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(14),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
                             ),
-                    ),
-                  ),
+                            const SizedBox(width: 8),
 
-                  SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
-                ],
-              ), // Column
-            ], // Stack.children
-          ), // Stack
+                            // 3. Message button (Right)
+                            Expanded(
+                              flex: 3,
+                              child: OutlinedButton.icon(
+                                onPressed: widget.onMessage,
+                                icon: Icon(
+                                  Icons.chat_bubble_outline,
+                                  color: hasSkin
+                                      ? Colors.white
+                                      : const Color(0xFF6C63FF),
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  'Message',
+                                  style: TextStyle(
+                                    color: hasSkin
+                                        ? Colors.white
+                                        : const Color(0xFF6C63FF),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  backgroundColor: pillBgColor,
+                                  side: BorderSide(
+                                    color: borderColor,
+                                  ),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+
+              SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
+            ],
+          ),
         ),
 
-        // Avatar floating above the sheet Ã¢â¬â tap to open full profile
+        // 2.5 SVGA / Image room profile skin overlay over the solid container
+        if (!isVideoSkin && hasSkin)
+          Positioned.fill(
+            top: -45,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              child: UniversalAssetWidget(
+                key: ValueKey(_profileSkinUrl),
+                url: _profileSkinUrl!,
+                fit: BoxFit.fill,
+                isAlphaVideo: false,
+                looping: true,
+                errorWidget: const SizedBox.shrink(),
+              ),
+            ),
+          ),
+
+        // 3. Top-Left Header: Mention Button & Role Badge (Owner, Admin, Member, Viewer)
+        Positioned(
+          top: headerTopOffset,
+          left: 16,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (widget.participant.userId != widget.currentUserId) ...[
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: Icon(Icons.alternate_email, color: textColor, size: 20),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    widget.onMention?.call(widget.participant.userName);
+                  },
+                ),
+                const SizedBox(width: 8),
+              ],
+              _buildRoleBadge(p),
+            ],
+          ),
+        ),
+
+        // 4. Top-Right Header Actions (Invite to Mic button + Settings button)
+        if (widget.participant.userId != widget.currentUserId)
+          Positioned(
+            top: headerTopOffset,
+            right: 16,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Invite to Mic Button
+                if (canInviteToMic)
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.onInviteToMic?.call(p);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF9800),
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                const Color(0xFFFF9800).withValues(alpha: 0.3),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.mic, color: Colors.white, size: 14),
+                          SizedBox(width: 4),
+                          Text(
+                            'Invite',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                // Settings Button for Admin/Owner
+                if (canModerate) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: Icon(Icons.settings, color: textColor, size: 22),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showModerationSheet(context, widget.participant);
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+        // 5. Avatar floating above the sheet inside the golden wing frame – tap to open full profile
         Positioned(
           top: 0,
           child: GestureDetector(
@@ -13948,11 +15874,10 @@ class _AnimatedProfileSheetState extends State<_AnimatedProfileSheet>
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color:
-                          (widget.isParticipantHost
-                                  ? Colors.amber
-                                  : const Color(0xFF6C63FF))
-                              .withValues(alpha: 0.4),
+                      color: (widget.isParticipantHost
+                              ? Colors.amber
+                              : const Color(0xFF6C63FF))
+                          .withValues(alpha: 0.4),
                       blurRadius: 24,
                       spreadRadius: 4,
                     ),

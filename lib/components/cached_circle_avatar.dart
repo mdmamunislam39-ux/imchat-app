@@ -60,36 +60,29 @@ class CachedCircleAvatar extends StatelessWidget {
       return _buildAvatar(context, frameUrl);
     }
 
-    // 2. Real-time frame streaming when userId is provided
+    // 2. High-performance frame resolution when userId is provided
     if (userId != null && userId!.isNotEmpty) {
       if (Get.isRegistered<AuthController>() && userId == AuthController.instance.currentUser.userId) {
         return Obx(() {
           final liveUrl = AuthController.instance.currentFrameUrl.value;
           final cachedUrl = FrameHelper.getCachedUserFrameUrl(userId) ??
               (frameId != null ? FrameHelper.getCachedFrameUrl(frameId) : null);
-          final initial = liveUrl.isNotEmpty ? liveUrl : cachedUrl;
-
-          return StreamBuilder<String?>(
-            stream: FrameHelper.streamUserFrame(userId!),
-            initialData: initial,
-            builder: (context, snapshot) {
-              final resolved = liveUrl.isNotEmpty
-                  ? liveUrl
-                  : (snapshot.hasData ? snapshot.data : null);
-              return _buildAvatar(context, resolved);
-            },
-          );
+          final resolved = liveUrl.isNotEmpty ? liveUrl : cachedUrl;
+          return _buildAvatar(context, resolved);
         });
       }
 
-      final initialFrame = FrameHelper.getCachedUserFrameUrl(userId) ??
+      final cachedUrl = FrameHelper.getCachedUserFrameUrl(userId) ??
           (frameId != null ? FrameHelper.getCachedFrameUrl(frameId) : null);
+      if (cachedUrl != null && cachedUrl.isNotEmpty) {
+        return _buildAvatar(context, cachedUrl);
+      }
 
-      return StreamBuilder<String?>(
-        stream: FrameHelper.streamUserFrame(userId!),
-        initialData: initialFrame,
+      return FutureBuilder<String?>(
+        future: FrameHelper.getUserFrameUrl(userId),
+        initialData: cachedUrl,
         builder: (context, snapshot) {
-          final resolved = snapshot.data;
+          final resolved = snapshot.data ?? cachedUrl;
           return _buildAvatar(context, resolved);
         },
       );
@@ -113,6 +106,9 @@ class CachedCircleAvatar extends StatelessWidget {
 
   Widget _buildAvatar(BuildContext context, String? currentFrameUrl) {
     final bool isUrlResult = imageUrl.toLowerCase().contains("http");
+    final bool isOfficial = userId == 'official_team' ||
+        (userId != null && userId!.startsWith('official_channel_')) ||
+        imageUrl == 'assets/images/app_logo.png';
 
     // Check if offline
     bool isOffline = true;
@@ -127,7 +123,9 @@ class CachedCircleAvatar extends StatelessWidget {
     }
 
     // Determine background color
-    final Color? bgColor = backgroundColor ?? Colors.grey[350];
+    final Color? bgColor = isOfficial
+        ? Colors.white
+        : (backgroundColor ?? Colors.grey[350]);
 
     // Broadcast icon
     final Widget broadcastIcon = SvgIcon('assets/icons/broadcast.svg',
@@ -135,13 +133,27 @@ class CachedCircleAvatar extends StatelessWidget {
 
     Widget imageWidget;
     if (imageUrl.isEmpty) {
+      if (isOfficial) {
+        imageWidget = CircleAvatar(
+          radius: radius,
+          backgroundColor: Colors.white,
+          backgroundImage: const AssetImage('assets/images/app_logo.png'),
+        );
+      } else {
+        imageWidget = CircleAvatar(
+          radius: radius,
+          backgroundColor: bgColor,
+          child: isGroup && isBroadcast
+              ? broadcastIcon
+              : Icon(isGroup ? IconlyBold.user3 : IconlyBold.profile,
+                  color: Colors.white, size: iconSize ?? 25),
+        );
+      }
+    } else if (imageUrl.startsWith('assets/')) {
       imageWidget = CircleAvatar(
         radius: radius,
-        backgroundColor: bgColor,
-        child: isGroup && isBroadcast
-            ? broadcastIcon
-            : Icon(isGroup ? IconlyBold.user3 : IconlyBold.profile,
-                color: Colors.white, size: iconSize ?? 25),
+        backgroundColor: Colors.white,
+        backgroundImage: AssetImage(imageUrl),
       );
     } else {
       imageWidget = isUrlResult
@@ -155,25 +167,26 @@ class CachedCircleAvatar extends StatelessWidget {
               placeholder: (context, url) => CircleAvatar(
                 radius: radius,
                 backgroundColor: bgColor,
-                child: LoadingIndicator(
-                    size:
-                        radius * 0.5), // Use LoadingIndicator as in legacy code
+                child: isOfficial
+                    ? Image.asset('assets/images/app_logo.png')
+                    : LoadingIndicator(size: radius * 0.5),
               ),
               errorWidget: (context, url, error) => CircleAvatar(
                 radius: radius,
                 backgroundColor: bgColor,
-                child: Icon(
-                  IconlyBold
-                      .profile, // Use IconlyBold.profile as in legacy code
-                  color: Colors.white,
-                  size: iconSize ?? radius,
-                ),
+                child: isOfficial
+                    ? Image.asset('assets/images/app_logo.png')
+                    : Icon(
+                        IconlyBold.profile,
+                        color: Colors.white,
+                        size: iconSize ?? radius,
+                      ),
               ),
             )
           : CircleAvatar(
               radius: radius,
               backgroundColor: bgColor,
-              backgroundImage: const AssetImage('assets/images/logo.png'),
+              backgroundImage: const AssetImage('assets/images/app_logo.png'),
             );
     }
 
@@ -250,12 +263,20 @@ class CachedCircleAvatar extends StatelessWidget {
           }),
 
         // Frame
-        if (currentFrameUrl != null && currentFrameUrl.isNotEmpty)
-          Positioned(
-            top: -radius * 0.4 * frameScale,
-            bottom: -radius * 0.4 * frameScale,
-            left: -radius * 0.4 * frameScale,
-            right: -radius * 0.4 * frameScale,
+        if (currentFrameUrl != null && currentFrameUrl.isNotEmpty) () {
+          final String urlLower = currentFrameUrl.toLowerCase();
+          final String idLower = (frameId ?? '').toLowerCase();
+          final bool isVipFrame = urlLower.contains('vip') ||
+              urlLower.contains('svip') ||
+              idLower.contains('vip') ||
+              idLower.contains('svip');
+          final double effectiveFrameScale = isVipFrame ? (frameScale * 1.45) : frameScale;
+
+          return Positioned(
+            top: -radius * 0.4 * effectiveFrameScale,
+            bottom: -radius * 0.4 * effectiveFrameScale,
+            left: -radius * 0.4 * effectiveFrameScale,
+            right: -radius * 0.4 * effectiveFrameScale,
             child: IgnorePointer(
               child: UniversalAssetWidget(
                 key: ValueKey(currentFrameUrl),
@@ -264,7 +285,8 @@ class CachedCircleAvatar extends StatelessWidget {
                 isAlphaVideo: true,
               ),
             ),
-          ),
+          );
+        }(),
       ],
     );
   }

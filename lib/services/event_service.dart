@@ -20,17 +20,38 @@ class EventService {
     });
   }
 
-  // Get single event by ID
-  static Future<EventModel?> getEventByEventId(String eventId) async {
+  // Get single event by ID, customSlug, or doc ID
+  static Future<EventModel?> getEventByEventId(String identifier) async {
+    final cleanId = identifier.trim();
+    if (cleanId.isEmpty) return null;
+
     try {
-      final query = await _firestore
+      // 1. Search by customSlug
+      final slugQuery = await _firestore
           .collection('events')
-          .where('eventId', isEqualTo: eventId)
+          .where('customSlug', isEqualTo: cleanId)
           .limit(1)
           .get();
-      if (query.docs.isNotEmpty) {
-        return EventModel.fromMap(query.docs.first.data(), query.docs.first.id);
+      if (slugQuery.docs.isNotEmpty) {
+        return EventModel.fromMap(slugQuery.docs.first.data(), slugQuery.docs.first.id);
       }
+
+      // 2. Search by eventId
+      final eventIdQuery = await _firestore
+          .collection('events')
+          .where('eventId', isEqualTo: cleanId)
+          .limit(1)
+          .get();
+      if (eventIdQuery.docs.isNotEmpty) {
+        return EventModel.fromMap(eventIdQuery.docs.first.data(), eventIdQuery.docs.first.id);
+      }
+
+      // 3. Search directly by Firestore doc ID
+      final docSnap = await _firestore.collection('events').doc(cleanId).get();
+      if (docSnap.exists && docSnap.data() != null) {
+        return EventModel.fromMap(docSnap.data()!, docSnap.id);
+      }
+
       return null;
     } catch (e) {
       return null;

@@ -139,6 +139,57 @@ class FrameHelper {
     _inFlightUserId.clear();
   }
 
+  /// One-time cached lookup for user's frame URL to avoid continuous Firestore snapshot streams
+  static Future<String?> getUserFrameUrl(String? userId) async {
+    if (userId == null || userId.isEmpty) return null;
+
+    // 1. Check synchronous memory cache
+    if (_userIdToFrameUrlCache.containsKey(userId)) {
+      return _userIdToFrameUrlCache[userId];
+    }
+
+    // 2. Check in-flight deduplication
+    if (_inFlightUserId.containsKey(userId)) {
+      return await _inFlightUserId[userId];
+    }
+
+    final future = _fetchUserFrameUrl(userId);
+    _inFlightUserId[userId] = future;
+    try {
+      final url = await future;
+      if (url != null && url.isNotEmpty) {
+        _userIdToFrameUrlCache[userId] = url;
+      }
+      return url;
+    } finally {
+      _inFlightUserId.remove(userId);
+    }
+  }
+
+  static Future<String?> _fetchUserFrameUrl(String userId) async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('Users').doc(userId).get();
+      if (!doc.exists) return null;
+      final userData = doc.data();
+      final customization = userData?['customization'] as Map<String, dynamic>?;
+      final selectedFrameId = (customization?['selectedFrameId'] ??
+          userData?['selectedFrameId'] ??
+          userData?['userCustomization']?['selectedFrameId']) as String?;
+
+      if (selectedFrameId == null || selectedFrameId.isEmpty) {
+        setCachedUserFrame(userId: userId, frameId: null, frameUrl: null);
+        return null;
+      }
+
+      final url = await getFrameUrl(selectedFrameId);
+      setCachedUserFrame(userId: userId, frameId: selectedFrameId, frameUrl: url);
+      return url;
+    } catch (e) {
+      debugPrint('Error fetching user frame URL: $e');
+      return null;
+    }
+  }
+
   /// Real-time stream of avatar frame URL from Firestore for ANY user
   static Stream<String?> streamUserFrame(String userId) {
     if (userId.isEmpty) return Stream.value(null);

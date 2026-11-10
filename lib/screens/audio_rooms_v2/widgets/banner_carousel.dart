@@ -1,3 +1,4 @@
+import '../../../services/deep_link_service.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -285,8 +286,13 @@ class _BannerCarouselState extends State<BannerCarousel> {
     if (banner.clickUrl == null || banner.clickUrl!.isEmpty) return;
 
     try {
-      final uri = Uri.parse(banner.clickUrl!);
-      // Direct launch is much more reliable under modern Android/iOS security query limitations
+      final uri = Uri.parse(banner.clickUrl!.trim());
+      final parsed = DeepLinkService.parseDeepLink(uri);
+      if (parsed != null) {
+        await DeepLinkService.executeDeepLinkAction(parsed['type']!, parsed['id']!);
+        return;
+      }
+      // Direct launch fallback for external urls
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
       debugPrint('Error launching banner url: $e');

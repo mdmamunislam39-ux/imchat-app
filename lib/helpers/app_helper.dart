@@ -1,3 +1,4 @@
+import 'package:chat_messenger/services/deep_link_service.dart';
 import 'dart:io';
 
 import 'package:firebase_storage/firebase_storage.dart';
@@ -367,10 +368,15 @@ abstract class AppHelper {
     );
   }
 
-  // Open Link
+  // Open Link (with in-app deep link interception)
   static Future<void> openUrl(String url) async {
     try {
-      final Uri uri = Uri.parse(url);
+      final Uri uri = Uri.parse(url.trim());
+      final parsed = DeepLinkService.parseDeepLink(uri);
+      if (parsed != null) {
+        await DeepLinkService.executeDeepLinkAction(parsed['type']!, parsed['id']!);
+        return;
+      }
 
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);

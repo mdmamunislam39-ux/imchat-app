@@ -86,7 +86,33 @@ class NameplateHelper {
       return [];
     }
 
-    final futures = nameplateIds.map((id) => getNameplateUrl(id));
+    // Filter out lower-tier VIP/SVIP if multiple exist, keeping only the highest tier
+    final cleanIds = List<String>.from(nameplateIds);
+    int highestVip = 0;
+    int highestSvip = 0;
+    for (final id in cleanIds) {
+      if (id.startsWith('vip_vip')) {
+        final lvl = int.tryParse(id.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        if (lvl > highestVip) highestVip = lvl;
+      } else if (id.startsWith('svip_svip')) {
+        final lvl = int.tryParse(id.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        if (lvl > highestSvip) highestSvip = lvl;
+      }
+    }
+
+    cleanIds.removeWhere((id) {
+      if (id.startsWith('vip_vip')) {
+        final lvl = int.tryParse(id.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        return highestSvip > 0 || (lvl < highestVip);
+      }
+      if (id.startsWith('svip_svip')) {
+        final lvl = int.tryParse(id.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        return lvl < highestSvip;
+      }
+      return false;
+    });
+
+    final futures = cleanIds.map((id) => getNameplateUrl(id));
     final results = await Future.wait(futures);
     return results.whereType<String>().where((url) => url.isNotEmpty).toList();
   }
@@ -126,10 +152,8 @@ class NameplateHelper {
         }
       }
 
-      // Requirement 5: VIP / SVIP Nameplate is automatically active.
-      // If user has active SVIP or VIP status and no nameplate is selected yet,
-      // resolve active SVIP/VIP nameplate automatically.
-      if (ids.isEmpty && userData != null) {
+      // Requirement: VIP / SVIP Nameplate is automatically active and only the highest tier is shown.
+      if (userData != null) {
         final int activeSvip = (userData['activeSvipLevel'] as num?)?.toInt() ?? 0;
         final String svipMonth = userData['svipValidUntilMonth']?.toString() ?? '';
         final int activeVip = (userData['activeVipLevel'] as num?)?.toInt() ?? 0;
@@ -146,10 +170,27 @@ class NameplateHelper {
         final bool isSvipActive = SvipService.isSvipActive(activeSvip, svipMonth);
         final bool isVipActive = SvipService.isVipActive(activeVip, vipExpiry, vipMonth);
 
+        // Remove any outdated or lower tier VIP/SVIP nameplates
+        ids.removeWhere((id) {
+          if (id.startsWith('vip_vip')) {
+            final lvl = int.tryParse(id.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+            return !isVipActive || (lvl > 0 && lvl != activeVip);
+          }
+          if (id.startsWith('svip_svip')) {
+            final lvl = int.tryParse(id.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+            return !isSvipActive || (lvl > 0 && lvl != activeSvip);
+          }
+          return false;
+        });
+
         if (isSvipActive) {
-          ids.add('svip_svip${activeSvip}_nameplate');
+          final svipId = 'svip_svip${activeSvip}_nameplate';
+          ids.remove(svipId);
+          ids.insert(0, svipId); // Highest tier VIP nameplate in front
         } else if (isVipActive) {
-          ids.add('vip_vip${activeVip}_nameplate');
+          final vipId = 'vip_vip${activeVip}_nameplate';
+          ids.remove(vipId);
+          ids.insert(0, vipId); // Highest tier VIP nameplate in front
         }
       }
 

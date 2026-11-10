@@ -107,7 +107,7 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
           '🎬 [EntranceAnimation] Processing entrance of type ${effect.type} for: ${effect.userName}');
 
       final url = effect.effectUrl.toLowerCase();
-      final isVap = url.contains('.vap');
+      final isVap = url.contains('.vap') || url.contains('.var');
       final isMp4 = url.contains('.mp4') || isVap;
       final isPng = url.contains('.png');
       Duration duration = const Duration(seconds: 4); // Default fallback
@@ -138,19 +138,14 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
 
           duration = _videoController!.value.duration;
 
-          if (isVap && Theme.of(context).platform == TargetPlatform.android) {
-            debugPrint(
-                '🎬 [EntranceAnimation] VAP Android native playback duration: ${duration.inMilliseconds}ms');
-          } else {
-            await _videoController!.play();
-            if (!mounted) {
-              _videoController?.dispose();
-              _videoController = null;
-              return;
-            }
-            debugPrint(
-                '🎬 [EntranceAnimation] MP4 duration: ${duration.inMilliseconds}ms');
+          await _videoController!.play();
+          if (!mounted) {
+            _videoController?.dispose();
+            _videoController = null;
+            return;
           }
+          debugPrint(
+              '🎬 [EntranceAnimation] MP4/Alpha duration: ${duration.inMilliseconds}ms');
         }
       } else if (isPng) {
         duration = const Duration(seconds: 4);
@@ -229,18 +224,13 @@ class _EntranceEffectOverlayState extends State<EntranceEffectOverlay> {
     if (effect.effectUrl.isNotEmpty) {
       final url = effect.effectUrl.toLowerCase();
 
-      if (url.contains('.vap') && Theme.of(context).platform == TargetPlatform.android) {
-        return VapWidget(
+      if (url.contains('.mp4') || url.contains('.vap') || url.contains('.var')) {
+        return UniversalAssetWidget(
           url: effect.effectUrl,
           fit: BoxFit.cover,
+          isAlphaVideo: true,
+          looping: false,
         );
-      } else if (url.contains('.mp4') || url.contains('.vap')) {
-        return _videoController != null && _videoController!.value.isInitialized
-            ? AlphaVideoPlayer(
-                controller: _videoController!,
-                fit: BoxFit.cover,
-              )
-            : const SizedBox.shrink();
       } else if (url.contains('.png')) {
         return SizedBox(
           width: double.infinity,

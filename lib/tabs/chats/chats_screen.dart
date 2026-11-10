@@ -13,6 +13,7 @@ import 'package:chat_messenger/tabs/groups/components/group_card.dart';
 import 'package:chat_messenger/tabs/chats/controllers/channel_controller.dart';
 import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/models/message.dart';
+import 'package:chat_messenger/api/user_api.dart';
 import 'components/chat_card.dart';
 
 class ChatsScreen extends StatefulWidget {
@@ -101,21 +102,22 @@ class _ChatsScreenState extends State<ChatsScreen> {
             }
           }
 
-          // Fallback check to ensure 'official_team' is ALWAYS in the list
-          final bool hasOfficialTeam = userChats.any((chat) => chat.receiver?.userId == 'official_team');
-          if (!hasOfficialTeam) {
+          // Fallback check to ensure 'official_team' is ALWAYS in the list and has correct name
+          final int officialTeamIndex = userChats.indexWhere((chat) => chat.receiver?.userId == 'official_team');
+          if (officialTeamIndex != -1) {
+            final existing = userChats[officialTeamIndex];
+            if (existing.receiver == null ||
+                existing.receiver!.fullname.isEmpty ||
+                existing.receiver!.fullname == 'User') {
+              existing.receiver = UserApi.getOfficialTeamUser(
+                customLogo: existing.receiver?.photoUrl,
+              );
+            }
+          } else {
             userChats.add(Chat(
               senderId: 'official_team',
-              receiver: User(
-                userId: 'official_team',
-                fullname: 'imChat Team',
-                photoUrl: '',
-                bio: 'Official Notification Channel',
-                isVerified: true,
-                userType: 'admin',
-                level: 'Max',
-              ),
-              lastMsg: 'Official Notification Channel',
+              receiver: UserApi.getOfficialTeamUser(),
+              lastMsg: UserApi.officialDefaultBio,
               msgType: MessageType.text,
               sentAt: DateTime.now(),
               unread: 0,

@@ -712,18 +712,6 @@ class _CreateLuckyBagBottomSheetState
             padding: EdgeInsets.fromLTRB(24, 0, 24, 16 + (bottomInset > 0 ? bottomInset : 12)),
             child: Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    '🎁 Pool: ${(_selectedAmount * 80) ~/ 100} 💎 (80% for winners) • App Fee: ${_selectedAmount - ((_selectedAmount * 80) ~/ 100)} 💎 (20%)',
-                    style: const TextStyle(
-                      color: Color(0xFFFFD54F),
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: 'Inter',
-                    ),
-                  ),
-                ),
                 SizedBox(
                   width: double.infinity,
                   height: 52,

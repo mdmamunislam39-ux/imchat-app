@@ -1,4 +1,5 @@
 import 'user_position_service.dart';
+import 'role_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:chat_messenger/api/user_api.dart';
@@ -23,6 +24,8 @@ class AgencyService {
     required String logoUrl,
     required String agencyIdNumber,
     required AgencyOwner owner,
+    String? createdByBdId,
+    String? createdByBdName,
   }) async {
     try {
       debugPrint('🏢 Creating agency: $agencyName');
@@ -37,11 +40,16 @@ class AgencyService {
         'owner': owner.toMap(),
         'ownerUserId': owner.userId,
         'isActive': true,
+        'status': 'active',
         'totalCommissionEarned': 0.0,
         'totalHosts': 0,
         'hostIds': [],
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
+        if (createdByBdId != null) 'createdByBdId': createdByBdId,
+        if (createdByBdName != null) 'createdByBdName': createdByBdName,
+        if (createdByBdId != null) 'bdId': createdByBdId,
+        if (createdByBdName != null) 'bdName': createdByBdName,
       };
 
       await _firestore.collection(_agenciesCollection).doc(agencyId).set(agencyData);
@@ -153,6 +161,239 @@ class AgencyService {
     } catch (e) {
       debugPrint('❌ Error deleting agency: $e');
       rethrow;
+    }
+  }
+
+  // Create agency specifically assigned by a BD user
+  Future<String> createAgencyByBd({
+    required String targetUserId,
+    required String agencyName,
+    required String agencyIdNumber,
+    required String bdUserId,
+    required String bdUserName,
+  }) async {
+    try {
+      debugPrint('🏢 BD $bdUserName ($bdUserId) creating agency for user: $targetUserId');
+
+      final userDoc = await _firestore.collection('Users').doc(targetUserId).get();
+      if (!userDoc.exists) {
+        throw Exception('User not found.');
+      }
+      final userData = userDoc.data()!;
+
+      // Validate not already active agency owner
+      final bool isUserAgency = userData['isAgency'] == true ||
+          (userData['roles'] != null && List<String>.from(userData['roles']).contains(AppRoles.agency)) ||
+          userData['userType'] == 'agency_owner';
+
+      final activeAgencyDoc1 = await _firestore
+          .collection(_agenciesCollection)
+          .where('ownerUserId', isEqualTo: targetUserId)
+          .get();
+      bool hasActiveAgency = activeAgencyDoc1.docs.any((d) =>
+          d.data()['isActive'] == true ||
+          (d.data()['isActive'] == null && d.data()['status'] != 'terminated'));
+
+      if (!hasActiveAgency) {
+        final activeAgencyDoc2 = await _firestore
+            .collection(_agenciesCollection)
+            .where('owner.userId', isEqualTo: targetUserId)
+            .get();
+        hasActiveAgency = activeAgencyDoc2.docs.any((d) =>
+            d.data()['isActive'] == true ||
+            (d.data()['isActive'] == null && d.data()['status'] != 'terminated'));
+      }
+
+      if (isUserAgency || hasActiveAgency) {
+        throw Exception('User already has an active running Agency. If their previous agency was terminated, they can be assigned again.');
+      }
+
+      final owner = AgencyOwner(
+        userId: targetUserId,
+        name: userData['fullname'] ?? userData['name'] ?? 'Agency Owner',
+        phone: userData['number'] ?? '',
+        email: userData['email'] ?? '',
+        profileImageUrl: userData['photoUrl'] ?? '',
+        dateOfBirth: DateTime(2000, 1, 1),
+        address: userData['country'] ?? '',
+      );
+
+      final agencyId = await createAgency(
+        agencyName: agencyName,
+        logoUrl: userData['photoUrl'] ?? '',
+        agencyIdNumber: agencyIdNumber,
+        owner: owner,
+        createdByBdId: bdUserId,
+        createdByBdName: bdUserName,
+      );
+
+      // Update target user to agency owner
+      await _firestore.collection('Users').doc(targetUserId).update({
+        'isAgency': true,
+        'agencyId': agencyId,
+        'agencyName': agencyName,
+        'userType': 'agency_owner',
+        'roles': FieldValue.arrayUnion([AppRoles.agency]),
+        'bdId': bdUserId,
+        'bdName': bdUserName,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Send official congratulation notification
+      try {
+        final receiver = await UserApi.getUser(targetUserId);
+        if (receiver != null) {
+          await OfficialTeamApi.sendAgencyCongratulation(receiver);
+        }
+      } catch (ex) {
+        debugPrint('⚠️ Error sending official agency congratulation: $ex');
+      }
+
+      debugPrint('✅ BD created agency successfully: $agencyId');
+      return agencyId;
+    } catch (e) {
+      debugPrint('❌ Error creating agency by BD: $e');
+      rethrow;
+    }
+  }
+
+  // Terminate agency (by BD or Admin)
+  Future<void> terminateAgency({
+    required String agencyId,
+    String? terminatedByUserId,
+  }) async {
+    try {
+      debugPrint('🏢 Terminating agency: $agencyId');
+
+      final agencyDoc = await _firestore.collection(_agenciesCollection).doc(agencyId).get();
+      if (!agencyDoc.exists) {
+        throw Exception('Agency not found');
+      }
+
+      final agencyData = agencyDoc.data()!;
+      final ownerUserId = agencyData['ownerUserId'] ?? agencyData['owner']?['userId'] ?? '';
+      final agencyName = agencyData['agencyName'] ?? 'Agency';
+
+      // 1. Mark agency document as inactive and terminated
+      await _firestore.collection(_agenciesCollection).doc(agencyId).update({
+        'isActive': false,
+        'status': 'terminated',
+        'terminatedAt': FieldValue.serverTimestamp(),
+        if (terminatedByUserId != null) 'terminatedBy': terminatedByUserId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. Remove role and position from agency owner
+      if (ownerUserId.isNotEmpty) {
+        try {
+          await UserPositionService.removePositionFromUser(
+            userId: ownerUserId,
+            positionKey: 'agency',
+          );
+        } catch (ex) {
+          debugPrint('⚠️ Error removing agency position items: $ex');
+        }
+
+        await _firestore.collection('Users').doc(ownerUserId).update({
+          'isAgency': false,
+          'agencyId': null,
+          'agencyName': null,
+          'userType': 'regular',
+          'roles': FieldValue.arrayRemove([AppRoles.agency]),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // 3. Deactivate all active hosts under this agency and clear agencyId
+      final hostsSnap = await _firestore
+          .collection(_hostsCollection)
+          .where('agencyId', isEqualTo: agencyId)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      for (final hostDoc in hostsSnap.docs) {
+        final hostUserId = hostDoc.data()['userId'] ?? '';
+        await hostDoc.reference.update({
+          'isActive': false,
+          'status': 'terminated',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        if (hostUserId.isNotEmpty) {
+          try {
+            await UserPositionService.removePositionFromUser(
+              userId: hostUserId,
+              positionKey: 'host',
+            );
+          } catch (_) {}
+
+          await _firestore.collection('Users').doc(hostUserId).update({
+            'isHost': false,
+            'agencyId': null,
+            'agencyName': null,
+            'userType': 'regular',
+            'roles': FieldValue.arrayRemove([AppRoles.host]),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      // 4. Cancel pending invitations
+      final invitesSnap = await _firestore
+          .collection(_hostInvitationsCollection)
+          .where('agencyId', isEqualTo: agencyId)
+          .where('status', isEqualTo: 'pending')
+          .get();
+
+      for (final doc in invitesSnap.docs) {
+        await doc.reference.update({
+          'status': 'cancelled',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // 5. Send notification to owner
+      if (ownerUserId.isNotEmpty) {
+        try {
+          final userDoc = await _firestore.collection('Users').doc(ownerUserId).get();
+          final deviceToken = userDoc.data()?['deviceToken'] ?? '';
+          await OfficialTeamApi.sendOfficialMessage(
+            receiverId: ownerUserId,
+            receiverDeviceToken: deviceToken,
+            messageText: '⚠️ Your agency "$agencyName" has been terminated. You are no longer registered as an agency owner.',
+          );
+        } catch (ex) {
+          debugPrint('⚠️ Error sending agency termination notice: $ex');
+        }
+      }
+
+      debugPrint('✅ Agency $agencyId terminated successfully');
+    } catch (e) {
+      debugPrint('❌ Error terminating agency: $e');
+      rethrow;
+    }
+  }
+
+  // Stream agencies under a specific BD
+  Stream<List<Agency>> streamAgenciesByBd(String bdUserId) {
+    return _firestore
+        .collection(_agenciesCollection)
+        .where('createdByBdId', isEqualTo: bdUserId)
+        .snapshots()
+        .map((snap) => snap.docs.map((doc) => Agency.fromMap(doc.data())).toList());
+  }
+
+  // Get agencies under a specific BD
+  Future<List<Agency>> getAgenciesByBd(String bdUserId) async {
+    try {
+      final snap = await _firestore
+          .collection(_agenciesCollection)
+          .where('createdByBdId', isEqualTo: bdUserId)
+          .get();
+      return snap.docs.map((doc) => Agency.fromMap(doc.data())).toList();
+    } catch (e) {
+      debugPrint('Error getting agencies by BD: $e');
+      return [];
     }
   }
 
@@ -357,7 +598,7 @@ class AgencyService {
       // Send interactive invitation card via imChat official team
       try {
         final userDoc = await _firestore.collection('Users').doc(hostUserId).get();
-        final deviceToken = userDoc.data()?['deviceToken'] ?? '';
+        final deviceToken = userDoc.data()?['deviceToken'] ?? userDoc.data()?['fcm_token'] ?? userDoc.data()?['fcmToken'] ?? '';
         await OfficialTeamApi.sendHostInvitationMessage(
           receiverId: hostUserId,
           receiverDeviceToken: deviceToken,
@@ -1321,6 +1562,10 @@ class Agency {
   final double? commissionRate;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? createdByBdId;
+  final String? createdByBdName;
+
+  String get ownerUserId => owner.userId;
 
   Agency({
     required this.agencyId,
@@ -1335,6 +1580,8 @@ class Agency {
     this.commissionRate,
     required this.createdAt,
     required this.updatedAt,
+    this.createdByBdId,
+    this.createdByBdName,
   });
 
   factory Agency.fromMap(Map<String, dynamic> data) {
@@ -1351,6 +1598,8 @@ class Agency {
       commissionRate: (data['commissionRate'] as num?)?.toDouble(),
       createdAt: data['createdAt']?.toDate() ?? DateTime.now(),
       updatedAt: data['updatedAt']?.toDate() ?? DateTime.now(),
+      createdByBdId: data['createdByBdId'] ?? data['bdId'],
+      createdByBdName: data['createdByBdName'] ?? data['bdName'],
     );
   }
 
@@ -1368,6 +1617,10 @@ class Agency {
       if (commissionRate != null) 'commissionRate': commissionRate,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
+      if (createdByBdId != null) 'createdByBdId': createdByBdId,
+      if (createdByBdName != null) 'createdByBdName': createdByBdName,
+      if (createdByBdId != null) 'bdId': createdByBdId,
+      if (createdByBdName != null) 'bdName': createdByBdName,
     };
   }
 }

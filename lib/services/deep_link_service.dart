@@ -88,7 +88,7 @@ class DeepLinkService extends GetxService {
           secondSegment.isNotEmpty) {
         return {'type': 'post', 'id': secondSegment};
       }
-      if (firstSegment == 'event' &&
+      if ((firstSegment == 'event' || firstSegment == 'e') &&
           secondSegment != null &&
           secondSegment.isNotEmpty) {
         return {'type': 'event', 'id': secondSegment};

@@ -872,7 +872,7 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
                                               key: ValueKey(imageUrl),
                                               url: imageUrl,
                                               fit: BoxFit.contain,
-                                              isAlphaVideo: false,
+                                              isAlphaVideo: true,
                                             ),
                                           ),
                                           CircleAvatar(
@@ -888,7 +888,7 @@ class _OwnedItemsTabState extends State<_OwnedItemsTab> {
                                         fit: (widget.type == 'avatarFrame' || widget.type == 'frame')
                                             ? BoxFit.contain
                                             : BoxFit.cover,
-                                        isAlphaVideo: false,
+                                        isAlphaVideo: true,
                                       )),
                           )
                         : const Center(

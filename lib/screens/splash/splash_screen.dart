@@ -11,9 +11,14 @@ class SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Init splash controller
-    Get.put(SplashController());
-    final themeService = Get.find<AppThemeService>();
+    // Ensure splash controller is registered
+    if (!Get.isRegistered<SplashController>()) {
+      Get.put(SplashController());
+    }
+
+    final AppThemeService themeService = Get.isRegistered<AppThemeService>()
+        ? Get.find<AppThemeService>()
+        : Get.put(AppThemeService(), permanent: true);
 
     return Obx(() {
       final bgColor = themeService.splashColor.value;
@@ -45,26 +50,40 @@ class SplashScreen extends StatelessWidget {
                     ),
                   )
                 : null,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // App logo
-                Center(
+            child: SafeArea(
+              child: Center(
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween<double>(begin: 0.0, end: 1.0),
+                  duration: const Duration(milliseconds: 700),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, child) {
+                    return Opacity(
+                      opacity: value,
+                      child: Transform.scale(
+                        scale: 0.90 + (0.10 * value),
+                        child: child,
+                      ),
+                    );
+                  },
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const AppLogo(),
-                      const SizedBox(height: 16),
-                      Center(
-                        child: LoadingIndicator(
-                          size: 50,
-                          color: textColor ?? Theme.of(context).primaryColor,
-                        ),
+                      // App logo
+                      const AppLogo(
+                        height: 140,
+                      ),
+                      const SizedBox(height: 24),
+                      // Smooth loading indicator
+                      LoadingIndicator(
+                        size: 32,
+                        color: textColor ?? Theme.of(context).primaryColor,
                       ),
                     ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ),

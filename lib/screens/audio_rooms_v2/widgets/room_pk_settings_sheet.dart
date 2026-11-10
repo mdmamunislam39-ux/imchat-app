@@ -53,7 +53,8 @@ class _RoomPKSettingsSheetState extends State<RoomPKSettingsSheet> {
       if (mounted) {
         setState(() => _isInviting = false);
       }
-      Get.snackbar('Error', 'Failed to send invite');
+      final msg = e.toString().replaceAll('Exception:', '').trim();
+      Get.snackbar('Error', msg.isNotEmpty ? msg : 'Failed to send invite');
     }
   }
 
@@ -72,11 +73,10 @@ class _RoomPKSettingsSheetState extends State<RoomPKSettingsSheet> {
           roomImageUrl: widget.room.imageUrl ?? '',
           durationMinutes: _selectedDuration,
         );
-        // We do NOT pop the dialog immediately so they can see it's matching.
-        // In a full implementation, we'd listen for the match here and then pop.
       } catch (e) {
         setState(() => _isAutoMatching = false);
-        Get.snackbar('Error', 'Failed to enter Auto Match');
+        final msg = e.toString().replaceAll('Exception:', '').trim();
+        Get.snackbar('Error', msg.isNotEmpty ? msg : 'Failed to enter Auto Match');
       }
     }
   }

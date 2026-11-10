@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../models/recharge_models.dart';
 import 'store_service.dart';
 import 'svip_service.dart';
+import '../api/official_team_api.dart';
 
 /// Service managing Online Recharge payment methods, packages, orders, and atomic diamond credit
 class OnlineRechargeService {
@@ -335,7 +336,11 @@ class OnlineRechargeService {
         return d;
       }).toList();
 
-      return await _firestore.runTransaction<bool>((transaction) async {
+      String targetUserId = '';
+      int creditedDiamonds = 0;
+      String targetTrxId = '';
+
+      final success = await _firestore.runTransaction<bool>((transaction) async {
         final orderSnap = await transaction.get(orderRef);
         if (!orderSnap.exists) {
           throw Exception('Recharge order not found.');
@@ -362,6 +367,10 @@ class OnlineRechargeService {
         if (userId.isEmpty || diamondAmount <= 0) {
           throw Exception('Invalid order details.');
         }
+
+        targetUserId = userId;
+        creditedDiamonds = totalCreditDiamonds;
+        targetTrxId = trxId.toString();
 
         final userRef = _firestore.collection(_usersCol).doc(userId);
         final userSnap = await transaction.get(userRef);
@@ -444,6 +453,22 @@ class OnlineRechargeService {
 
         return true;
       });
+
+      // Send official admin balance notification
+      if (success == true && targetUserId.isNotEmpty && creditedDiamonds > 0) {
+        try {
+          await OfficialTeamApi.sendAdminBalanceCreditNotification(
+            userId: targetUserId,
+            amount: creditedDiamonds,
+            currency: 'Diamonds',
+            note: 'Online Recharge Approved (TrxID: $targetTrxId)',
+          );
+        } catch (ex) {
+          debugPrint('⚠️ Error sending balance notification: $ex');
+        }
+      }
+
+      return success;
     } catch (e, st) {
       debugPrint('❌ Error in approveRechargeOrder: $e\n$st');
       rethrow;

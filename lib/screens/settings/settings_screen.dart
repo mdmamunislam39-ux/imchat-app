@@ -8,6 +8,7 @@ import 'package:chat_messenger/config/theme_config.dart';
 import 'privacy_settings_screen.dart';
 import 'account_settings_screen.dart';
 import 'manage_devices_screen.dart';
+import 'notification_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -37,6 +38,12 @@ class SettingsScreen extends StatelessWidget {
             title: Text('Manage Devices'.tr),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () => Get.to(() => const ManageDevicesScreen()),
+          ),
+          ListTile(
+            leading: const Icon(Icons.notifications_active, color: primaryColor),
+            title: Text('App Notification Permission'.tr),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () => Get.to(() => const NotificationSettingsScreen()),
           ),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),

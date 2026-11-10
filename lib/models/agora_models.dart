@@ -30,22 +30,22 @@ extension AudioQualityExtension on AudioQuality {
       case AudioQuality.standard:
         return AudioProfileType.audioProfileMusicStandard;
       case AudioQuality.high:
-        return AudioProfileType.audioProfileMusicHighQuality;
+        return AudioProfileType.audioProfileMusicStandard;
       case AudioQuality.ultra:
-        return AudioProfileType.audioProfileMusicHighQualityStereo;
+        return AudioProfileType.audioProfileMusicHighQuality;
     }
   }
 
   AudioScenarioType get agoraScenario {
     switch (this) {
       case AudioQuality.low:
-        return AudioScenarioType.audioScenarioDefault;
+        return AudioScenarioType.audioScenarioGameStreaming;
       case AudioQuality.standard:
-        return AudioScenarioType.audioScenarioDefault;
+        return AudioScenarioType.audioScenarioGameStreaming;
       case AudioQuality.high:
-        return AudioScenarioType.audioScenarioDefault;
+        return AudioScenarioType.audioScenarioGameStreaming;
       case AudioQuality.ultra:
-        return AudioScenarioType.audioScenarioDefault;
+        return AudioScenarioType.audioScenarioGameStreaming;
     }
   }
 }

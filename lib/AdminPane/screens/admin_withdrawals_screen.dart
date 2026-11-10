@@ -661,13 +661,15 @@ class _AdminWithdrawalsScreenState extends State<AdminWithdrawalsScreen> {
     final sellerNote = data['sellerNote'] as String? ?? '';
     final rejectedReason = data['rejectedReason'] as String? ?? '';
 
+    final bool userConfirmed = data['userConfirmed'] == true;
+
     Color statusColor;
     String statusText;
     IconData statusIcon;
 
     if (status == 'approved') {
       statusColor = const Color(0xFF00C853);
-      statusText = 'Approved';
+      statusText = userConfirmed ? 'Approved (User Confirmed)' : 'Approved';
       statusIcon = Icons.check_circle_rounded;
     } else if (status == 'rejected') {
       statusColor = Colors.redAccent;

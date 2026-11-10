@@ -37,4 +37,5 @@ abstract class AppRoutes {
   //for phone
   static const String phoneSignIn = '/phoneSignIn';
   static const String settings = '/settings';
+  static const String notificationSettings = '/notification-settings';
 }

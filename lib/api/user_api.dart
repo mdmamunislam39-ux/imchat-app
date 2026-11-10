@@ -245,14 +245,42 @@ abstract class UserApi {
   static final Map<String, User> _userCache = {};
 
   static void cacheUser(User user) {
-    if (user.userId.isNotEmpty) {
+    if (user.userId.isNotEmpty && user.fullname.isNotEmpty && user.fullname != 'User') {
       _userCache[user.userId] = user;
     }
   }
 
+  static const String officialDefaultBio =
+      'Official notification channel for imChat. Stay updated with the latest announcements, system notices, special events, reward distributions, and important platform updates.';
+
+  static const String officialDefaultLogo = 'assets/images/app_logo.png';
+
+  static User getOfficialTeamUser({String? customBio, String? customLogo, String? customName}) {
+    String logo = (customLogo != null && customLogo.isNotEmpty) ? customLogo : officialDefaultLogo;
+    return User(
+      userId: 'official_team',
+      searchId: 'official_team',
+      fullname: (customName != null && customName.isNotEmpty) ? customName : 'imChat Team',
+      photoUrl: logo,
+      bio: (customBio != null && customBio.isNotEmpty) ? customBio : officialDefaultBio,
+      isVerified: true,
+      userType: 'channel',
+      level: 'Official',
+      gender: '',
+    );
+  }
+
   static User? getCachedUser(String userId) {
     if (userId.isEmpty) return null;
-    return _userCache[userId];
+    if (userId == 'official_team') {
+      return _userCache['official_team'] ?? getOfficialTeamUser();
+    }
+    final user = _userCache[userId];
+    if (user != null && (user.fullname.isEmpty || user.fullname == 'User')) {
+      _userCache.remove(userId);
+      return null;
+    }
+    return user;
   }
 
   static void clearUserCache([String? userId]) {
@@ -277,14 +305,10 @@ abstract class UserApi {
             .get();
         if (doc.exists) {
           final data = doc.data()!;
-          final user = User(
-            userId: 'official_team',
-            fullname: data['name'] ?? 'imChat Team',
-            photoUrl: data['logo'] ?? '',
-            bio: data['description'] ?? 'Official Notification Channel',
-            isVerified: data['isVerified'] ?? true,
-            userType: 'admin',
-            level: 'Max',
+          final user = getOfficialTeamUser(
+            customName: data['name'],
+            customLogo: data['logo'],
+            customBio: data['description'],
           );
           _userCache['official_team'] = user;
           return user;
@@ -292,12 +316,9 @@ abstract class UserApi {
       } catch (e) {
         debugPrint('Error getting official team: $e');
       }
-      return User(
-        userId: 'official_team',
-        fullname: 'imChat Team',
-        bio: 'Official Notification Channel',
-        userType: 'admin',
-      );
+      final fallbackUser = getOfficialTeamUser();
+      _userCache['official_team'] = fallbackUser;
+      return fallbackUser;
     }
 
     if (userId.startsWith('official_channel_')) {
@@ -311,8 +332,8 @@ abstract class UserApi {
           final user = User(
             userId: userId,
             fullname: data['name'] ?? 'Official Channel',
-            photoUrl: data['logo'] ?? '',
-            bio: data['description'] ?? 'Official Notification Channel',
+            photoUrl: data['logo'] ?? officialDefaultLogo,
+            bio: data['description'] ?? officialDefaultBio,
             isVerified: data['isVerified'] ?? true,
             userType: 'channel',
             level: 'Max',
@@ -326,8 +347,8 @@ abstract class UserApi {
       return User(
         userId: userId,
         fullname: 'Official Channel',
-        photoUrl: '',
-        bio: 'Official Notification Channel',
+        photoUrl: officialDefaultLogo,
+        bio: officialDefaultBio,
         isVerified: true,
         userType: 'channel',
         level: 'Max',
@@ -427,25 +448,13 @@ abstract class UserApi {
           .map((doc) {
             if (doc.exists) {
               final data = doc.data() ?? {};
-              return User(
-                userId: 'official_team',
-                fullname: data['name'] ?? 'imChat Team',
-                photoUrl: data['logo'] ?? '',
-                bio: data['description'] ?? 'Official Notification Channel',
-                isVerified: data['isVerified'] ?? true,
-                userType: 'admin',
-                level: 'Max',
+              return getOfficialTeamUser(
+                customName: data['name'],
+                customLogo: data['logo'],
+                customBio: data['description'],
               );
             } else {
-              return User(
-                userId: 'official_team',
-                fullname: 'imChat Team',
-                photoUrl: '',
-                bio: 'Official Notification Channel',
-                isVerified: true,
-                userType: 'admin',
-                level: 'Max',
-              );
+              return getOfficialTeamUser();
             }
           });
     }
@@ -460,8 +469,8 @@ abstract class UserApi {
             return User(
               userId: userId,
               fullname: data['name'] ?? 'Official Channel',
-              photoUrl: data['logo'] ?? '',
-              bio: data['description'] ?? 'Official Notification Channel',
+              photoUrl: data['logo'] ?? officialDefaultLogo,
+              bio: data['description'] ?? officialDefaultBio,
               isVerified: data['isVerified'] ?? true,
               userType: 'channel',
               level: 'Max',

@@ -133,6 +133,7 @@ class GiftTransaction extends Equatable {
   final int beansToReceiver;
   final bool isComboHit;
   final DateTime timestamp;
+  final int? showingTimeSeconds;
 
   const GiftTransaction({
     required this.id,
@@ -152,6 +153,7 @@ class GiftTransaction extends Equatable {
     this.beansToReceiver = 0,
     this.isComboHit = false,
     required this.timestamp,
+    this.showingTimeSeconds,
   });
 
   /// Create from JSON
@@ -188,6 +190,9 @@ class GiftTransaction extends Equatable {
       beansToReceiver: beans,
       isComboHit: json['isComboHit'] == true,
       timestamp: Gift._parseTimestamp(json['timestamp']),
+      showingTimeSeconds: json['showingTimeSeconds'] is int
+          ? json['showingTimeSeconds']
+          : int.tryParse(json['showingTimeSeconds']?.toString() ?? json['showingTime']?.toString() ?? ''),
     );
   }
 
@@ -211,6 +216,7 @@ class GiftTransaction extends Equatable {
       'beansToReceiver': beansToReceiver,
       'isComboHit': isComboHit,
       'timestamp': Timestamp.fromDate(timestamp),
+      if (showingTimeSeconds != null) 'showingTimeSeconds': showingTimeSeconds,
     };
   }
 
@@ -233,5 +239,6 @@ class GiftTransaction extends Equatable {
         beansToReceiver,
         isComboHit,
         timestamp,
+        showingTimeSeconds,
       ];
 }

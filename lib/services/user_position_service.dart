@@ -554,13 +554,11 @@ class UserPositionService {
       // 3. Send Notification
       try {
         final posTitle = getPositionDisplayName(posKey);
-        final deviceToken = userData['deviceToken']?.toString() ?? '';
-        await OfficialTeamApi.sendOfficialMessage(
-          receiverId: userId,
-          receiverDeviceToken: deviceToken,
-          messageText: '🎉 Position Assigned: $posTitle\n\n'
-              'Congratulations! You have been granted the $posTitle position. '
-              'Exclusive items (Frame, Badge, Nameplate) have been added to your inventory & decorations in real time!',
+        await OfficialTeamApi.sendPositionNotification(
+          userId: userId,
+          positionName: posTitle,
+          isAssigned: true,
+          note: 'Exclusive items (Frame, Badge, Nameplate) have been added to your inventory & decorations in real time!',
         );
       } catch (ex) {
         debugPrint('⚠️ Notification failed: $ex');
@@ -786,6 +784,18 @@ class UserPositionService {
           frameId: (remainingFrameId != null && remainingFrameId.isNotEmpty) ? remainingFrameId : null,
           frameUrl: null,
         );
+      }
+
+      // Send official deactivation notification
+      try {
+        final posTitle = getPositionDisplayName(posKey);
+        await OfficialTeamApi.sendPositionNotification(
+          userId: userId,
+          positionName: posTitle,
+          isAssigned: false,
+        );
+      } catch (ex) {
+        debugPrint('⚠️ Error sending position deactivation notice: $ex');
       }
 
       debugPrint('✅ [UserPositionService] Removed $posKey position from user $userId and cleaned up items');

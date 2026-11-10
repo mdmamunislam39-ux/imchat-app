@@ -1028,19 +1028,21 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
       if (_currentUser != null) {
         userRooms = event.rooms
             .where((room) =>
-                room.creatorId == _currentUser!.userId ||
-                room.participants.any((p) => p.userId == _currentUser!.userId))
+                room.category != 'Live' &&
+                (room.creatorId == _currentUser!.userId ||
+                room.participants.any((p) => p.userId == _currentUser!.userId)))
             .toList();
       } else {
-        userRooms = currentState.userRooms;
+        userRooms = currentState.userRooms.where((r) => r.category != 'Live').toList();
       }
       emit(currentState.copyWith(rooms: event.rooms, userRooms: userRooms));
     } else {
       if (_currentUser != null) {
         userRooms = event.rooms
             .where((room) =>
-                room.creatorId == _currentUser!.userId ||
-                room.participants.any((p) => p.userId == _currentUser!.userId))
+                room.category != 'Live' &&
+                (room.creatorId == _currentUser!.userId ||
+                room.participants.any((p) => p.userId == _currentUser!.userId)))
             .toList();
       }
       emit(AudioRoomsLoaded(
@@ -2131,7 +2133,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
             debugPrint('🌐 [AudioRoomsBloc] ❌ LiveKit connection failed');
             emit(AgoraChannelJoinFailed(
               channelName: event.channelName,
-              error: 'Failed to connect to LiveKit WebRTC server',
+              error: 'Network connection issue',
             ));
             return;
           }
@@ -2139,7 +2141,7 @@ class AudioRoomsBloc extends Bloc<AudioRoomsEvent, AudioRoomsState> {
           debugPrint('🌐 [AudioRoomsBloc] ❌ LiveKit error: $lkErr');
           emit(AgoraChannelJoinFailed(
             channelName: event.channelName,
-            error: lkErr.toString(),
+            error: 'Network connection issue',
           ));
           return;
         }

@@ -10,6 +10,9 @@ import '../../models/event_model.dart';
 import '../../models/audio_room_v2.dart';
 import '../../theme/app_theme.dart';
 import '../../services/event_service.dart';
+import '../../services/store_service.dart';
+import '../../services/wallet_service.dart';
+import '../../components/universal_asset_widget.dart';
 import '../../controllers/follow_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../widgets/follow_button.dart';
@@ -31,7 +34,6 @@ class EventDetailsScreen extends StatefulWidget {
 class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTickerProviderStateMixin {
   TabController? _tabController;
   Timer? _timer;
-  Duration _timeLeft = const Duration();
   EventModel? _event;
   bool _isLoading = false;
   final FollowController _followController = FollowController();
@@ -44,9 +46,15 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
   StreamSubscription<DocumentSnapshot>? _eventSubscription;
   StreamSubscription<DocumentSnapshot>? _likeSubscription;
   StreamSubscription<QuerySnapshot>? _registrationsSubscription;
+  StreamSubscription<QuerySnapshot>? _claimsSubscription;
+  StreamSubscription<DocumentSnapshot>? _scoreSubscription;
   Set<String> _registeredUserIds = {};
+  Set<String> _userClaimedKeys = {};
+  int _userCurrentPoints = 0;
   
   final Map<String, Future<DocumentSnapshot?>> _userFuturesCache = {};
+  final ValueNotifier<Duration> _timeLeftNotifier = ValueNotifier<Duration>(const Duration());
+  final Map<String, Stream<List<Map<String, dynamic>>>> _streamCache = {};
 
   @override
   void initState() {
@@ -58,6 +66,8 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
       _listenToEventUpdates();
       _listenToLikeStatus();
       _listenToRegistrations();
+      _listenToUserClaims();
+      _listenToUserScore();
     } else if (widget.eventId != null) {
       _isLoading = true;
       _fetchEvent();
@@ -93,6 +103,8 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
           _listenToEventUpdates();
           _listenToLikeStatus();
           _listenToRegistrations();
+          _listenToUserClaims();
+          _listenToUserScore();
         }
       });
     }
@@ -185,6 +197,51 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     });
   }
 
+  void _listenToUserClaims() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || _event == null) return;
+
+    _claimsSubscription?.cancel();
+    _claimsSubscription = FirebaseFirestore.instance
+        .collection('events')
+        .doc(_event!.id)
+        .collection('claims')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (mounted) {
+        setState(() {
+          _userClaimedKeys = snap.docs.map((doc) => doc.id).toSet();
+        });
+      }
+    });
+  }
+
+  void _listenToUserScore() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || _event == null) return;
+
+    _scoreSubscription?.cancel();
+    final eventPrefix = _event!.id.replaceAll('-', '_');
+    final fieldName = 'event_${eventPrefix}_points';
+
+    _scoreSubscription = FirebaseFirestore.instance
+        .collection('leaderboard_stats')
+        .doc(uid)
+        .snapshots()
+        .listen((docSnap) {
+      if (mounted && docSnap.exists) {
+        final data = docSnap.data();
+        final score = (data?[fieldName] as num?)?.toInt() ?? 
+                      (data?['event_${eventPrefix}_sent'] as num?)?.toInt() ?? 
+                      (data?['event_${eventPrefix}_recharge'] as num?)?.toInt() ?? 0;
+        setState(() {
+          _userCurrentPoints = score;
+        });
+      }
+    });
+  }
+
   Future<void> _registerUser() async {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null || _event == null) return;
@@ -220,9 +277,417 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     }
   }
 
+  Future<void> _claimReward({
+    required String claimKey,
+    required String rewardTitle,
+    int diamonds = 0,
+    String? itemId,
+    int itemDays = 7,
+    String? badgeId,
+    int badgeDays = 7,
+  }) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || _event == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please login to claim rewards'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    if (_userClaimedKeys.contains(claimKey)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reward already claimed!'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    try {
+      // 1. Credit Diamonds to Wallet
+      if (diamonds > 0) {
+        await WalletService().updateUserBalance(
+          userId: uid,
+          diamonds: diamonds,
+          transactionType: 'event_reward_claim',
+          description: 'Event Reward: ${_event!.eventName} - $rewardTitle',
+        );
+      }
+
+      // 2. Assign Store Item / Frame to user backpack
+      if (itemId != null && itemId.isNotEmpty) {
+        await StoreService().assignStoreItemToUser(
+          userId: uid,
+          storeItemId: itemId,
+          assignedBy: 'event_claim_${_event!.id}',
+          expirationDays: itemDays > 0 ? itemDays : 30,
+        );
+      }
+
+      // 3. Assign Badge if provided
+      if (badgeId != null && badgeId.isNotEmpty) {
+        await StoreService().assignStoreItemToUser(
+          userId: uid,
+          storeItemId: badgeId,
+          assignedBy: 'event_claim_${_event!.id}',
+          expirationDays: badgeDays > 0 ? badgeDays : 30,
+        );
+      }
+
+      // 4. Record Claim under Event
+      await FirebaseFirestore.instance
+          .collection('events')
+          .doc(_event!.id)
+          .collection('claims')
+          .doc(claimKey)
+          .set({
+            'userId': uid,
+            'claimKey': claimKey,
+            'rewardTitle': rewardTitle,
+            'diamonds': diamonds,
+            'itemId': itemId ?? '',
+            'itemDays': itemDays,
+            'badgeId': badgeId ?? '',
+            'badgeDays': badgeDays,
+            'claimedAt': FieldValue.serverTimestamp(),
+          });
+
+      setState(() {
+        _userClaimedKeys.add(claimKey);
+      });
+
+      if (mounted) {
+        _showClaimSuccessDialog(rewardTitle: rewardTitle, diamonds: diamonds, itemId: itemId);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Claim failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showClaimSuccessDialog({required String rewardTitle, int diamonds = 0, String? itemId}) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1435),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🎉', style: TextStyle(fontSize: 48)),
+            const SizedBox(height: 8),
+            const Text(
+              'Reward Claimed!',
+              style: TextStyle(color: Colors.amber, fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Congratulations! You have successfully claimed "$rewardTitle".',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            if (diamonds > 0)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.cyanAccent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('💎', style: TextStyle(fontSize: 18)),
+                    const SizedBox(width: 6),
+                    Text('+$diamonds Diamonds added to Wallet', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                  ],
+                ),
+              ),
+            if (itemId != null && itemId.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.pinkAccent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.pinkAccent.withValues(alpha: 0.4)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('🎒', style: TextStyle(fontSize: 18)),
+                    SizedBox(width: 6),
+                    Text('Item added to your Backpack!', style: TextStyle(color: Color(0xFFFF80AB), fontWeight: FontWeight.bold, fontSize: 12)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          Center(
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10),
+              ),
+              child: const Text('Awesome!', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLiveItemPreviewDialog({
+    required String itemId,
+    required String title,
+    String? category,
+    int? durationDays,
+    int? diamondReward,
+    String? claimKey,
+    bool isEligible = false,
+  }) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final currentAvatar = currentUser?.photoURL ?? '';
+    final currentName = currentUser?.displayName ?? 'My Profile';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return FutureBuilder<DocumentSnapshot>(
+          future: itemId.isNotEmpty
+              ? FirebaseFirestore.instance.collection('market_items').doc(itemId).get().then((doc) async {
+                  if (doc.exists) return doc;
+                  return FirebaseFirestore.instance.collection('store_items').doc(itemId).get();
+                })
+              : null,
+          builder: (context, snapshot) {
+            Map<String, dynamic>? itemData;
+            if (snapshot.hasData && snapshot.data != null && snapshot.data!.exists) {
+              itemData = snapshot.data!.data() as Map<String, dynamic>?;
+            }
+
+            final String itemThumbnail = itemData?['thumbnailUrl'] ?? itemData?['iconUrl'] ?? itemData?['image'] ?? itemData?['imageUrl'] ?? '';
+            final String itemAnimation = itemData?['animationUrl'] ?? itemData?['svgUrl'] ?? itemData?['assetUrl'] ?? '';
+            final String resolvedTitle = itemData?['name'] ?? itemData?['title'] ?? title;
+            final String itemType = itemData?['type'] ?? itemData?['itemType'] ?? category ?? 'avatarFrame';
+            final int starRating = (itemData?['starRating'] as num?)?.toInt() ?? 1;
+
+            final bool isClaimed = claimKey != null && _userClaimedKeys.contains(claimKey);
+
+            return Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+              decoration: const BoxDecoration(
+                color: Color(0xFF1B142F),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                boxShadow: [
+                  BoxShadow(color: Colors.black54, blurRadius: 20, spreadRadius: 5),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Exclusive Event Prize Preview',
+                    style: TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // LIVE AVATAR / ITEM PREVIEW
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // User's actual profile photo
+                      CircleAvatar(
+                        radius: 44,
+                        backgroundColor: Colors.grey[800],
+                        backgroundImage: currentAvatar.isNotEmpty ? CachedNetworkImageProvider(currentAvatar) : null,
+                        child: currentAvatar.isEmpty ? const Icon(Icons.person, color: Colors.white, size: 44) : null,
+                      ),
+                      // Frame / Badge / Effect Overlay
+                      if (itemType == 'avatarFrame' || itemType == 'frame')
+                        SizedBox(
+                          width: 120,
+                          height: 120,
+                          child: (itemAnimation.isNotEmpty || itemThumbnail.isNotEmpty)
+                              ? UniversalAssetWidget(
+                                  url: itemAnimation.isNotEmpty ? itemAnimation : itemThumbnail,
+                                  fit: BoxFit.contain,
+                                )
+                              : const Icon(Icons.stars, color: Colors.amber, size: 80),
+                        )
+                      else if (itemThumbnail.isNotEmpty)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(color: Colors.black87, shape: BoxShape.circle),
+                            child: UniversalAssetWidget(url: itemThumbnail, width: 28, height: 28),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    currentName,
+                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.pinkAccent.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.pinkAccent.withValues(alpha: 0.5)),
+                    ),
+                    child: Text(
+                      resolvedTitle,
+                      style: const TextStyle(color: Color(0xFFFF4081), fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Details Grid
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        if (diamondReward != null && diamondReward > 0)
+                          Column(
+                            children: [
+                              const Text('💎', style: TextStyle(fontSize: 22)),
+                              const SizedBox(height: 2),
+                              Text(
+                                '+$diamondReward',
+                                style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              const Text('Diamonds', style: TextStyle(color: Colors.grey, fontSize: 10)),
+                            ],
+                          ),
+                        if (durationDays != null && durationDays > 0)
+                          Column(
+                            children: [
+                              const Icon(Icons.access_time_filled, color: Colors.amber, size: 22),
+                              const SizedBox(height: 2),
+                              Text(
+                                '$durationDays Days',
+                                style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              const Text('Validity', style: TextStyle(color: Colors.grey, fontSize: 10)),
+                            ],
+                          ),
+                        Column(
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: List.generate(starRating, (i) => const Icon(Icons.star, color: Colors.amber, size: 14)),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              itemType.toUpperCase(),
+                              style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 11),
+                            ),
+                            const Text('Rarity', style: TextStyle(color: Colors.grey, fontSize: 10)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Action Button
+                  if (claimKey != null) ...[
+                    if (isClaimed)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: Colors.green),
+                        ),
+                        child: const Center(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.check_circle, color: Colors.green, size: 18),
+                              SizedBox(width: 6),
+                              Text('Reward Claimed ✓', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 14)),
+                            ],
+                          ),
+                        ),
+                      )
+                    else if (isEligible)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _claimReward(
+                              claimKey: claimKey,
+                              rewardTitle: resolvedTitle,
+                              diamonds: diamondReward ?? 0,
+                              itemId: itemId,
+                              itemDays: durationDays ?? 7,
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.amber,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                            elevation: 8,
+                          ),
+                          child: const Text('Claim Reward Now 🎁', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
+                        ),
+                      )
+                    else
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.05),
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'Target not yet reached. Send gifts to unlock!',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _initTimer() {
     if (_event == null) return;
     _calculateTimeLeft();
+    _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       _calculateTimeLeft();
     });
@@ -232,17 +697,9 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     if (_event == null) return;
     final now = DateTime.now();
     if (_event!.endTime.isAfter(now)) {
-      if (mounted) {
-        setState(() {
-          _timeLeft = _event!.endTime.difference(now);
-        });
-      }
+      _timeLeftNotifier.value = _event!.endTime.difference(now);
     } else {
-      if (mounted) {
-        setState(() {
-          _timeLeft = const Duration();
-        });
-      }
+      _timeLeftNotifier.value = const Duration();
       _timer?.cancel();
     }
   }
@@ -251,9 +708,12 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
   void dispose() {
     _tabController?.dispose();
     _timer?.cancel();
+    _timeLeftNotifier.dispose();
     _eventSubscription?.cancel();
     _likeSubscription?.cancel();
     _registrationsSubscription?.cancel();
+    _claimsSubscription?.cancel();
+    _scoreSubscription?.cancel();
     super.dispose();
   }
 
@@ -271,39 +731,42 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     
     final eventPrefix = _event!.id.replaceAll('-', '_');
     final orderByField = isSender ? 'event_${eventPrefix}_sent' : 'event_${eventPrefix}_received';
+    final cacheKey = 'leaderboard_${eventPrefix}_${isSender}_$limit';
 
-    return FirebaseFirestore.instance
-        .collection('leaderboard_stats')
-        .where(orderByField, isGreaterThan: 0)
-        .orderBy(orderByField, descending: true)
-        .limit(limit)
-        .snapshots()
-        .map((snapshot) {
-          final List<Map<String, dynamic>> sortedList = [];
-          
-          for (var doc in snapshot.docs) {
-            try {
-              final data = doc.data();
-              final String userId = doc.id;
-              final int score = data[orderByField] ?? 0;
-              
-              if (_event!.hasRegistrationForm && !_registeredUserIds.contains(userId)) {
-                continue;
-              }
-              
-              sortedList.add({
-                'userId': userId,
-                'userName': 'User',
-                'userAvatar': '',
-                'score': score,
-              });
-            } catch (e) {
-              debugPrint('Error parsing leaderboard stats: $e');
-            }
-          }
+    return _streamCache.putIfAbsent(cacheKey, () {
+      return FirebaseFirestore.instance
+          .collection('leaderboard_stats')
+          .where(orderByField, isGreaterThan: 0)
+          .orderBy(orderByField, descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((snapshot) {
+            final List<Map<String, dynamic>> sortedList = [];
             
-          return sortedList;
-        });
+            for (var doc in snapshot.docs) {
+              try {
+                final data = doc.data();
+                final String userId = doc.id;
+                final int score = data[orderByField] ?? 0;
+                
+                if (_event!.hasRegistrationForm && !_registeredUserIds.contains(userId)) {
+                  continue;
+                }
+                
+                sortedList.add({
+                  'userId': userId,
+                  'userName': 'User',
+                  'userAvatar': '',
+                  'score': score,
+                });
+              } catch (e) {
+                debugPrint('Error parsing leaderboard stats: $e');
+              }
+            }
+              
+            return sortedList;
+          });
+    });
   }
 
   Stream<List<Map<String, dynamic>>> _getAgencyLeaderboardStream({required int limit}) {
@@ -311,36 +774,39 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     
     final eventPrefix = _event!.id.replaceAll('-', '_');
     final orderByField = 'event_${eventPrefix}_received';
+    final cacheKey = 'agency_${eventPrefix}_$limit';
 
-    return FirebaseFirestore.instance
-        .collection('leaderboard_stats')
-        .where('isAgency', isEqualTo: true)
-        .where(orderByField, isGreaterThan: 0)
-        .orderBy(orderByField, descending: true)
-        .limit(limit)
-        .snapshots()
-        .map((snapshot) {
-          final List<Map<String, dynamic>> sortedList = [];
-          
-          for (var doc in snapshot.docs) {
-            try {
-              final data = doc.data();
-              final String agencyId = doc.id;
-              final int score = data[orderByField] ?? 0;
-              
-              sortedList.add({
-                'userId': agencyId, // Using userId map key for compatibility with podium/rank rows
-                'userName': 'Agency',
-                'userAvatar': '',
-                'score': score,
-              });
-            } catch (e) {
-              debugPrint('Error parsing agency stats: $e');
-            }
-          }
+    return _streamCache.putIfAbsent(cacheKey, () {
+      return FirebaseFirestore.instance
+          .collection('leaderboard_stats')
+          .where('isAgency', isEqualTo: true)
+          .where(orderByField, isGreaterThan: 0)
+          .orderBy(orderByField, descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((snapshot) {
+            final List<Map<String, dynamic>> sortedList = [];
             
-          return sortedList;
-        });
+            for (var doc in snapshot.docs) {
+              try {
+                final data = doc.data();
+                final String agencyId = doc.id;
+                final int score = data[orderByField] ?? 0;
+                
+                sortedList.add({
+                  'userId': agencyId,
+                  'userName': 'Agency',
+                  'userAvatar': '',
+                  'score': score,
+                });
+              } catch (e) {
+                debugPrint('Error parsing agency stats: $e');
+              }
+            }
+              
+            return sortedList;
+          });
+    });
   }
 
   Stream<List<Map<String, dynamic>>> _getRechargeLeaderboardStream({required int limit}) {
@@ -348,85 +814,92 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     
     final eventPrefix = _event!.id.replaceAll('-', '_');
     final orderByField = 'event_${eventPrefix}_recharge';
+    final cacheKey = 'recharge_${eventPrefix}_$limit';
 
-    return FirebaseFirestore.instance
-        .collection('leaderboard_stats')
-        .where(orderByField, isGreaterThan: 0)
-        .orderBy(orderByField, descending: true)
-        .limit(limit)
-        .snapshots()
-        .map((snapshot) {
-          final List<Map<String, dynamic>> sortedList = [];
-          
-          for (var doc in snapshot.docs) {
-            try {
-              final data = doc.data();
-              final String userId = doc.id;
-              final int score = data[orderByField] ?? 0;
-              
-              if (_event!.hasRegistrationForm && !_registeredUserIds.contains(userId)) {
-                continue;
-              }
-              
-              sortedList.add({
-                'userId': userId,
-                'userName': 'User',
-                'userAvatar': '',
-                'score': score,
-              });
-            } catch (e) {
-              debugPrint('Error parsing recharge stats: $e');
-            }
-          }
+    return _streamCache.putIfAbsent(cacheKey, () {
+      return FirebaseFirestore.instance
+          .collection('leaderboard_stats')
+          .where(orderByField, isGreaterThan: 0)
+          .orderBy(orderByField, descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((snapshot) {
+            final List<Map<String, dynamic>> sortedList = [];
             
-          return sortedList;
-        });
+            for (var doc in snapshot.docs) {
+              try {
+                final data = doc.data();
+                final String userId = doc.id;
+                final int score = data[orderByField] ?? 0;
+                
+                if (_event!.hasRegistrationForm && !_registeredUserIds.contains(userId)) {
+                  continue;
+                }
+                
+                sortedList.add({
+                  'userId': userId,
+                  'userName': 'User',
+                  'userAvatar': '',
+                  'score': score,
+                });
+              } catch (e) {
+                debugPrint('Error parsing recharge stats: $e');
+              }
+            }
+              
+            return sortedList;
+          });
+    });
   }
 
   Stream<List<Map<String, dynamic>>> _getRoomLeaderboardStream({required int limit}) {
     if (_event == null) return const Stream.empty();
+    final eventPrefix = _event!.id.replaceAll('-', '_');
+    final cacheKey = 'room_${eventPrefix}_$limit';
 
-    return FirebaseFirestore.instance
-        .collection('user_received_gifts')
-        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(_event!.startTime))
-        .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(_event!.endTime))
-        .snapshots()
-        .map((snapshot) {
-          final Map<String, Map<String, dynamic>> roomAggregated = {};
+    return _streamCache.putIfAbsent(cacheKey, () {
+      return FirebaseFirestore.instance
+          .collection('user_received_gifts')
+          .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(_event!.startTime))
+          .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(_event!.endTime))
+          .snapshots()
+          .map((snapshot) {
+            final Map<String, Map<String, dynamic>> roomAggregated = {};
 
-          for (var doc in snapshot.docs) {
-            try {
-              final data = doc.data();
-              final String roomId = data['roomId'] ?? '';
-              final int credits = data['credits'] ?? data['coinValue'] ?? data['giftValue'] ?? 0;
+            for (var doc in snapshot.docs) {
+              try {
+                final data = doc.data();
+                final String roomId = data['roomId'] ?? '';
+                final int credits = data['credits'] ?? data['coinValue'] ?? data['giftValue'] ?? 0;
 
-              if (roomId.isEmpty) continue;
+                if (roomId.isEmpty) continue;
 
-              if (_event!.hasRegistrationForm) {
-                final String hostId = data['receiverId'] ?? '';
-                if (hostId.isNotEmpty && !_registeredUserIds.contains(hostId)) {
-                  continue;
+                if (_event!.hasRegistrationForm) {
+                  final String hostId = data['receiverId'] ?? '';
+                  if (hostId.isNotEmpty && !_registeredUserIds.contains(hostId)) {
+                    continue;
+                  }
                 }
-              }
 
-              if (roomAggregated.containsKey(roomId)) {
-                roomAggregated[roomId]!['score'] = (roomAggregated[roomId]!['score'] as int) + credits;
-              } else {
-                roomAggregated[roomId] = {
-                  'roomId': roomId,
-                  'score': credits,
-                };
+                if (roomAggregated.containsKey(roomId)) {
+                  roomAggregated[roomId]!['score'] = (roomAggregated[roomId]!['score'] as int) + credits;
+                } else {
+                  roomAggregated[roomId] = {
+                    'roomId': roomId,
+                    'score': credits,
+                  };
+                }
+              } catch (e) {
+                debugPrint('Error parsing room gift: $e');
               }
-            } catch (e) {
-              debugPrint('Error parsing room gift: $e');
             }
-          }
 
-          final sortedRooms = roomAggregated.values.toList()
-            ..sort((a, b) => (b['score'] as int).compareTo(a['score'] as int));
+            final sortedRooms = roomAggregated.values.toList()
+              ..sort((a, b) => (b['score'] as int).compareTo(a['score'] as int));
 
-          return sortedRooms.take(limit).toList();
-        });
+            return sortedRooms.take(limit).toList();
+          });
+    });
   }
 
   Future<void> _joinRoom(String roomId) async {
@@ -872,11 +1345,1263 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
             ],
           ),
         );
+      case 'cp_ferris_wheel':
+        return _buildCpFerrisWheelBlock(block);
+      case 'cp_nav_tabs':
+        return _buildCpNavTabsBlock(block, blockIdx);
+      case 'cp_gifts_grid':
+        return _buildCpGiftsGridBlock(block);
+      case 'cp_duo_ranking':
+        return _buildCpDuoRankingBlock(block);
+      case 'cp_tiered_prizes':
+        return _buildCpTieredPrizesBlock(block);
+      case 'vip_user_card':
+        return _buildVipUserCardBlock(block);
+      case 'seller_list':
+        return _buildSellerListBlock(block);
+      case 'hero_banner':
+        return _buildHeroBannerBlock(block);
+      case 'marquee':
+        return _buildMarqueeBlock(block);
+      case 'podium':
+        return _buildPodiumBlock(block);
+      case 'target_milestones':
+        return _buildTargetMilestonesBlock(block);
+      case 'rank_prizes':
+        return _buildRankPrizesBlock(block);
+      case 'diamond_rewards':
+        return _buildTargetMilestonesBlock(block);
       case 'tabbed_leaderboard':
         return _buildDynamicLeaderboardBlock(block, blockIdx);
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  // 🎯 Target Milestones Block with Live Progress & Instant Claim
+  Widget _buildTargetMilestonesBlock(Map<String, dynamic> block) {
+    final rawList = block['milestones'] ?? _event?.targetMilestones;
+    final List<Map<String, dynamic>> milestones = [];
+    if (rawList is List) {
+      for (var item in rawList) {
+        if (item is Map) milestones.add(Map<String, dynamic>.from(item));
+      }
+    }
+    if (milestones.isEmpty) return const SizedBox.shrink();
+
+    milestones.sort((a, b) {
+      final pa = (a['targetPoints'] as num?)?.toInt() ?? 0;
+      final pb = (b['targetPoints'] as num?)?.toInt() ?? 0;
+      return pa.compareTo(pb);
+    });
+
+    final String title = block['title'] ?? '🎯 Target Milestones & Bonus Diamonds';
+    final int maxTarget = (milestones.last['targetPoints'] as num?)?.toInt() ?? 10000;
+    final double overallProgress = (maxTarget > 0) ? (_userCurrentPoints / maxTarget).clamp(0.0, 1.0) : 0.0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E1435), Color(0xFF120C24)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.4), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.amber.withValues(alpha: 0.1),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Text('🎯', style: TextStyle(fontSize: 18)),
+                  const SizedBox(width: 8),
+                  Text(
+                    title,
+                    style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('💎', style: TextStyle(fontSize: 12)),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$_userCurrentPoints Pts',
+                      style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: overallProgress,
+              backgroundColor: Colors.white12,
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.amber),
+              minHeight: 8,
+            ),
+          ),
+          const SizedBox(height: 14),
+          ...milestones.map((m) {
+            final int target = (m['targetPoints'] as num?)?.toInt() ?? 0;
+            final int dia = (m['diamondReward'] as num?)?.toInt() ?? 0;
+            final String itemId = m['itemId'] ?? '';
+            final int days = (m['itemDays'] as num?)?.toInt() ?? 7;
+            final String mTitle = m['title'] ?? 'Milestone ${target >= 1000 ? "${target ~/ 1000}K" : "$target"} Pts';
+            final String claimKey = '${_event?.id}_milestone_$target';
+
+            final bool reached = _userCurrentPoints >= target;
+            final bool isClaimed = _userClaimedKeys.contains(claimKey);
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: reached ? const Color(0xFF2B1D47) : Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: reached ? Colors.amber.withValues(alpha: 0.6) : Colors.white10,
+                  width: reached ? 1.5 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      _showLiveItemPreviewDialog(
+                        itemId: itemId,
+                        title: mTitle,
+                        diamondReward: dia,
+                        durationDays: days,
+                        claimKey: claimKey,
+                        isEligible: reached && !isClaimed,
+                      );
+                    },
+                    child: Container(
+                      width: 50,
+                      height: 50,
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.black38,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                      ),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          if (itemId.isNotEmpty)
+                            const Icon(Icons.stars, color: Colors.amber, size: 28)
+                          else
+                            const Text('💎', style: TextStyle(fontSize: 24)),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: const BoxDecoration(color: Colors.black87, shape: BoxShape.circle),
+                              child: const Icon(Icons.touch_app, color: Colors.amber, size: 10),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Target: $target Pts',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            if (dia > 0) ...[
+                              const Text('💎', style: TextStyle(fontSize: 12)),
+                              const SizedBox(width: 3),
+                              Text(
+                                '+$dia Dia',
+                                style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 11),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            if (itemId.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: Colors.pinkAccent.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '$days Days Frame',
+                                  style: const TextStyle(color: Color(0xFFFF80AB), fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (isClaimed)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.green),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.green, size: 14),
+                          SizedBox(width: 4),
+                          Text('Claimed', style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    )
+                  else if (reached)
+                    ElevatedButton(
+                      onPressed: () {
+                        _claimReward(
+                          claimKey: claimKey,
+                          rewardTitle: mTitle,
+                          diamonds: dia,
+                          itemId: itemId,
+                          itemDays: days,
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.amber,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 4,
+                      ),
+                      child: const Text('Claim 🎁', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        'Need ${(target - _userCurrentPoints)} Pts',
+                        style: const TextStyle(color: Colors.grey, fontSize: 10),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // 🏆 Leaderboard Rank Rewards Block
+  Widget _buildRankPrizesBlock(Map<String, dynamic> block) {
+    final rawList = block['tiers'] ?? _event?.rewardTiers;
+    final List<Map<String, dynamic>> tiers = [];
+    if (rawList is List) {
+      for (var item in rawList) {
+        if (item is Map) tiers.add(Map<String, dynamic>.from(item));
+      }
+    }
+    if (tiers.isEmpty) return const SizedBox.shrink();
+
+    final String title = block['title'] ?? '🏆 Leaderboard Rank Rewards';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF140E26),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.pinkAccent.withValues(alpha: 0.4)),
+        boxShadow: [
+          BoxShadow(color: Colors.pink.withValues(alpha: 0.08), blurRadius: 16),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('👑', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: const TextStyle(color: Color(0xFFFF4081), fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...tiers.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final t = entry.value;
+            final String rankRange = t['rankRange'] ?? 'Top ${idx + 1}';
+            final int dia = (t['diamondReward'] as num?)?.toInt() ?? (t['diamondAmount'] as num?)?.toInt() ?? 0;
+            final String frameId = t['frameId'] ?? t['itemId'] ?? '';
+            final int frameDays = (t['frameDays'] as num?)?.toInt() ?? (t['itemDays'] as num?)?.toInt() ?? 7;
+            final String badgeId = t['badgeId'] ?? '';
+            final int badgeDays = (t['badgeDays'] as num?)?.toInt() ?? 7;
+
+            final Color rankColor = idx == 0 ? Colors.amber : (idx == 1 ? const Color(0xFFE0E0E0) : const Color(0xFFCD7F32));
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: rankColor.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: rankColor.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: rankColor, width: 1.5),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${idx + 1}',
+                        style: TextStyle(color: rankColor, fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          rankRange,
+                          style: TextStyle(color: rankColor, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: [
+                            if (dia > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.cyanAccent.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text('💎 +$dia Dia', style: const TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                              ),
+                            if (frameId.isNotEmpty)
+                              InkWell(
+                                onTap: () {
+                                  _showLiveItemPreviewDialog(
+                                    itemId: frameId,
+                                    title: '$rankRange Frame',
+                                    diamondReward: dia,
+                                    durationDays: frameDays,
+                                  );
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.pinkAccent.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text('🖼️ $frameDays Days Frame ↗', style: const TextStyle(color: Color(0xFFFF80AB), fontSize: 10, fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            if (badgeId.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text('👑 $badgeDays Days Badge', style: const TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold)),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // 🎡 1. CP Ferris Wheel Block (Client App View)
+  Widget _buildCpFerrisWheelBlock(Map<String, dynamic> block) {
+    final couples = List<Map<String, dynamic>>.from(block['couples'] ?? []);
+    final String title = block['title'] ?? 'Weekly CP Ferris Wheel';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFFFD6E7), Color(0xFFFFF0F5)],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFFF1493).withValues(alpha: 0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.pink.withValues(alpha: 0.15),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('✨', style: TextStyle(fontSize: 16)),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFFFF1493),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Text('✨', style: TextStyle(fontSize: 16)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: 300,
+            height: 240,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFFFF69B4).withValues(alpha: 0.5), width: 3),
+              gradient: RadialGradient(
+                colors: [Colors.white.withValues(alpha: 0.85), const Color(0xFFFFE4E1).withValues(alpha: 0.3)],
+              ),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 58,
+                  height: 58,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFF1493),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(color: Colors.pinkAccent, blurRadius: 12, spreadRadius: 2),
+                    ],
+                  ),
+                  child: const Center(
+                    child: Text('💖', style: TextStyle(fontSize: 26)),
+                  ),
+                ),
+                if (couples.isNotEmpty)
+                  Positioned(top: 10, child: _buildFerrisCouplePodClient(couples[0])),
+                if (couples.length > 1)
+                  Positioned(left: 10, top: 75, child: _buildFerrisCouplePodClient(couples[1])),
+                if (couples.length > 2)
+                  Positioned(right: 10, top: 75, child: _buildFerrisCouplePodClient(couples[2])),
+                if (couples.length > 3)
+                  Positioned(bottom: 10, left: 32, child: _buildFerrisCouplePodClient(couples[3])),
+                if (couples.length > 4)
+                  Positioned(bottom: 10, right: 32, child: _buildFerrisCouplePodClient(couples[4])),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFerrisCouplePodClient(Map<String, dynamic> c) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFF69B4), width: 1.5),
+        boxShadow: [
+          BoxShadow(color: Colors.pink.withValues(alpha: 0.2), blurRadius: 6),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 11,
+                backgroundImage: CachedNetworkImageProvider(c['avatar1'] ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'),
+              ),
+              const SizedBox(width: 3),
+              const Text('💕', style: TextStyle(fontSize: 9)),
+              const SizedBox(width: 3),
+              CircleAvatar(
+                radius: 11,
+                backgroundImage: CachedNetworkImageProvider(c['avatar2'] ?? 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(color: const Color(0xFFFF1493), borderRadius: BorderRadius.circular(8)),
+            child: Text(
+              c['points'] ?? '5.2M',
+              style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🎡 2. CP Sub-Nav Tabs
+  Widget _buildCpNavTabsBlock(Map<String, dynamic> block, int blockIdx) {
+    final tabs = List<String>.from(block['tabs'] ?? ['CP Wall', 'Ranking', 'Rewards']);
+    final int selectedIdx = _selectedBlockTabIndices[blockIdx] ?? 0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFD1DC),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        children: tabs.asMap().entries.map((entry) {
+          final idx = entry.key;
+          final t = entry.value;
+          final bool isAct = idx == selectedIdx;
+
+          return Expanded(
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedBlockTabIndices[blockIdx] = idx;
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: isAct ? const Color(0xFFFF1493) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: isAct ? [BoxShadow(color: Colors.pink.withValues(alpha: 0.3), blurRadius: 4)] : null,
+                ),
+                child: Center(
+                  child: Text(
+                    t,
+                    style: TextStyle(
+                      color: isAct ? Colors.white : const Color(0xFFD81B60),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // 🎡 3. CP Gifts Grid Block
+  Widget _buildCpGiftsGridBlock(Map<String, dynamic> block) {
+    final gifts = List<Map<String, dynamic>>.from(block['gifts'] ?? []);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF0F5),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFFB6C1)),
+        boxShadow: [
+          BoxShadow(color: Colors.pink.withValues(alpha: 0.05), blurRadius: 8),
+        ],
+      ),
+      child: Column(
+        children: [
+          Text(
+            block['title'] ?? 'Give these gifts to increase CP points',
+            style: const TextStyle(color: Color(0xFFFF1493), fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              childAspectRatio: 0.95,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+            ),
+            itemCount: gifts.length,
+            itemBuilder: (context, index) {
+              final g = gifts[index];
+              final String imgUrl = g['imageUrl'] ?? '';
+              return Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [BoxShadow(color: Colors.pink.withValues(alpha: 0.08), blurRadius: 4)],
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (imgUrl.isNotEmpty)
+                      CachedNetworkImage(
+                        imageUrl: imgUrl,
+                        width: 38,
+                        height: 38,
+                        fit: BoxFit.contain,
+                        errorWidget: (c, e, s) => Text(g['icon'] ?? '🎁', style: const TextStyle(fontSize: 26)),
+                      )
+                    else
+                      Text(g['icon'] ?? '🎁', style: const TextStyle(fontSize: 26)),
+                    const SizedBox(height: 4),
+                    Text(
+                      g['name'] ?? 'Gift',
+                      style: const TextStyle(color: Colors.black87, fontSize: 11, fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      g['points'] ?? '37777pts',
+                      style: const TextStyle(color: Color(0xFFFF1493), fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🎡 4. CP Duo Ranking Block
+  Widget _buildCpDuoRankingBlock(Map<String, dynamic> block) {
+    final couples = List<Map<String, dynamic>>.from(block['couples'] ?? []);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFFB6C1)),
+        boxShadow: [BoxShadow(color: Colors.pink.withValues(alpha: 0.08), blurRadius: 8)],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('💞', style: TextStyle(fontSize: 16)),
+              const SizedBox(width: 6),
+              Text(
+                block['title'] ?? 'This Week Ranking',
+                style: const TextStyle(color: Color(0xFFFF1493), fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...couples.map((c) {
+            final int rank = c['rank'] ?? 1;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF0F5),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 11,
+                    backgroundColor: rank == 1 ? Colors.amber : (rank == 2 ? const Color(0xFFB388FF) : const Color(0xFFFF80AB)),
+                    child: Text('$rank', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(width: 8),
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundImage: CachedNetworkImageProvider(c['avatar1'] ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'),
+                  ),
+                  const SizedBox(width: 3),
+                  const Text('💕', style: TextStyle(fontSize: 10)),
+                  const SizedBox(width: 3),
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundImage: CachedNetworkImageProvider(c['avatar2'] ?? 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100'),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${c['name1']} & ${c['name2']}',
+                      style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text(
+                    '${c['points']}',
+                    style: const TextStyle(color: Color(0xFFFF1493), fontWeight: FontWeight.bold, fontSize: 11),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // 🎡 5. CP Tiered Prizes Block
+  Widget _buildCpTieredPrizesBlock(Map<String, dynamic> block) {
+    final tiers = List<Map<String, dynamic>>.from(block['tiers'] ?? []);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF0F5),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFFB6C1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            block['title'] ?? 'Winner Prizes',
+            style: const TextStyle(color: Color(0xFFFF1493), fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 10),
+          ...tiers.map((t) {
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [BoxShadow(color: Colors.pink.withValues(alpha: 0.08), blurRadius: 6)],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.military_tech, color: Colors.amber, size: 18),
+                      const SizedBox(width: 4),
+                      Text(
+                        t['rankTitle'] ?? 'Top.1',
+                        style: const TextStyle(color: Color(0xFFFF1493), fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildPrizeMiniIconClient('👑', t['badgeName'] ?? 'Badge', t['badgeDays'] ?? '7d'),
+                      _buildPrizeMiniIconClient('🖼️', t['frameName'] ?? 'Frame', t['frameDays'] ?? '7d'),
+                      _buildPrizeMiniIconClient('💎', '${t['diamondAmount']} Dia', 'Diamonds'),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrizeMiniIconClient(String emoji, String title, String sub) {
+    return Column(
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 22)),
+        const SizedBox(height: 3),
+        Text(title, style: const TextStyle(color: Colors.black87, fontSize: 10, fontWeight: FontWeight.bold)),
+        Text(sub, style: const TextStyle(color: Colors.grey, fontSize: 8)),
+      ],
+    );
+  }
+
+  // 👤 6. Featured VIP User ID Card
+  Widget _buildVipUserCardBlock(Map<String, dynamic> block) {
+    final String uid = block['userId'] ?? '';
+
+    return FutureBuilder<DocumentSnapshot>(
+      future: uid.isNotEmpty ? FirebaseFirestore.instance.collection('Users').doc(uid).get() : null,
+      builder: (context, snapshot) {
+        String name = block['userName'] ?? 'VIP User';
+        String avatar = block['userAvatar'] ?? '';
+
+        if (snapshot.hasData && snapshot.data != null && snapshot.data!.exists) {
+          final d = snapshot.data!.data() as Map<String, dynamic>;
+          name = d['fullname'] ?? d['name'] ?? d['username'] ?? name;
+          avatar = d['photoUrl'] ?? d['avatar'] ?? d['profilePic'] ?? avatar;
+        }
+
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [Color(0xFF2A1C3E), Color(0xFF141026)]),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.amber.withValues(alpha: 0.6)),
+            boxShadow: [
+              BoxShadow(color: Colors.amber.withValues(alpha: 0.2), blurRadius: 10),
+            ],
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: Colors.amber,
+                backgroundImage: avatar.isNotEmpty ? CachedNetworkImageProvider(avatar) : null,
+                child: avatar.isEmpty ? const Icon(Icons.person, color: Colors.white) : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(6)),
+                      child: Text(block['tag'] ?? '👑 TOP HOST', style: const TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                    Text('ID: $uid', style: const TextStyle(color: Colors.grey, fontSize: 10)),
+                  ],
+                ),
+              ),
+              Text(block['points'] ?? '★ 500K Pts', style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 12)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // 💎 7. Official Sellers List Block (with Profile, Follow Button, Clickable Seller ID)
+  Widget _buildSellerListBlock(Map<String, dynamic> block) {
+    final sellers = List<Map<String, dynamic>>.from(block['sellers'] ?? []);
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.6)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('💎', style: TextStyle(fontSize: 16)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  block['title'] ?? 'Official Verified Coin Sellers',
+                  style: const TextStyle(color: Color(0xFF00B074), fontWeight: FontWeight.bold, fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const Icon(Icons.verified, color: Colors.green, size: 16),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...sellers.map((s) {
+            final String sellerId = s['userId'] ?? '';
+            final String name = s['name'] ?? 'Official Seller';
+            final String avatar = s['avatar'] ?? '';
+            final String contact = s['contact'] ?? '';
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF6F8FA),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundImage: avatar.isNotEmpty ? CachedNetworkImageProvider(avatar) : null,
+                    child: avatar.isEmpty ? const Icon(Icons.storefront, color: Colors.green) : null,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(name, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 12)),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.check_circle, color: Colors.green, size: 12),
+                          ],
+                        ),
+                        InkWell(
+                          onTap: () {
+                            if (sellerId.isNotEmpty) {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) => ProfilePageForRoom(
+                                    userID: sellerId,
+                                    userName: name,
+                                    userImage: avatar,
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          child: Text(
+                            'ID: $sellerId (Tap to View) ↗',
+                            style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold, decoration: TextDecoration.underline),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (contact.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.chat, color: Colors.green, size: 20),
+                      tooltip: 'WhatsApp / Chat',
+                      onPressed: () {
+                        final cleanPhone = contact.replaceAll(RegExp(r'[^0-9+]'), '');
+                        launchUrl(Uri.parse('https://wa.me/$cleanPhone'), mode: LaunchMode.externalApplication);
+                      },
+                    ),
+                  if (sellerId.isNotEmpty && sellerId != currentUserId)
+                    FollowButton(
+                      currentUserId: currentUserId,
+                      targetUserId: sellerId,
+                      targetUserName: name,
+                      followController: _followController,
+                      textColor: const Color(0xFFFF1493),
+                      borderColor: const Color(0xFFFF1493).withValues(alpha: 0.4),
+                    ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // 🖼️ 8. Hero Banner Block
+  Widget _buildHeroBannerBlock(Map<String, dynamic> block) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          height: (block['height'] as num?)?.toDouble() ?? 180.0,
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: CachedNetworkImageProvider(block['imageUrl'] ?? _event!.banner),
+              fit: BoxFit.cover,
+            ),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, Colors.black.withValues(alpha: 0.85)],
+              ),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: Colors.pinkAccent, borderRadius: BorderRadius.circular(6)),
+                  child: Text(block['badge'] ?? '⚡ LIVE', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(height: 6),
+                Text(block['title'] ?? _event!.eventName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                Text(block['subtitle'] ?? _event!.description, style: const TextStyle(color: Colors.white70, fontSize: 11), maxLines: 2),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 📢 9. Marquee Announcement Block
+  Widget _buildMarqueeBlock(Map<String, dynamic> block) {
+    Color bg = const Color(0xFF241442);
+    Color txt = Colors.amber;
+    try {
+      if (block['bgColor'] != null) bg = Color(int.parse(block['bgColor'].toString().replaceAll('#', '0xFF')));
+      if (block['textColor'] != null) txt = Color(int.parse(block['textColor'].toString().replaceAll('#', '0xFF')));
+    } catch (_) {}
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(24)),
+      child: Row(
+        children: [
+          const Text('📢', style: TextStyle(fontSize: 16)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              block['text'] ?? 'Welcome to the Event!',
+              style: TextStyle(color: txt, fontSize: 11, fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🏆 10. Winners Podium Block
+  Widget _buildPodiumBlock(Map<String, dynamic> block) {
+    return _buildLiveLeaderboardWidget(isSender: false, activeColor: Colors.amber, limit: 3, showPodium: true);
+  }
+
+  // 📱 Master Dynamic Layout Engine for Client App
+  Widget _buildDynamicBlockLayout(BuildContext context) {
+    Color bgColor = const Color(0xFFFFF0F5);
+    Color accentColor = const Color(0xFFFF1493);
+    String bgImg = '';
+
+    if (_event!.themeConfig.isNotEmpty) {
+      try {
+        if (_event!.themeConfig['backgroundColor'] != null) {
+          bgColor = Color(int.parse(_event!.themeConfig['backgroundColor'].toString().replaceAll('#', '0xFF')));
+        }
+        if (_event!.themeConfig['accentColor'] != null) {
+          accentColor = Color(int.parse(_event!.themeConfig['accentColor'].toString().replaceAll('#', '0xFF')));
+        }
+        bgImg = _event!.themeConfig['backgroundImageUrl'] ?? '';
+      } catch (_) {}
+    }
+
+    final bool hasExplicitMilestonesBlock = _event!.layoutBlocks.any((b) => b['type'] == 'target_milestones' || b['type'] == 'diamond_rewards');
+    final bool hasExplicitRankPrizesBlock = _event!.layoutBlocks.any((b) => b['type'] == 'rank_prizes' || b['type'] == 'cp_tiered_prizes');
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      appBar: AppBar(
+        backgroundColor: bgColor,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back_ios, color: accentColor, size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          _event!.eventName,
+          style: TextStyle(color: accentColor, fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(_isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? Colors.redAccent : accentColor),
+            onPressed: _toggleLike,
+          ),
+          IconButton(
+            icon: Icon(Icons.share, color: accentColor),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _event!.fullEventUrl));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Event link copied: ${_event!.fullEventUrl}'), backgroundColor: accentColor),
+              );
+            },
+          ),
+          IconButton(
+            icon: Icon(Icons.help_outline, color: accentColor),
+            onPressed: _showRulesDialog,
+          ),
+        ],
+      ),
+      body: Container(
+        decoration: bgImg.isNotEmpty
+            ? BoxDecoration(
+                image: DecorationImage(image: CachedNetworkImageProvider(bgImg), fit: BoxFit.cover),
+              )
+            : null,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.only(bottom: 30),
+          child: Column(
+            children: [
+              ..._event!.layoutBlocks.asMap().entries.map((entry) {
+                final idx = entry.key;
+                final b = entry.value;
+                if (b['isPrivate'] == true) return const SizedBox.shrink();
+                return _buildDynamicBlock(b, idx);
+              }),
+              if (!hasExplicitMilestonesBlock && _event!.targetMilestones.isNotEmpty)
+                _buildTargetMilestonesBlock({}),
+              if (!hasExplicitRankPrizesBlock && _event!.rewardTiers.isNotEmpty)
+                _buildRankPrizesBlock({}),
+              _buildStickyCurrentUserRankCard(),
+              _buildFooterSection(),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: (_event!.hasRegistrationForm && !_registeredUserIds.contains(FirebaseAuth.instance.currentUser?.uid ?? ''))
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: ElevatedButton(
+                  onPressed: _registerUser,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: accentColor,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  ),
+                  child: const Text('Register for Event', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                ),
+              ),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildStickyCurrentUserRankCard() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const SizedBox.shrink();
+
+    final eventPrefix = _event!.id.replaceAll('-', '_');
+    final orderByField = 'event_${eventPrefix}_points';
+
+    return FutureBuilder<int>(
+      future: _calculateUserRank(uid, orderByField),
+      builder: (context, snapshot) {
+        final int rank = snapshot.data ?? 0;
+        final String rankText = rank > 0 ? '#$rank' : 'Unranked';
+
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF2E174D), Color(0xFF1B0F2E)],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.amber.withValues(alpha: 0.6), width: 1.5),
+            boxShadow: [
+              BoxShadow(color: Colors.amber.withValues(alpha: 0.15), blurRadius: 10),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  rankText,
+                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+              ),
+              const SizedBox(width: 10),
+              CircleAvatar(
+                radius: 18,
+                backgroundImage: FirebaseAuth.instance.currentUser?.photoURL != null
+                    ? CachedNetworkImageProvider(FirebaseAuth.instance.currentUser!.photoURL!)
+                    : null,
+                child: FirebaseAuth.instance.currentUser?.photoURL == null
+                    ? const Icon(Icons.person, color: Colors.white, size: 18)
+                    : null,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      FirebaseAuth.instance.currentUser?.displayName ?? 'My Profile',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    Row(
+                      children: [
+                        const Text('💎', style: TextStyle(fontSize: 10)),
+                        const SizedBox(width: 3),
+                        Text(
+                          '$_userCurrentPoints Points',
+                          style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const Text(
+                'My Event Rank',
+                style: TextStyle(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildDynamicLeaderboardBlock(Map<String, dynamic> block, int blockIdx) {
@@ -1402,69 +3127,6 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     );
   }
 
-  Widget _buildDynamicBlockLayout(BuildContext context) {
-    Color pageBgColor = const Color(0xFF0F0B21);
-    if (_event!.themeConfig.containsKey('backgroundColor') && _event!.themeConfig['backgroundColor'].toString().isNotEmpty) {
-      try {
-        final hex = _event!.themeConfig['backgroundColor'].toString();
-        pageBgColor = Color(int.parse(hex.replaceAll('#', '0xFF')));
-      } catch (_) {}
-    }
-
-    String? bgImgUrl = _event!.themeConfig['backgroundImageUrl'];
-
-    return Scaffold(
-      backgroundColor: pageBgColor,
-      appBar: AppBar(
-        title: Text(_event!.eventName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      extendBodyBehindAppBar: bgImgUrl != null && bgImgUrl.isNotEmpty,
-      body: Stack(
-        children: [
-          if (bgImgUrl != null && bgImgUrl.isNotEmpty)
-            Positioned.fill(
-              child: CachedNetworkImage(
-                imageUrl: bgImgUrl,
-                fit: BoxFit.cover,
-                errorWidget: (c, e, s) => const SizedBox.shrink(),
-              ),
-            ),
-          SafeArea(
-            child: ListView.builder(
-              itemCount: _event!.layoutBlocks.length + 1,
-              itemBuilder: (context, index) {
-                if (index == _event!.layoutBlocks.length) {
-                  return _buildFooterSection();
-                }
-                return _buildDynamicBlock(_event!.layoutBlocks[index], index);
-              },
-            ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: (_event!.hasRegistrationForm && !_registeredUserIds.contains(FirebaseAuth.instance.currentUser?.uid ?? ''))
-          ? SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: ElevatedButton(
-                  onPressed: _registerUser,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _event!.themeConfig.containsKey('accentColor')
-                        ? Color(int.parse(_event!.themeConfig['accentColor'].toString().replaceAll('#', '0xFF')))
-                        : Theme.of(context).primaryColor,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                  ),
-                  child: const Text('Register for Event', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                ),
-              ),
-            )
-          : null,
-    );
-  }
 
   Widget _buildPodium(List<Map<String, dynamic>> top3) {
     if (top3.isEmpty) return const SizedBox.shrink();
@@ -1879,6 +3541,36 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCountdownWidget(Color col1, Color col2) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [col1, col2]),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(color: col1.withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 3)),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.timer, color: Colors.white, size: 18),
+          const SizedBox(width: 8),
+          ValueListenableBuilder<Duration>(
+            valueListenable: _timeLeftNotifier,
+            builder: (context, timeLeft, _) {
+              return Text(
+                'Ends in: ${_formatDuration(timeLeft)}',
+                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -2496,27 +4188,7 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
     );
   }
 
-  Widget _buildCountdownWidget(Color col1, Color col2) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [col1, col2]),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.timer, color: Colors.white),
-          const SizedBox(width: 8),
-          Text(
-            'Ends in: ${_formatDuration(_timeLeft)}',
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildQuickActionButton(String text, IconData icon, VoidCallback onTap, Color activeColor) {
     return InkWell(
@@ -2695,9 +4367,14 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> with SingleTick
               children: [
                 const Icon(Icons.timer, color: Colors.white),
                 const SizedBox(width: 8),
-                Text(
-                  'Ends in: ${_formatDuration(_timeLeft)}',
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                ValueListenableBuilder<Duration>(
+                  valueListenable: _timeLeftNotifier,
+                  builder: (context, timeLeft, _) {
+                    return Text(
+                      'Ends in: ${_formatDuration(timeLeft)}',
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    );
+                  },
                 ),
               ],
             ),

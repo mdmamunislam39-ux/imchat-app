@@ -25,6 +25,9 @@ import 'components/pending_friend_request_banner.dart';
 import 'components/group_date_separator.dart';
 import 'components/scroll_down_button.dart';
 import 'controllers/message_controller.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' as cloud_firestore;
+import 'package:chat_messenger/controllers/auth_controller.dart';
+import 'components/official_team_broadcast_input_bar.dart';
 
 class MessageScreen extends StatelessWidget {
   const MessageScreen({
@@ -118,7 +121,7 @@ class MessageScreen extends StatelessWidget {
                     group: controller.selectedGroup,
                   )
                 else
-                  _buildReadOnlyNotice(context),
+                  _buildOfficialBottomBar(context, controller),
               ],
             ),
           );
@@ -126,6 +129,44 @@ class MessageScreen extends StatelessWidget {
       ),
       // Show scroll list button
       floatingActionButton: _buildScrollButton(controller),
+    );
+  }
+
+  Widget _buildOfficialBottomBar(BuildContext context, MessageController controller) {
+    if (user?.userId != 'official_team') {
+      return _buildReadOnlyNotice(context);
+    }
+
+    final String currentUserId = AuthController.instance.currentUser.userId;
+    if (currentUserId.isEmpty) {
+      return _buildReadOnlyNotice(context);
+    }
+
+    return StreamBuilder<cloud_firestore.DocumentSnapshot>(
+      stream: cloud_firestore.FirebaseFirestore.instance
+          .collection('Users')
+          .doc(currentUserId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data?.data() == null) {
+          return _buildReadOnlyNotice(context);
+        }
+
+        final data = snapshot.data!.data() as Map<String, dynamic>;
+        final bool hasPerm = data['hasAppNotificationPermission'] == true;
+        final permData = data['appNotificationPermission'] as Map<String, dynamic>? ?? {};
+        final bool isActive = permData['isActive'] == true;
+        final bool canPost = permData['canPostToImChatTeam'] == true;
+
+        if (hasPerm && isActive && canPost) {
+          return OfficialTeamBroadcastInputBar(
+            controller: controller,
+            permissionData: permData,
+          );
+        }
+
+        return _buildReadOnlyNotice(context);
+      },
     );
   }
 
@@ -207,13 +248,10 @@ class MessageScreen extends StatelessWidget {
                 // Check first element in reverse order
                 if (index == messages.length - 1) {
                   dateSeparator = GroupDateSeparator(sentAt.formatDateTime);
-                } else
-                // Validate the index in range
-                if (index + 1 < messages.length) {
-                  // Get previous date in reverse order
-                  DateTime prevDate = messages[index + 1].sentAt!;
-                  // Check different dates
-                  if (!(sentAt.isSameDate(prevDate))) {
+                } else if (index + 1 < messages.length) {
+                  // Get previous date in reverse order safely
+                  final DateTime? prevDate = messages[index + 1].sentAt;
+                  if (prevDate != null && !sentAt.isSameDate(prevDate)) {
                     dateSeparator = GroupDateSeparator(
                       sentAt.formatDateTime,
                     );

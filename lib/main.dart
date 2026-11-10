@@ -45,7 +45,11 @@ void main() async {
   } catch (e) {
     debugPrint('⚠️ GetStorage.init() error: $e');
   }
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  // Keep status bar and system navigation bar (Back, Home, Recent apps) visible
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],
+  );
 
   /// <-- Initialize Firebase Core App -->
   try {
@@ -63,7 +67,7 @@ void main() async {
     Get.put(VpsApiService(), permanent: true);
     Get.put(VpsSocketService(), permanent: true);
     Get.put(BackendEngineManager(), permanent: true);
-    Get.put(AppThemeService());
+    Get.put(AppThemeService(), permanent: true);
     Get.put(PremiumRoomService(), permanent: true);
 
     // Initialize non-blocking background services without freezing first frame render

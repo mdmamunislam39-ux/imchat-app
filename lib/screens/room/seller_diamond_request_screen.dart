@@ -8,6 +8,7 @@ import 'package:chat_messenger/models/user.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:chat_messenger/api/official_team_api.dart';
 
 class SellerDiamondRequestScreen extends StatefulWidget {
   final User currentUser;
@@ -1530,12 +1531,37 @@ class _SellerDiamondRequestScreenState extends State<SellerDiamondRequestScreen>
                                     'updatedAt': FieldValue.serverTimestamp(),
                                   });
 
+                                  // Send notification to User to review and accept
+                                  final targetUserId = data['userId'] as String? ?? '';
+                                  if (targetUserId.isNotEmpty) {
+                                    try {
+                                      final userDoc = await _firestore
+                                          .collection('Users')
+                                          .doc(targetUserId)
+                                          .get();
+                                      if (userDoc.exists) {
+                                        final u = User.fromMap(userDoc.data()!);
+                                        final usd = (data['usdAmount'] as num?)?.toDouble() ?? 0.0;
+                                        final sellerName = (data['sellerName'] as String?) ??
+                                            widget.currentUser.fullname;
+                                        OfficialTeamApi.sendOfficialMessage(
+                                          receiverId: u.userId,
+                                          receiverDeviceToken: u.deviceToken,
+                                          messageText:
+                                              'Payment Sent by Seller! Seller $sellerName has completed your withdrawal of \$$usd. Please check your account and tap "Accept" in your Withdrawal History to confirm.',
+                                        );
+                                      }
+                                    } catch (err) {
+                                      debugPrint('Error notifying user about payment: $err');
+                                    }
+                                  }
+
                                   if (mounted) {
                                     Navigator.pop(sheetCtx);
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text(
-                                            'Payment proof submitted for admin approval!'),
+                                            'Payment proof submitted! User has been notified to confirm receipt.'),
                                         backgroundColor: Color(0xFF00C853),
                                       ),
                                     );
@@ -1615,13 +1641,17 @@ class _SellerDiamondRequestScreenState extends State<SellerDiamondRequestScreen>
     final diamondReward = data['diamondReward'] ?? (beanAmount * 0.90).round();
     final createdAt = data['createdAt'] as Timestamp?;
 
+    final userConfirmed = data['userConfirmed'] == true;
+
     Color statusColor;
     String statusText;
     IconData statusIcon;
 
     if (status == 'approved') {
       statusColor = const Color(0xFF00C853);
-      statusText = 'Approved (+90% Diamonds)';
+      statusText = userConfirmed
+          ? 'Approved (Confirmed by User)'
+          : 'Approved (+90% Diamonds)';
       statusIcon = Icons.check_circle_rounded;
     } else if (status == 'rejected') {
       statusColor = Colors.red;
@@ -1908,7 +1938,9 @@ class _SellerDiamondRequestScreenState extends State<SellerDiamondRequestScreen>
                         const DynamicDiamondIcon(width: 16, height: 16),
                         const SizedBox(width: 6),
                         Text(
-                          'Diamond Reward Credited: +$diamondReward Diamonds (90%)',
+                          userConfirmed
+                              ? 'Confirmed by User! +$diamondReward Diamonds Credited (90%)'
+                              : 'Diamond Reward Credited: +$diamondReward Diamonds (90%)',
                           style: const TextStyle(
                             color: Color(0xFF1B5E20),
                             fontWeight: FontWeight.bold,

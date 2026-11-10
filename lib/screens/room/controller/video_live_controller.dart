@@ -106,11 +106,11 @@ class VideoLiveController extends GetxController {
         debugPrint('🚀 [LiveKit Video Live] Joined successfully');
       } else {
         debugPrint('⚠️ [LiveKit Video Live] Failed to connect to LiveKit');
-        AppStyle().failedSnackBar(message: 'Failed to connect to LiveKit Live Streaming server');
+        AppStyle().failedSnackBar(message: 'Connection failed. Please check your internet.');
       }
     } catch (e) {
       debugPrint('❌ [LiveKit Video Live] Error: $e');
-      AppStyle().failedSnackBar(message: 'LiveKit Video Live Error: $e');
+      AppStyle().failedSnackBar(message: 'Live stream connection error. Please try again.');
     }
   }
 
@@ -237,6 +237,16 @@ class VideoLiveController extends GetxController {
       livekitService.setMicrophoneEnabled(!isMicOff.value);
     } else {
       engine.muteLocalAudioStream(isMicOff.value);
+    }
+  }
+
+  void switchCamera() {
+    if (!isLiveKit) {
+      try {
+        engine.switchCamera();
+      } catch (e) {
+        debugPrint('Error switching camera: $e');
+      }
     }
   }
 }

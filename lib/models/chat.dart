@@ -47,15 +47,26 @@ class Chat {
     User? receiver,
   }) {
     final String messageId = data['msgId'] ?? '';
-    final bool isOfficialChannel = data['type'] == 'official_channel';
+    final bool isOfficialChannel = data['type'] == 'official_channel' ||
+        doc?.id == 'official_team' ||
+        data['senderId'] == 'official_team';
     
     final String textMessage = isOfficialChannel 
-        ? (data['lastMessage'] ?? data['message'] ?? '') 
+        ? (data['lastMsg'] ?? data['lastMessage'] ?? data['message'] ?? '') 
         : (data['lastMsg'] ?? '');
         
-    final String decryptedMsg = isOfficialChannel 
-        ? textMessage 
-        : EncryptHelper.decrypt(textMessage, messageId);
+    String decryptedMsg = textMessage;
+    if (!isOfficialChannel) {
+      decryptedMsg = EncryptHelper.decrypt(textMessage, messageId);
+    } else {
+      try {
+        if (textMessage.contains(':') && textMessage.split(':')[0].length == 24) {
+          decryptedMsg = EncryptHelper.decrypt(textMessage, messageId);
+        }
+      } catch (_) {
+        decryptedMsg = textMessage;
+      }
+    }
 
     return Chat(
       doc: doc,

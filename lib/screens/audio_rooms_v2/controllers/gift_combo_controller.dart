@@ -7,6 +7,7 @@ import '../../../controllers/auth_controller.dart';
 import '../../../screens/room/wallet_screen.dart';
 import '../../../services/wallet_service.dart';
 import '../../../services/emoji_chat_service.dart';
+import '../../../services/recent_gifts_service.dart';
 
 class ComboBannerData {
   final String senderId;
@@ -87,6 +88,8 @@ class GiftComboController extends GetxController {
     isComboButtonVisible.value = true;
     comboProgress.value = 1.0;
 
+    RecentGiftsService.recordRecentGift(gift.id, userId: senderId);
+
     _updateBannerData();
     _startCountdown();
   }
@@ -142,6 +145,8 @@ class GiftComboController extends GetxController {
     final senderId = currentSenderId.value;
     final senderName = currentSenderName.value;
     final senderImageUrl = currentSenderImageUrl.value;
+
+    RecentGiftsService.recordRecentGift(gift.id, userId: senderId);
 
     // Reset timer
     _startCountdown();

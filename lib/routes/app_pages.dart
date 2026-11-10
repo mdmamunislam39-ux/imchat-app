@@ -40,8 +40,10 @@ import 'package:chat_messenger/screens/session/session_screen.dart';
 import 'package:chat_messenger/screens/auth/signin/signin_screen.dart';
 import 'package:chat_messenger/screens/auth/signup/signup_screen.dart';
 import 'package:chat_messenger/screens/splash/splash_screen.dart';
+import 'package:chat_messenger/screens/splash/binding/splash_binding.dart';
 
 import 'app_routes.dart';
+import 'package:chat_messenger/screens/settings/notification_settings_screen.dart';
 import 'package:chat_messenger/screens/settings/settings_screen.dart' as chat_settings;
 
 abstract class AppPages {
@@ -51,6 +53,7 @@ abstract class AppPages {
   static final pages = [
     GetPage(
       name: AppRoutes.splash,
+      binding: SplashBinding(),
       page: () => const SplashScreen(),
     ),
     GetPage(
@@ -250,6 +253,10 @@ abstract class AppPages {
     GetPage(
       name: AppRoutes.settings,
       page: () => const chat_settings.SettingsScreen(),
+    ),
+    GetPage(
+      name: AppRoutes.notificationSettings,
+      page: () => const NotificationSettingsScreen(),
     ),
 
    

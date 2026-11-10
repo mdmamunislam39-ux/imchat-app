@@ -67,6 +67,7 @@ class RoomControls extends StatefulWidget {
   final String selectedChatTab;
   final String? announcement;
   final VoidCallback? onEditAnnouncement;
+  final VoidCallback? onOpenVideoRoomSettings;
 
   const RoomControls({
     super.key,
@@ -108,6 +109,7 @@ class RoomControls extends StatefulWidget {
     this.selectedChatTab = 'all',
     this.announcement,
     this.onEditAnnouncement,
+    this.onOpenVideoRoomSettings,
   });
 
   @override
@@ -413,10 +415,10 @@ class RoomControlsState extends State<RoomControls> {
       final replyUser = _replyingToMessage?.username;
       final replyText = _replyingToMessage?.message;
 
-      // Clear immediately for better UX
+      // Clear text, focus and hide keyboard after sending a message
       _chatController.clear();
-      // Keep keyboard open after sending a message
-      FocusScope.of(context).requestFocus(_textFieldFocusNode);
+      _textFieldFocusNode.unfocus();
+      FocusScope.of(context).unfocus();
       setState(() {
         _replyingToMessage = null;
       });
@@ -550,6 +552,12 @@ class RoomControlsState extends State<RoomControls> {
                           child: ListView.builder(
                             controller:
                                 _scrollController, // Add scroll controller
+                            padding: const EdgeInsets.only(
+                              left: 10,
+                              right: 6,
+                              top: 4,
+                              bottom: 4,
+                            ),
                             shrinkWrap: true, // Allow flexible height
                             reverse: false,
                             itemCount: totalChatItems,
@@ -662,18 +670,15 @@ class RoomControlsState extends State<RoomControls> {
                                   filter:
                                       ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                                   child: Container(
-                                    width: 38,
-                                    height: 38,
+                                    width: 40,
+                                    height: 40,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
                                       color:
-                                          Colors.black.withValues(alpha: 0.3),
+                                          Colors.black.withValues(alpha: 0.45),
                                       border: Border.all(
-                                        color: widget.isMuted
-                                            ? Colors.white
-                                                .withValues(alpha: 0.15)
-                                            : const Color(0xFFD4AF37)
-                                                .withValues(alpha: 0.6),
+                                        color: Colors.white
+                                            .withValues(alpha: 0.15),
                                         width: 1.0,
                                       ),
                                     ),
@@ -694,9 +699,9 @@ class RoomControlsState extends State<RoomControls> {
                                               ? Colors.orangeAccent
                                               : Colors.white70)
                                           : (widget.isMuted
-                                              ? Colors.white70
-                                              : const Color(0xFFD4AF37)),
-                                      size: 18,
+                                              ? Colors.white54
+                                              : Colors.white),
+                                      size: 20,
                                     ),
                                   ),
                                 ),
@@ -741,10 +746,10 @@ class RoomControlsState extends State<RoomControls> {
                             child: Container(
                               height: 40,
                               decoration: BoxDecoration(
-                                color: const Color(0xE61C1430),
+                                color: Colors.black.withValues(alpha: 0.45),
                                 borderRadius: BorderRadius.circular(24),
                                 border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.22),
+                                  color: Colors.white.withValues(alpha: 0.15),
                                   width: 1.0,
                                 ),
                               ),
@@ -763,19 +768,21 @@ class RoomControlsState extends State<RoomControls> {
                                         fontFamily: 'Inter',
                                       ),
                                       decoration: InputDecoration(
-                                        hintText: 'Say something...',
+                                        hintText: 'Say Hi...',
                                         hintStyle: TextStyle(
                                           color: Colors.white
-                                              .withValues(alpha: 0.55),
-                                          fontSize: 13,
+                                              .withValues(alpha: 0.5),
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
                                           fontFamily: 'Inter',
                                         ),
                                         filled: false,
                                         border: InputBorder.none,
                                         contentPadding:
-                                            const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 11,
+                                            const EdgeInsets.only(
+                                          left: 14,
+                                          right: 6,
+                                          bottom: 3,
                                         ),
                                       ),
                                       onSubmitted: (value) => _sendMessage(),
@@ -835,13 +842,13 @@ class RoomControlsState extends State<RoomControls> {
                                             onTap: _toggleEmojiPicker,
                                             child: Container(
                                               margin: const EdgeInsets.only(
-                                                  right: 6),
-                                              width: 32,
-                                              height: 32,
+                                                  right: 8),
+                                              width: 30,
+                                              height: 30,
                                               child: const Icon(
-                                                Icons.emoji_emotions_outlined,
-                                                color: Colors.white70,
-                                                size: 22,
+                                                Icons.sentiment_satisfied_alt_outlined,
+                                                color: Colors.white,
+                                                size: 24,
                                               ),
                                             ),
                                           ),
@@ -898,6 +905,11 @@ class RoomControlsState extends State<RoomControls> {
                         // 🔲 Custom 4-Grid Room Tools Button (Matching User Image: 3 squares + 1 diamond)
                         GestureDetector(
                           onTap: () {
+                            if (widget.isLive &&
+                                widget.onOpenVideoRoomSettings != null) {
+                              widget.onOpenVideoRoomSettings!();
+                              return;
+                            }
                             if (widget.roomId != null &&
                                 widget.currentUserId != null &&
                                 widget.currentUserName != null) {

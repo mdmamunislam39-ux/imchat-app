@@ -113,12 +113,12 @@ class GroupCallController extends GetxController {
         debugPrint('🚀 [LiveKit Group Call] Connected successfully');
       } else {
         debugPrint('⚠️ [LiveKit Group Call] Failed to join LiveKit room');
-        AppStyle().failedSnackBar(message: 'Failed to connect to LiveKit WebRTC server');
+        AppStyle().failedSnackBar(message: 'Connection failed. Please check your internet.');
         onEndCall();
       }
     } catch (e) {
       debugPrint('❌ [LiveKit Group Call] Error: $e');
-      AppStyle().failedSnackBar(message: 'LiveKit Group Call Error: $e');
+      AppStyle().failedSnackBar(message: 'Group call connection error. Please try again.');
       onEndCall();
     }
   }
@@ -320,7 +320,9 @@ class GroupCallController extends GetxController {
   // Toggle phone speaker
   void onToggleSpeaker() {
     final bool newValue = speaker.value = !speaker.value;
-    if (!isLiveKit) {
+    if (isLiveKit) {
+      livekitService.setSpeakerphoneEnabled(newValue);
+    } else {
       try {
         engine.setEnableSpeakerphone(newValue);
       } catch (e) {

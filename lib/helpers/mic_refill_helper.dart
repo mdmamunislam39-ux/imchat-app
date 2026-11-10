@@ -73,6 +73,57 @@ class MicRefillHelper {
     _inFlightUserId.clear();
   }
 
+  /// One-time cached lookup for user's mic refill to avoid opening continuous Firestore snapshot streams
+  static Future<String?> getUserMicRefill(String? userId) async {
+    if (userId == null || userId.isEmpty) return null;
+
+    // 1. Check synchronous memory cache
+    if (_userIdToRefillUrlCache.containsKey(userId)) {
+      return _userIdToRefillUrlCache[userId];
+    }
+
+    // 2. Check in-flight requests
+    if (_inFlightUserId.containsKey(userId)) {
+      return await _inFlightUserId[userId];
+    }
+
+    final future = _fetchUserMicRefill(userId);
+    _inFlightUserId[userId] = future;
+    try {
+      final url = await future;
+      if (url != null && url.isNotEmpty) {
+        _userIdToRefillUrlCache[userId] = url;
+      }
+      return url;
+    } finally {
+      _inFlightUserId.remove(userId);
+    }
+  }
+
+  static Future<String?> _fetchUserMicRefill(String userId) async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('Users').doc(userId).get();
+      if (!doc.exists) return null;
+      final userData = doc.data();
+      final customization = userData?['customization'] as Map<String, dynamic>?;
+      final selectedMicRefillId = (customization?['selectedMicRefillId'] ??
+          userData?['selectedMicRefillId'] ??
+          userData?['userCustomization']?['selectedMicRefillId']) as String?;
+
+      if (selectedMicRefillId == null || selectedMicRefillId.isEmpty) {
+        setCachedUserMicRefill(userId, null);
+        return null;
+      }
+
+      final url = await getMicRefillUrl(selectedMicRefillId);
+      setCachedUserMicRefill(userId, url, selectedMicRefillId);
+      return url;
+    } catch (e) {
+      debugPrint('Error fetching user mic refill URL: $e');
+      return null;
+    }
+  }
+
   /// Real-time stream of mic refill URL from Firestore for ANY user on a seat
   static Stream<String?> streamUserMicRefill(String userId) {
     if (userId.isEmpty) return Stream.value(null);

@@ -461,27 +461,28 @@ class _HomeScreenState extends State<HomeScreen>
 
     _listenToCallState();
 
-    // Check and process any pending deep links (e.g. room, post, or event)
+    // Check and process any pending deep links and request permissions after frame render
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DeepLinkService.checkPendingDeepLinks();
+      _requestAppPermissions();
     });
-
-    // Request Permissions
-    _requestAppPermissions();
 
     super.initState();
   }
 
   Future<void> _requestAppPermissions() async {
-    // Request only the essential permissions on startup
-    await [
-      Permission.notification,
-      Permission.microphone,
-      Permission.location,
-      Permission.photos,
-      Permission.videos,
-      Permission.camera,
-    ].request();
+    try {
+      // 1. Explicitly request notification permission first so push notifications work immediately
+      await FirebaseMessagingService.requestNotificationPermission();
+
+      // 2. Request essential permissions with permission_handler
+      await [
+        Permission.notification,
+        Permission.microphone,
+      ].request();
+    } catch (e) {
+      debugPrint('Error requesting app startup permissions: $e');
+    }
   }
 
   @override
@@ -1042,6 +1043,7 @@ class _HomeScreenState extends State<HomeScreen>
                     : null,
               ),
               child: SafeArea(
+                top: false,
                 child: Column(
                   children: [
                     // Phone binding recommendation banner for Google users

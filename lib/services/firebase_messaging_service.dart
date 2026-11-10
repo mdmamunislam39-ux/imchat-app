@@ -120,6 +120,10 @@ Future<void> _showCustomChatNotification(RemoteMessage message) async {
     }
   }
 
+  final String? msgId = message.data['msgId']?.toString();
+  final String senderId = message.data['senderId']?.toString() ?? '';
+  final bool isOfficial = senderId == 'official_team' || title.toLowerCase().contains('official');
+
   final androidDetails = isFollowerLive
       ? AndroidNotificationDetails(
           'live_room_alerts',
@@ -129,6 +133,7 @@ Future<void> _showCustomChatNotification(RemoteMessage message) async {
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
           category: AndroidNotificationCategory.status,
+          onlyAlertOnce: true,
           largeIcon: avatarPath != null ? FilePathAndroidBitmap(avatarPath) : null,
           styleInformation: BigTextStyleInformation(
             body,
@@ -144,6 +149,8 @@ Future<void> _showCustomChatNotification(RemoteMessage message) async {
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
           category: AndroidNotificationCategory.message,
+          onlyAlertOnce: true,
+          tag: isOfficial ? 'official_team' : (msgId != null && msgId.isNotEmpty ? msgId : null),
           largeIcon: avatarPath != null ? FilePathAndroidBitmap(avatarPath) : null,
           styleInformation: MessagingStyleInformation(
             Person(
@@ -165,8 +172,13 @@ Future<void> _showCustomChatNotification(RemoteMessage message) async {
     ),
   );
 
+  // Deterministic notification ID: official notifications update the single slot so only 1 notification is shown
+  final int notifId = (msgId != null && msgId.isNotEmpty)
+      ? msgId.hashCode
+      : (isOfficial ? 99901 : (message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch));
+
   await flnp.show(
-    id: message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
+    id: notifId,
     title: title,
     body: body,
     notificationDetails: details,
@@ -431,11 +443,16 @@ abstract class FirebaseMessagingService {
       debugPrint('Error checking active CallKit calls: $e');
     }
 
-    // Initialize Local Notifications for Android with click listener
+    // Initialize Local Notifications for Android and iOS with click listener
     final flnp = FlutterLocalNotificationsPlugin();
     await flnp.initialize(
       settings: const InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: true,
+          requestBadgePermission: true,
+          requestSoundPermission: true,
+        ),
       ),
       onDidReceiveNotificationResponse: (NotificationResponse response) {
         if (response.payload != null && response.payload!.isNotEmpty) {
@@ -453,6 +470,44 @@ abstract class FirebaseMessagingService {
         }
       },
     );
+
+    // Create high-importance Android notification channels
+    if (Platform.isAndroid) {
+      final androidPlugin = flnp.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin != null) {
+        await androidPlugin.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'chat_messages',
+            'Chat Messages',
+            description: 'Notifications for chat and group messages',
+            importance: Importance.max,
+            playSound: true,
+            enableVibration: true,
+          ),
+        );
+        await androidPlugin.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'live_room_alerts',
+            'Live Room Alerts',
+            description: 'Notifications when followed hosts start a live voice room',
+            importance: Importance.max,
+            playSound: true,
+            enableVibration: true,
+          ),
+        );
+        await androidPlugin.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'call_notifications',
+            'Incoming Calls',
+            description: 'Notifications for incoming voice and video calls',
+            importance: Importance.max,
+            playSound: true,
+            enableVibration: true,
+          ),
+        );
+      }
+    }
 
     // Check cold start from local notification
     try {
@@ -604,7 +659,8 @@ abstract class FirebaseMessagingService {
       }
     });
 
-    _requestPushNotificationsForIOS();
+    // Request push notifications permission on both Android and iOS
+    await requestNotificationPermission();
   }
 
   static void _showSafeSnackbar({
@@ -635,15 +691,49 @@ abstract class FirebaseMessagingService {
     }
   }
 
-  static void _requestPushNotificationsForIOS() async {
-    if (Platform.isIOS) {
+  /// Request notification permission on both Android (13+) and iOS
+  static Future<bool> requestNotificationPermission() async {
+    try {
+      // 1. Request via Firebase Messaging (works for iOS and Android 13+)
       final settings = await FirebaseMessaging.instance.requestPermission(
         alert: true,
         badge: true,
         sound: true,
+        announcement: false,
+        carPlay: false,
+        criticalAlert: false,
+        provisional: false,
       );
-      final AuthorizationStatus status = settings.authorizationStatus;
-      debugPrint('_requestPushNotificationsForIOS() -> status: $status');
+      debugPrint('[FirebaseMessagingService] FCM permission status: ${settings.authorizationStatus}');
+
+      // 2. Request via FlutterLocalNotificationsPlugin on Android 13+
+      if (Platform.isAndroid) {
+        final flnp = FlutterLocalNotificationsPlugin();
+        final granted = await flnp
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestNotificationsPermission();
+        debugPrint('[FirebaseMessagingService] Android local notification permission: $granted');
+      }
+
+      final isGranted = settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional;
+      return isGranted;
+    } catch (e) {
+      debugPrint('[FirebaseMessagingService] Error requesting notification permission: $e');
+      return false;
+    }
+  }
+
+  /// Check whether notification permission is currently granted
+  static Future<bool> isNotificationPermissionGranted() async {
+    try {
+      final settings = await FirebaseMessaging.instance.getNotificationSettings();
+      return settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional;
+    } catch (e) {
+      debugPrint('[FirebaseMessagingService] Error checking notification permission: $e');
+      return false;
     }
   }
 }

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:chat_messenger/models/user.dart' as model;
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/components/dynamic_diamond_icon.dart';
-import 'package:flutter_svga/flutter_svga.dart';
+import 'package:chat_messenger/components/universal_asset_widget.dart';
 import 'package:chat_messenger/api/official_team_api.dart';
 import 'package:chat_messenger/services/svip_service.dart';
 
@@ -690,30 +690,20 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
   
   Widget _buildMediaPreview(String url, {double width = 200, double height = 200}) {
     if (url.isEmpty) return _buildFallbackBadge();
-    
-    if (url.toLowerCase().contains('.svga')) {
-      return SizedBox(
-        width: width,
-        height: height,
-        child: SVGAEasyPlayer(resUrl: url),
-      );
-    } else if (url.toLowerCase().contains('.mp4') || url.toLowerCase().contains('.vap')) {
-      // For MP4 without full player integration, fallback to placeholder
-      return Container(
-        width: width,
-        height: height,
-        color: Colors.black26,
-        child: const Center(child: Icon(Icons.video_file, color: Colors.white, size: 40)),
-      );
-    } else {
-      return Image.network(
-        url,
+
+    return SizedBox(
+      width: width,
+      height: height,
+      child: UniversalAssetWidget(
+        key: ValueKey(url),
+        url: url,
         width: width,
         height: height,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => _buildFallbackBadge(),
-      );
-    }
+        isAlphaVideo: true,
+        errorWidget: _buildFallbackBadge(),
+      ),
+    );
   }
   
   Widget _buildFallbackBadge() {
@@ -1355,22 +1345,67 @@ class _SvipScreenState extends State<SvipScreen> with TickerProviderStateMixin {
             ? selectedLevel['nameplateMediaUrl'].toString() 
             : selectedLevel['nameplateUrl']?.toString() ?? '';
             
+        // Automatically delete all previous VIP level items from user_store_items if upgraded
+        final suffixes = ['badge', 'frame', 'entry', 'skin', 'nameplate'];
+        for (int old = 1; old < levelNum; old++) {
+          for (final s in suffixes) {
+            final oldDocRef = _firestore
+                .collection('user_store_items')
+                .doc('${widget.currentUser.userId}_vip_vip${old}_$s');
+            transaction.delete(oldDocRef);
+          }
+        }
+
+        // Clean previous VIP asset URLs from customization lists
+        for (var lvl in _vipLevels) {
+          final lId = lvl['id'] as String? ?? '';
+          final lNum = int.tryParse(lId.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+          if (lNum > 0 && lNum < levelNum) {
+            final oldUrls = [
+              lvl['badgeMediaUrl']?.toString() ?? '',
+              lvl['badgeUrl']?.toString() ?? '',
+              lvl['frameMediaUrl']?.toString() ?? '',
+              lvl['frameUrl']?.toString() ?? '',
+              lvl['entryEffectMediaUrl']?.toString() ?? '',
+              lvl['entryEffectUrl']?.toString() ?? '',
+              lvl['profileSkinMediaUrl']?.toString() ?? '',
+              lvl['profileSkinUrl']?.toString() ?? '',
+              lvl['nameplateMediaUrl']?.toString() ?? '',
+              lvl['nameplateUrl']?.toString() ?? '',
+            ];
+            for (final u in oldUrls) {
+              if (u.isNotEmpty) {
+                (custData['ownedBadges'] as List?)?.remove(u);
+                (custData['ownedFrames'] as List?)?.remove(u);
+                (custData['ownedEntryEffects'] as List?)?.remove(u);
+                (custData['ownedBackgroundThemes'] as List?)?.remove(u);
+                (custData['ownedNameplates'] as List?)?.remove(u);
+              }
+            }
+          }
+        }
+
         addAssetToInventory('ownedBadges', badgeUrl);
         addAssetToInventory('ownedFrames', frameUrl);
         addAssetToInventory('ownedEntryEffects', entryEffectUrl);
         addAssetToInventory('ownedBackgroundThemes', profileSkinUrl);
         addAssetToInventory('ownedNameplates', nameplateUrl);
 
-        // Requirement 5: VIP/SVIP Nameplate is automatically active
+        // Remove any previous lower VIP nameplates from selected list
+        final currentNameplateIds = List<String>.from(custData['selectedNameplateIds'] ?? []);
+        currentNameplateIds.removeWhere((id) => id.startsWith('vip_vip') && id != 'vip_${levelId}_nameplate');
+        for (int old = 1; old < levelNum; old++) {
+          currentNameplateIds.remove('vip_vip${old}_nameplate');
+        }
+
+        // Requirement: VIP Nameplate is automatically upgraded to the highest level and placed in front
         if (nameplateUrl.isNotEmpty) {
           final nameplateStoreId = 'vip_${levelId}_nameplate';
           custData['selectedNameplateId'] = nameplateStoreId;
           custData['selectedNameplateUrl'] = nameplateUrl;
           custData['selectedNameplate'] = nameplateUrl;
-          final currentNameplateIds = List<String>.from(custData['selectedNameplateIds'] ?? []);
-          if (!currentNameplateIds.contains(nameplateStoreId)) {
-            currentNameplateIds.add(nameplateStoreId);
-          }
+          currentNameplateIds.remove(nameplateStoreId);
+          currentNameplateIds.insert(0, nameplateStoreId);
           custData['selectedNameplateIds'] = currentNameplateIds;
         }
 

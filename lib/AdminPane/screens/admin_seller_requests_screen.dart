@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:chat_messenger/api/official_team_api.dart';
 
 /// Admin Panel screen to review, approve, reject seller diamond top-up requests
 /// and directly credit seller diamond balance with custom Admin Notes.
@@ -230,6 +231,16 @@ class _AdminSellerRequestsScreenState extends State<AdminSellerRequestsScreen>
         'adminId': adminId,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // Send official team notification to seller
+      try {
+        await OfficialTeamApi.sendSellerBalanceNotification(
+          sellerUserId: sellerId,
+          amount: amount,
+          creditedBy: 'Admin ($adminName)',
+          note: noteController.text.trim(),
+        );
+      } catch (_) {}
 
       if (mounted) {
         Navigator.pop(context); // close loader
@@ -545,6 +556,16 @@ class _AdminSellerRequestsScreenState extends State<AdminSellerRequestsScreen>
                                 'type': 'direct_topup',
                                 'createdAt': FieldValue.serverTimestamp(),
                               });
+
+                              // Send official team notification to seller
+                              try {
+                                await OfficialTeamApi.sendSellerBalanceNotification(
+                                  sellerUserId: sId,
+                                  amount: amt,
+                                  creditedBy: 'Admin ($adminName)',
+                                  note: noteController.text.trim(),
+                                );
+                              } catch (_) {}
 
                               if (mounted) {
                                 Navigator.pop(dialogCtx);

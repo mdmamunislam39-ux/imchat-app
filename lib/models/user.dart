@@ -43,7 +43,12 @@ class User {
   List<String> roles; // Supports multiple roles simultaneously
   bool isAgency = false;
   bool isSeller = false;
+  bool sellerAssigned = false;
+  bool sellerActive = false;
+  String sellerKycStatus = '';
   bool isHost = false;
+  bool isBD = false;
+  bool isDirectSeller = false;
   String? agencyId;
   String? agencyName;
   String? familyId;
@@ -129,7 +134,12 @@ class User {
     this.roles = const [],
     this.isAgency = false,
     this.isSeller = false,
+    this.sellerAssigned = false,
+    this.sellerActive = false,
+    this.sellerKycStatus = '',
     this.isHost = false,
+    this.isBD = false,
+    this.isDirectSeller = false,
     this.agencyId,
     this.agencyName,
     this.familyId,
@@ -219,13 +229,26 @@ class User {
                     ? List<String>.from(data['roles']).contains('agency') 
                     : (data['userType'] == 'agency' || data['userType'] == 'agency_owner')),
       isSeller: (data['isSeller'] == true) || 
+                (data['sellerAssigned'] == true) ||
+                (data['sellerKycStatus'] != null) ||
                 (data['roles'] != null 
                     ? List<String>.from(data['roles']).contains('seller') 
                     : data['userType'] == 'seller'),
+      sellerAssigned: data['sellerAssigned'] == true,
+      sellerActive: data['sellerActive'] == true,
+      sellerKycStatus: (data['sellerKycStatus'] ?? '').toString(),
       isHost: (data['isHost'] == true) || 
               (data['roles'] != null 
                   ? List<String>.from(data['roles']).contains('host') 
                   : (data['userType'] == 'host' || (data['agencyId'] != null && data['agencyId'].toString().isNotEmpty && data['userType'] != 'agency' && data['isAgency'] != true))),
+      isBD: (data['isBD'] == true) || 
+            (data['roles'] != null 
+                ? List<String>.from(data['roles']).contains('bd') 
+                : data['userType'] == 'bd'),
+      isDirectSeller: (data['isDirectSeller'] == true) || 
+            (data['roles'] != null 
+                ? List<String>.from(data['roles']).contains('direct_seller') 
+                : data['userType'] == 'direct_seller'),
       agencyId: data['agencyId'],
       agencyName: data['agencyName'],
       familyId: data['familyId'],
@@ -302,7 +325,12 @@ class User {
       'roles': roles.isNotEmpty ? roles : [userType],
       'isAgency': isAgency,
       'isSeller': isSeller,
+      'sellerAssigned': sellerAssigned,
+      'sellerActive': sellerActive,
+      'sellerKycStatus': sellerKycStatus,
       'isHost': isHost,
+      'isBD': isBD,
+      'isDirectSeller': isDirectSeller,
       'agencyId': agencyId,
       'agencyName': agencyName,
       'familyId': familyId,

@@ -30,6 +30,8 @@ import 'package:chat_messenger/screens/audio_rooms_v2/widgets/game_wall_bottom_s
 import 'package:chat_messenger/screens/room/feedback_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:chat_messenger/screens/room/role_dashboard_screen.dart';
+import 'package:chat_messenger/screens/room/bd_dashboard_screen.dart';
+import 'package:chat_messenger/screens/room/direct_seller_dashboard_screen.dart';
 import 'package:get/get.dart';
 import 'package:chat_messenger/controllers/auth_controller.dart';
 import 'package:chat_messenger/services/role_service.dart';
@@ -39,6 +41,7 @@ import 'package:chat_messenger/models/recharge_models.dart';
 import 'package:chat_messenger/screens/room/online_recharge_screen.dart';
 import 'package:chat_messenger/screens/room/recharge_and_gift_record_screen.dart';
 import 'package:chat_messenger/screens/room/withdraw_screen.dart';
+import 'package:chat_messenger/screens/room/user_withdrawal_history_screen.dart';
 import 'package:chat_messenger/services/app_theme_service.dart';
 
 // মূল ওয়ালেট স্ক্রিন
@@ -451,11 +454,34 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           GameWallBottomSheet.show(context, isInAudioRoom: false);
           break;
         case 'Admin Dashboard':
-        case 'BD Dashboard':
           await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => RoleDashboardScreen(
+                currentUser: _currentUser ?? widget.currentUser,
+              ),
+            ),
+          );
+          break;
+        case 'BD Dashboard':
+        case 'BD Panel':
+        case 'BD':
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => BdDashboardScreen(
+                currentUser: _currentUser ?? widget.currentUser,
+              ),
+            ),
+          );
+          break;
+        case 'Direct Seller':
+        case 'Direct Seller Dashboard':
+        case 'Direct Seller Panel':
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => DirectSellerDashboardScreen(
                 currentUser: _currentUser ?? widget.currentUser,
               ),
             ),
@@ -695,14 +721,14 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
             .limit(1)
             .get();
 
-        final isSellerDocActive = sellerSnap.docs.isNotEmpty &&
-            (sellerSnap.docs.first.data()['isActive'] ?? true) == true;
+        final hasSellerDoc = sellerSnap.docs.isNotEmpty;
+        final isAssigned = hasSellerDoc || (userDoc.data()?['sellerAssigned'] == true) || user.isSeller == true;
 
-        if (!isSellerDocActive && user.isSeller != true) {
+        if (!isAssigned) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('You are not authorized as an active diamond seller.'),
+                content: Text('You are not authorized as a diamond seller.'),
                 backgroundColor: Colors.red,
               ),
             );
@@ -811,9 +837,31 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           slivers: [
             SliverAppBar(
               pinned: true,
-              expandedHeight: 220.0,
+              expandedHeight: 245.0,
               backgroundColor: isDarkMode ? const Color(0xFF18181C) : Colors.white,
               elevation: 0,
+              leading: Navigator.canPop(context)
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: IconButton(
+                        icon: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: isDarkMode
+                                ? Colors.black.withValues(alpha: 0.5)
+                                : Colors.white.withValues(alpha: 0.8),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: isDarkMode ? Colors.white : Colors.black87,
+                            size: 18,
+                          ),
+                        ),
+                        onPressed: () => Navigator.maybePop(context),
+                      ),
+                    )
+                  : null,
               iconTheme: IconThemeData(
                 color: isDarkMode ? Colors.white : Colors.black,
               ),
@@ -836,7 +884,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                   _buildMainMenu2(isDarkMode),
                   const SizedBox(height: 20),
                   _buildMainMenu(isDarkMode),
-                  const SizedBox(height: 24),
+                  SizedBox(height: 28 + MediaQuery.paddingOf(context).bottom),
                 ],
               ),
             ),
@@ -888,10 +936,16 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
     final bool isMe = user.userId == AuthController.instance.currentUser.userId;
 
     return SafeArea(
+      bottom: false,
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.only(
+          top: kToolbarHeight + 4,
+          left: 16.0,
+          right: 16.0,
+          bottom: 8.0,
+        ),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.end,
           children: [
             GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -1016,7 +1070,7 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -1485,9 +1539,17 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
         return theme.getWalletIcon('game_wall');
       case 'Admin Dashboard':
         return theme.getWalletIcon('admin_dashboard');
+      case 'BD':
+      case 'BD Panel':
       case 'BD Dashboard':
-        return theme.getWalletIcon('bd_dashboard') ??
+        return theme.getWalletIcon('bd') ??
+            theme.getWalletIcon('bd_dashboard') ??
             theme.getWalletIcon('admin_dashboard');
+      case 'Direct Seller':
+      case 'Direct Seller Dashboard':
+      case 'Direct Seller Panel':
+        return theme.getWalletIcon('direct_seller') ??
+            theme.getWalletIcon('diamond_seller');
       case 'Diamondseller':
         return theme.getWalletIcon('diamond_seller');
       case 'Invite':
@@ -1515,15 +1577,18 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
       }
 
       final isSellerActive = roleService.isSellerActive.value;
+      final isSellerCandidate = roleService.isSellerCandidate.value;
       final user = _currentUser ?? widget.currentUser;
-      final isSeller = isSellerActive || (user.isSeller == true && isSellerActive);
+      final isSeller = isSellerActive || (user.isSeller == true) || user.sellerAssigned;
+      final showSellerOption = isSeller || isSellerCandidate;
 
       final menuItems = <Map<String, dynamic>>[
-        if (isSeller)
+        if (showSellerOption)
           {
             'icon': Icons.diamond,
             'title': 'Diamondseller',
             'color': Colors.amberAccent,
+            'isPending': !isSellerActive,
           },
         {'icon': Icons.person_add, 'title': 'Invite', 'color': Colors.yellow},
         {
@@ -1549,12 +1614,6 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           'icon': Icons.admin_panel_settings,
           'title': 'Admin Dashboard',
           'color': Colors.purple,
-        });
-      } else if (roleService.isBD) {
-        menuItems.insert(0, {
-          'icon': Icons.business_center,
-          'title': 'BD Dashboard',
-          'color': Colors.orange,
         });
       }
 
@@ -1585,24 +1644,54 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  customIconUrl != null && customIconUrl.isNotEmpty
-                      ? SizedBox(
-                          height: 32,
-                          width: 32,
-                          child: UniversalAssetWidget(
-                            url: customIconUrl,
-                            fit: BoxFit.contain,
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      customIconUrl != null && customIconUrl.isNotEmpty
+                          ? SizedBox(
+                              height: 32,
+                              width: 32,
+                              child: UniversalAssetWidget(
+                                url: customIconUrl,
+                                fit: BoxFit.contain,
+                              ),
+                            )
+                          : (item['title'] == 'Diamondseller'
+                              ? const DynamicDiamondIcon(width: 30, height: 30)
+                              : Icon(
+                                  item['icon'] as IconData,
+                                  color: item['color'] as Color,
+                                  size: 30,
+                                )),
+                      if (item['isPending'] == true)
+                        Positioned(
+                          top: -6,
+                          right: -16,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade800,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              'Pending'.tr,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
-                        )
-                      : Icon(
-                          item['icon'] as IconData,
-                          color: item['color'] as Color,
-                          size: 30,
                         ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     (item['title'] as String).tr,
                     textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 12,
                       color: isDarkMode ? Colors.white : Colors.black87,
@@ -1625,6 +1714,10 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           .isAgency; // Evaluated unconditionally to register GetX dependency
       final checkRoleHost = roleService
           .isHost; // Evaluated unconditionally to register GetX dependency
+      final checkRoleBd = roleService
+          .isBD; // Evaluated unconditionally to register GetX dependency
+      final checkRoleDirectSeller = roleService
+          .isDirectSeller; // Evaluated unconditionally to register GetX dependency
       final user = _currentUser ?? widget.currentUser;
       final isAgency = (user.isAgency == true) ||
           checkRoleAgency ||
@@ -1635,6 +1728,14 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           checkRoleHost ||
           user.roles.contains('host') ||
           user.userType == 'host';
+      final isBd = (user.isBD == true) ||
+          checkRoleBd ||
+          user.roles.contains('bd') ||
+          user.userType == 'bd';
+      final isDirectSeller = (user.isDirectSeller == true) ||
+          checkRoleDirectSeller ||
+          user.roles.contains('direct_seller') ||
+          user.userType == 'direct_seller';
 
       // Also register dependency on AppThemeService walletMenuIcons for real-time reactivity
       if (Get.isRegistered<AppThemeService>()) {
@@ -1651,6 +1752,10 @@ class _UserWalletScreenState extends State<UserWalletScreen> {
           {'icon': 'assets/images/agency.webp', 'title': 'Agency Manager'},
         if (isHost)
           {'icon': 'assets/images/agency.webp', 'title': 'Host Centre'},
+        if (isBd)
+          {'icon': 'assets/images/agency.webp', 'title': 'BD'},
+        if (isDirectSeller)
+          {'icon': 'assets/images/diamond_icon.webp', 'title': 'Direct Seller'},
         {'icon': 'assets/images/game_icon.webp', 'title': 'Game Wall'},
       ];
 
@@ -3446,17 +3551,39 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
               // Withdrawal history
               if (_withdrawals.isNotEmpty) ...[
                 const SizedBox(height: 40),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Withdrawal History',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Withdrawal History',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => UserWithdrawalHistoryScreen(
+                                currentUser: _userData,
+                              ),
+                            ),
+                          ).then((_) => _loadConfigAndWithdrawals());
+                        },
+                        icon: const Icon(Icons.receipt_long_rounded, size: 16),
+                        label: const Text(
+                          'Full History >',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -3478,6 +3605,16 @@ class _BeanManagementPageState extends State<BeanManagementPage> {
                         dateStr = '${dt.day}/${dt.month}/${dt.year}';
                       }
                       return ListTile(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => UserWithdrawalHistoryScreen(
+                                currentUser: _userData,
+                              ),
+                            ),
+                          ).then((_) => _loadConfigAndWithdrawals());
+                        },
                         tileColor: Colors.transparent,
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(

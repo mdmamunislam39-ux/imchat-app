@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/gift.dart';
 import '../services/gift_service.dart';
+import '../../components/universal_asset_widget.dart';
 
 /// Dialog for adding/editing gifts
 class GiftFormDialog extends StatefulWidget {
@@ -58,7 +59,7 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
       debugPrint('📁 GiftFormDialog: Picking $type file...');
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: type == 'png' ? ['png'] : ['svga', 'mp4', 'vap'],
+        allowedExtensions: type == 'png' ? ['png', 'jpg', 'jpeg', 'webp'] : ['svga', 'mp4', 'vap', 'var', 'webp', 'gif'],
       );
 
       if (result != null && result.files.isNotEmpty && result.files.single.path != null) {
@@ -296,13 +297,34 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
               ),
               const SizedBox(height: 16),
 
-              // Animation file (SVGA/MP4)
+              // Animation file (SVGA/MP4 Alpha/VAP/VAR)
               _buildFilePicker(
-                label: 'Animation file (SVGA/MP4)',
+                label: 'Dynamic Animation File (SVGA / MP4 Alpha / VAP / VAR)',
                 file: _svgaFile,
                 type: 'svga',
                 existingUrl: widget.gift?.svgaUrl,
               ),
+              if (_svgaFile != null || (widget.gift?.svgaUrl != null && widget.gift!.svgaUrl!.isNotEmpty)) ...[
+                const SizedBox(height: 12),
+                Container(
+                  height: 130,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.black38,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.3)),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Center(
+                    child: UniversalAssetWidget(
+                      file: _svgaFile,
+                      url: _svgaFile == null ? widget.gift?.svgaUrl : null,
+                      fit: BoxFit.contain,
+                      isAlphaVideo: true,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 24),
 
               // Fast mode toggle
@@ -442,9 +464,9 @@ class _GiftFormDialogState extends State<GiftFormDialog> {
               Expanded(
                 child: Text(
                   file != null
-                      ? file.path.split('/').last
+                      ? file.path.split('/').last.split('\\').last
                       : existingUrl != null
-                          ? 'Current file (${type == 'svga' ? 'SVGA/MP4/VAP' : 'PNG'})'
+                          ? 'Current file (${type == 'svga' ? 'SVGA/MP4/VAP/VAR' : 'PNG'})'
                           : 'No file chosen',
                   style: TextStyle(
                     color: file != null || existingUrl != null

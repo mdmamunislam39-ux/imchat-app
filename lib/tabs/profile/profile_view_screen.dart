@@ -40,6 +40,9 @@ class ProfileViewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isDarkMode = AppTheme.of(context).isDarkMode;
+    final bool isOfficial = user.userId == 'official_team' ||
+        user.userId.startsWith('official_channel_') ||
+        user.userType == 'channel';
 
     final controller = Get.put(ProfileViewController(user.userId));
     final ReportController reportController = Get.find();
@@ -47,7 +50,7 @@ class ProfileViewScreen extends StatelessWidget {
     return Scaffold(
       appBar: CustomAppBar(
         height: 50,
-        title: Text('profile'.tr),
+        title: Text(isOfficial ? 'Official Channel' : 'profile'.tr),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -81,7 +84,9 @@ class ProfileViewScreen extends StatelessWidget {
                       child: CachedCircleAvatar(
                         radius: 70,
                         iconSize: 60,
-                        imageUrl: user.photoUrl,
+                        imageUrl: user.photoUrl.isNotEmpty
+                            ? user.photoUrl
+                            : (isOfficial ? 'assets/images/app_logo.png' : ''),
                         userId: user.userId,
                         showFrame: false,
                       ),
@@ -100,9 +105,9 @@ class ProfileViewScreen extends StatelessWidget {
                               style: Theme.of(context)
                                   .textTheme
                                   .titleLarge
-                                  ?.copyWith(fontSize: 26),
+                                  ?.copyWith(fontSize: 26, fontWeight: FontWeight.bold),
                             ),
-                            if (user.isVerified == true || user.userId == 'official_team' || user.userId.startsWith('official_channel_') || user.userType == 'channel')
+                            if (user.isVerified == true || isOfficial)
                               const Padding(
                                 padding: EdgeInsets.only(left: 6.0),
                                 child: Icon(
@@ -115,89 +120,166 @@ class ProfileViewScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                    Center(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          UserIdBadgeWidget(
-                            searchId: user.searchId.isNotEmpty ? user.searchId : user.userId,
-                            textStyle: Theme.of(context)
-                                .textTheme
-                                .titleLarge!
-                                .copyWith(color: Colors.white),
-                            showCopyIcon: false,
-                          ),
-                          const SizedBox(width: 6),
-                          GestureDetector(
-                            onTap: () async {
-                              final idToCopy = user.searchId.isNotEmpty ? user.searchId : user.userId;
-                              await Clipboard.setData(ClipboardData(text: idToCopy));
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'ID $idToCopy copied to clipboard!',
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                  backgroundColor: primaryColor,
-                                  duration: const Duration(seconds: 1),
+                    if (isOfficial) ...[
+                      Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: isDarkMode ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: isDarkMode ? Colors.white.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.1),
                                 ),
-                              );
-                            },
-                            child: const Icon(
-                              Icons.copy_rounded,
-                              size: 16,
-                              color: greyColor,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.campaign_outlined, size: 16, color: Colors.blueAccent),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Channel ID: ${user.userId}',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: isDarkMode ? Colors.white : Colors.black87,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () async {
+                                await Clipboard.setData(ClipboardData(text: user.userId));
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('ID ${user.userId} copied to clipboard!'),
+                                    backgroundColor: primaryColor,
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
+                              },
+                              child: const Icon(
+                                Icons.copy_rounded,
+                                size: 18,
+                                color: greyColor,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                    ] else ...[
+                      Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            UserIdBadgeWidget(
+                              searchId: user.searchId.isNotEmpty ? user.searchId : user.userId,
+                              textStyle: Theme.of(context)
+                                  .textTheme
+                                  .titleLarge!
+                                  .copyWith(color: Colors.white),
+                              showCopyIcon: false,
+                            ),
+                            const SizedBox(width: 6),
+                            GestureDetector(
+                              onTap: () async {
+                                final idToCopy = user.searchId.isNotEmpty ? user.searchId : user.userId;
+                                await Clipboard.setData(ClipboardData(text: idToCopy));
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'ID $idToCopy copied to clipboard!',
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                    backgroundColor: primaryColor,
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
+                              },
+                              child: const Icon(
+                                Icons.copy_rounded,
+                                size: 16,
+                                color: greyColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
-                    // Last seen
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: defaultPadding / 2,
-                        vertical: 4,
+                    // Status Badge or Last Seen
+                    if (isOfficial)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.verified_rounded, color: Colors.blue, size: 14),
+                            SizedBox(width: 4),
+                            Text(
+                              'Verified Official System Channel',
+                              style: TextStyle(
+                                color: Colors.blue,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: defaultPadding / 2,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color:
+                              isDarkMode ? greyColor.withValues(alpha: 0.5) : greyLight,
+                          borderRadius: BorderRadius.circular(defaultRadius / 2),
+                        ),
+                        child: FutureBuilder<User?>(
+                          future: UserApi.getUser(user.userId),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData || snapshot.data == null) {
+                              return const SizedBox.shrink();
+                            }
+                            final User? updatedUser = snapshot.data;
+                            if (updatedUser?.lastActive == null) {
+                              return const SizedBox.shrink();
+                            }
+                            return Text("${updatedUser!.lastActive!.getLastSeenTime}");
+                          },
+                        ),
                       ),
-                      decoration: BoxDecoration(
-                        color:
-                            isDarkMode ? greyColor.withValues(alpha: 0.5) : greyLight,
-                        borderRadius: BorderRadius.circular(defaultRadius / 2),
-                      ),
-                      child: FutureBuilder<User?>(
-                        future: UserApi.getUser(user.userId),
-                        builder: (context, snapshot) {
-                          if (!snapshot.hasData) {
-                            return const SizedBox.shrink();
-                          }
-                          // Get user
-                          final User? updatedUser = snapshot.data;
-
-                          if (updatedUser == null) {
-                            return const SizedBox.shrink();
-                          }
-                          return Text(
-                              "${updatedUser.lastActive?.getLastSeenTime}");
-                        },
-                      ),
-                    ),
                     const SizedBox(height: 16),
 
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: defaultPadding),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () {
-                            Get.to(() => ProfilePageForRoom(
-                              userID: user.userId,
-                              userName: user.fullname,
-                              userImage: user.photoUrl,
-                            ));
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
+                    if (!isOfficial)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: defaultPadding),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () {
+                              Get.to(() => ProfilePageForRoom(
+                                userID: user.userId,
+                                userName: user.fullname,
+                                userImage: user.photoUrl,
+                              ));
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             decoration: BoxDecoration(
                               color: isDarkMode ? Colors.grey[900] : Colors.white,
@@ -343,13 +425,41 @@ class ProfileViewScreen extends StatelessWidget {
               // Description card
               const Divider(),
               Padding(
-                padding: const EdgeInsets.all(defaultPadding),
-                child: Text(
-                  user.bio,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyLarge!
-                      .copyWith(fontWeight: FontWeight.w500),
+                padding: const EdgeInsets.symmetric(horizontal: defaultPadding, vertical: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (isOfficial) ...[
+                      Row(
+                        children: [
+                          const Icon(Icons.info_outline, size: 16, color: Colors.blueAccent),
+                          const SizedBox(width: 6),
+                          Text(
+                            'About Official Channel',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: isDarkMode ? Colors.white70 : Colors.black87,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    Text(
+                      isOfficial && (user.bio.isEmpty || user.bio == 'Official Notification Channel')
+                          ? UserApi.officialDefaultBio
+                          : user.bio,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyLarge!
+                          .copyWith(
+                            fontWeight: FontWeight.w400,
+                            height: 1.45,
+                            color: isDarkMode ? Colors.white.withValues(alpha: 0.85) : Colors.black87,
+                          ),
+                    ),
+                  ],
                 ),
               ),
               const Divider(),

@@ -518,7 +518,31 @@ abstract class MessageApi {
           return tB.compareTo(tA);
         });
 
-        if (list.isEmpty) {
+        // Smart Deduplication: ensure each notification appears strictly once
+        final List<Message> uniqueList = [];
+        final Set<String> seenIds = {};
+        for (var m in list) {
+          if (m.msgId.isNotEmpty && seenIds.contains(m.msgId)) continue;
+
+          // Deduplicate identical content within 2 minutes
+          final bool isDuplicateContent = uniqueList.any((existing) {
+            if (existing.type == m.type && existing.textMsg.trim() == m.textMsg.trim()) {
+              if (m.sentAt != null && existing.sentAt != null) {
+                final diff = existing.sentAt!.difference(m.sentAt!).inSeconds.abs();
+                return diff < 120;
+              }
+              return true;
+            }
+            return false;
+          });
+
+          if (!isDuplicateContent) {
+            if (m.msgId.isNotEmpty) seenIds.add(m.msgId);
+            uniqueList.add(m);
+          }
+        }
+
+        if (uniqueList.isEmpty) {
           final defaultMsg = Message(
             msgId: 'welcome_${currentUser.userId}',
             senderId: 'official_team',
@@ -532,7 +556,7 @@ abstract class MessageApi {
             OfficialTeamApi.sendWelcomeMessage(currentUser);
           }
         } else {
-          streamCtrl.add(list);
+          streamCtrl.add(uniqueList);
         }
         hasEmitted = true;
       }
@@ -540,94 +564,159 @@ abstract class MessageApi {
       streamCtrl = StreamController<List<Message>>(
         onListen: () {
           // 1. official_notifications subcollection
-          subNotifs = _firestore
-              .collection('Users/${currentUser.userId}/official_notifications')
-              .limit(limit)
-              .snapshots()
-              .listen((snapshot) {
-            notifMap.clear();
-            for (var doc in snapshot.docs) {
-              try {
-                final msg = Message.fromMap(
-                  data: doc.data(),
-                  docRef: doc.reference,
-                  isGroup: false,
-                );
-                final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
-                notifMap[id] = msg;
-              } catch (e) {
-                debugPrint('Error parsing official_notification doc ${doc.id}: $e');
+          try {
+            subNotifs = _firestore
+                .collection('Users/${currentUser.userId}/official_notifications')
+                .orderBy('sentAt', descending: true)
+                .limit(limit)
+                .snapshots()
+                .listen((snapshot) {
+              notifMap.clear();
+              for (var doc in snapshot.docs) {
+                try {
+                  final msg = Message.fromMap(
+                    data: doc.data(),
+                    docRef: doc.reference,
+                    isGroup: false,
+                  );
+                  final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
+                  notifMap[id] = msg;
+                } catch (e) {
+                  debugPrint('Error parsing official_notification doc ${doc.id}: $e');
+                }
               }
-            }
-            emitMerged();
-          }, onError: (e) {
-            debugPrint('Error in official_notifications stream: $e');
-            emitMerged();
-          });
+              emitMerged();
+            }, onError: (e) {
+              debugPrint('Fallback official_notifications without orderBy: $e');
+              subNotifs = _firestore
+                  .collection('Users/${currentUser.userId}/official_notifications')
+                  .limit(limit)
+                  .snapshots()
+                  .listen((snapshot) {
+                notifMap.clear();
+                for (var doc in snapshot.docs) {
+                  try {
+                    final msg = Message.fromMap(data: doc.data(), docRef: doc.reference, isGroup: false);
+                    final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
+                    notifMap[id] = msg;
+                  } catch (_) {}
+                }
+                emitMerged();
+              });
+            });
+          } catch (_) {}
 
           // 2. Chats/official_team/Messages subcollection
-          subChats = _firestore
-              .collection('Users/${currentUser.userId}/Chats/official_team/Messages')
-              .limit(limit)
-              .snapshots()
-              .listen((snapshot) {
-            chatMap.clear();
-            for (var doc in snapshot.docs) {
-              try {
-                final msg = Message.fromMap(
-                  data: doc.data(),
-                  docRef: doc.reference,
-                  isGroup: false,
-                );
-                final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
-                chatMap[id] = msg;
-              } catch (e) {
-                debugPrint('Error parsing official chat doc ${doc.id}: $e');
+          try {
+            subChats = _firestore
+                .collection('Users/${currentUser.userId}/Chats/official_team/Messages')
+                .orderBy('sentAt', descending: true)
+                .limit(limit)
+                .snapshots()
+                .listen((snapshot) {
+              chatMap.clear();
+              for (var doc in snapshot.docs) {
+                try {
+                  final msg = Message.fromMap(
+                    data: doc.data(),
+                    docRef: doc.reference,
+                    isGroup: false,
+                  );
+                  final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
+                  chatMap[id] = msg;
+                } catch (e) {
+                  debugPrint('Error parsing official chat doc ${doc.id}: $e');
+                }
               }
-            }
-            emitMerged();
-          }, onError: (e) {
-            debugPrint('Error in official chat stream: $e');
-            emitMerged();
-          });
+              emitMerged();
+            }, onError: (e) {
+              debugPrint('Fallback official chat without orderBy: $e');
+              subChats = _firestore
+                  .collection('Users/${currentUser.userId}/Chats/official_team/Messages')
+                  .limit(limit)
+                  .snapshots()
+                  .listen((snapshot) {
+                chatMap.clear();
+                for (var doc in snapshot.docs) {
+                  try {
+                    final msg = Message.fromMap(data: doc.data(), docRef: doc.reference, isGroup: false);
+                    final id = msg.msgId.isNotEmpty ? msg.msgId : doc.id;
+                    chatMap[id] = msg;
+                  } catch (_) {}
+                }
+                emitMerged();
+              });
+            });
+          } catch (_) {}
 
           // 3. Central official_broadcasts collection
-          subBroadcasts = _firestore
-              .collection('official_broadcasts')
-              .limit(limit)
-              .snapshots()
-              .listen((snapshot) {
-            broadcastMap.clear();
-            for (var doc in snapshot.docs) {
-              try {
-                final data = doc.data();
-                DateTime? sentAt;
-                if (data['sentAt'] is Timestamp) {
-                  sentAt = (data['sentAt'] as Timestamp).toDate();
-                } else if (data['sentAt'] is DateTime) {
-                  sentAt = data['sentAt'] as DateTime;
-                } else if (data['sentAt'] is String) {
-                  sentAt = DateTime.tryParse(data['sentAt']);
+          try {
+            subBroadcasts = _firestore
+                .collection('official_broadcasts')
+                .orderBy('sentAt', descending: true)
+                .limit(limit)
+                .snapshots()
+                .listen((snapshot) {
+              broadcastMap.clear();
+              for (var doc in snapshot.docs) {
+                try {
+                  final data = doc.data();
+                  DateTime? sentAt;
+                  if (data['sentAt'] is Timestamp) {
+                    sentAt = (data['sentAt'] as Timestamp).toDate();
+                  } else if (data['sentAt'] is DateTime) {
+                    sentAt = data['sentAt'] as DateTime;
+                  } else if (data['sentAt'] is String) {
+                    sentAt = DateTime.tryParse(data['sentAt']);
+                  }
+                  final msg = Message(
+                    msgId: doc.id,
+                    senderId: 'official_team',
+                    type: Message.getMsgType(data['type'] ?? 'text'),
+                    textMsg: data['textMsg'] ?? '',
+                    fileUrl: data['fileUrl'] ?? '',
+                    sentAt: sentAt ?? DateTime.now(),
+                    isRead: true,
+                  );
+                  broadcastMap[doc.id] = msg;
+                } catch (e) {
+                  debugPrint('Error parsing official_broadcast doc ${doc.id}: $e');
                 }
-                final msg = Message(
-                  msgId: doc.id,
-                  senderId: 'official_team',
-                  type: Message.getMsgType(data['type'] ?? 'text'),
-                  textMsg: data['textMsg'] ?? '',
-                  fileUrl: data['fileUrl'] ?? '',
-                  sentAt: sentAt ?? DateTime.now(),
-                  isRead: true,
-                );
-                broadcastMap[doc.id] = msg;
-              } catch (e) {
-                debugPrint('Error parsing official_broadcast doc ${doc.id}: $e');
               }
-            }
-            emitMerged();
-          }, onError: (e) {
-            debugPrint('Error in official_broadcasts stream: $e');
-            emitMerged();
-          });
+              emitMerged();
+            }, onError: (e) {
+              debugPrint('Fallback official_broadcasts without orderBy: $e');
+              subBroadcasts = _firestore
+                  .collection('official_broadcasts')
+                  .limit(limit)
+                  .snapshots()
+                  .listen((snapshot) {
+                broadcastMap.clear();
+                for (var doc in snapshot.docs) {
+                  try {
+                    final data = doc.data();
+                    DateTime? sentAt;
+                    if (data['sentAt'] is Timestamp) {
+                      sentAt = (data['sentAt'] as Timestamp).toDate();
+                    } else if (data['sentAt'] is DateTime) {
+                      sentAt = data['sentAt'] as DateTime;
+                    }
+                    final msg = Message(
+                      msgId: doc.id,
+                      senderId: 'official_team',
+                      type: Message.getMsgType(data['type'] ?? 'text'),
+                      textMsg: data['textMsg'] ?? '',
+                      fileUrl: data['fileUrl'] ?? '',
+                      sentAt: sentAt ?? DateTime.now(),
+                      isRead: true,
+                    );
+                    broadcastMap[doc.id] = msg;
+                  } catch (_) {}
+                }
+                emitMerged();
+              });
+            });
+          } catch (_) {}
         },
         onCancel: () {
           subNotifs?.cancel();

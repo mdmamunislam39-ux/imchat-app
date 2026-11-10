@@ -1,7 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svga/flutter_svga.dart';
+import 'package:chat_messenger/components/universal_asset_widget.dart';
 
 class RelationshipBadgeWidget extends StatelessWidget {
   final int level;
@@ -38,28 +37,18 @@ class RelationshipBadgeWidget extends StatelessWidget {
           return _buildDefaultIcon();
         }
 
-        final isSvga = badgeUrl.toLowerCase().contains('.svga');
-
         return SizedBox(
           width: size,
           height: size,
-          child: isSvga
-              ? SVGAEasyPlayer(
-                  resUrl: badgeUrl,
-                  fit: BoxFit.contain,
-                )
-              : CachedNetworkImage(
-                  imageUrl: badgeUrl,
-                  width: size,
-                  height: size,
-                  fit: BoxFit.contain,
-                  placeholder: (context, url) => const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 1.5),
-                  ),
-                  errorWidget: (context, url, error) => _buildDefaultIcon(),
-                ),
+          child: UniversalAssetWidget(
+            key: ValueKey(badgeUrl),
+            url: badgeUrl,
+            width: size,
+            height: size,
+            fit: BoxFit.contain,
+            isAlphaVideo: true,
+            errorWidget: _buildDefaultIcon(),
+          ),
         );
       },
     );

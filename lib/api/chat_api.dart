@@ -78,14 +78,33 @@ abstract class ChatApi {
 
             // Fast lookup in memory cache first, or build from SQL fields directly (0ms, 0 network blocking!)
             User? receiver = UserApi.getCachedUser(otherUserId);
-            if (receiver == null) {
-              receiver = User(
-                userId: otherUserId,
-                fullname: item['other_user_name'] ?? 'User',
-                photoUrl: item['other_user_avatar'] ?? '',
-                isOnline: item['other_user_online'] == true,
-              );
-              UserApi.cacheUser(receiver);
+            final rawName = item['other_user_name']?.toString() ?? '';
+            final rawAvatar = item['other_user_avatar']?.toString() ?? '';
+            final bool hasValidName = rawName.isNotEmpty && rawName != 'User';
+
+            if (receiver == null || receiver.fullname.isEmpty || receiver.fullname == 'User') {
+              if (hasValidName) {
+                receiver = User(
+                  userId: otherUserId,
+                  fullname: rawName,
+                  photoUrl: rawAvatar,
+                  isOnline: item['other_user_online'] == true,
+                );
+                UserApi.cacheUser(receiver);
+              } else {
+                receiver = User(
+                  userId: otherUserId,
+                  fullname: otherUserId == 'official_team' ? 'imChat Team' : 'User',
+                  photoUrl: rawAvatar,
+                  isOnline: item['other_user_online'] == true,
+                );
+                UserApi.getUser(otherUserId).then((u) {
+                  if (u != null) {
+                    UserApi.cacheUser(u);
+                    scheduleFetch();
+                  }
+                }).catchError((_) => null);
+              }
             } else if (item['other_user_online'] != null) {
               receiver.isOnline = item['other_user_online'] == true;
             }
@@ -191,39 +210,62 @@ abstract class ChatApi {
       return controller.stream;
     }
 
-    // Default Firebase Mode - Non-blocking, instant 0ms cached stream
-    final User currentUer = AuthController.instance.currentUser;
+    // Default Firebase Mode - Load all conversation receivers in parallel
+    String currentUserId = AuthController.instance.currentUser.userId;
+    if (currentUserId.isEmpty) {
+      currentUserId = AuthController.instance.firebaseUser?.uid ?? '';
+    }
+
+    if (currentUserId.isEmpty) {
+      return AuthController.instance.currentUserStream.asyncExpand((user) {
+        if (user != null && user.userId.isNotEmpty) {
+          return _getChatsStream(user.userId);
+        }
+        return Stream.value(<Chat>[]);
+      });
+    }
+
+    return _getChatsStream(currentUserId);
+  }
+
+  static Stream<List<Chat>> _getChatsStream(String userId) {
+    if (userId.trim().isEmpty) return Stream.value(<Chat>[]);
 
     return _firestore
-        .collection('Users/${currentUer.userId}/Chats')
+        .collection('Users')
+        .doc(userId)
+        .collection('Chats')
         .orderBy('sentAt', descending: true)
         .snapshots()
         .asyncMap((event) async {
-          final List<Chat> chats = [];
-          final List<Future<void>> missingFetches = [];
+          final List<Future<Chat>> chatFutures = [];
 
           for (var doc in event.docs) {
-            try {
-              final data = doc.data();
-              User? user = UserApi.getCachedUser(doc.id);
-              if (user == null) {
-                user = User(userId: doc.id, fullname: 'User');
-                missingFetches.add(
-                  UserApi.getUser(doc.id).then((u) {
-                    if (u != null) UserApi.cacheUser(u);
-                  }).catchError((_) => null),
-                );
+            chatFutures.add(() async {
+              try {
+                final data = doc.data();
+                final String otherId = doc.id;
+                User? user = UserApi.getCachedUser(otherId);
+                if (user == null || user.fullname.isEmpty || user.fullname == 'User') {
+                  user = await UserApi.getUser(otherId);
+                  if (user != null) {
+                    UserApi.cacheUser(user);
+                  } else {
+                    user = User(
+                      userId: otherId,
+                      fullname: otherId == 'official_team' ? 'imChat Team' : 'User',
+                    );
+                  }
+                }
+                return Chat.fromMap(data, doc: doc, receiver: user);
+              } catch (e) {
+                debugPrint('Error mapping chat doc ${doc.id}: $e');
+                return Chat.fromMap(doc.data(), doc: doc);
               }
-              chats.add(Chat.fromMap(data, doc: doc, receiver: user));
-            } catch (e) {
-              debugPrint('Error mapping chat doc ${doc.id}: $e');
-            }
+            }());
           }
 
-          if (missingFetches.isNotEmpty) {
-            Future.wait(missingFetches).then((_) {});
-          }
-
+          final List<Chat> chats = await Future.wait(chatFutures);
           return chats;
         });
   }

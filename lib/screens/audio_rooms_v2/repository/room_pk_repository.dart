@@ -11,7 +11,7 @@ class RoomPKRepository {
   final String _matchesCollection = 'room_pk_matches';
   final String _autoMatchCollection = 'room_pk_auto_match_queue';
 
-  /// Send a Room PK Invite
+  /// Send a Room PK Invite (Audio Rooms only)
   Future<void> sendInvite({
     required String senderRoomId,
     required String targetRoomId,
@@ -20,6 +20,22 @@ class RoomPKRepository {
     required int durationMinutes,
   }) async {
     try {
+      // 1. Validate Target Room is an Audio Room (NOT a Live Video Room)
+      final targetDoc = await _firestore.collection('audio_rooms_v2').doc(targetRoomId).get();
+      if (!targetDoc.exists) {
+        throw Exception('Target room does not exist.');
+      }
+      final targetCategory = targetDoc.data()?['category'] as String? ?? 'Chat';
+      if (targetCategory == 'Live') {
+        throw Exception('Cannot challenge a Live Video Room to Audio Room PK! Audio and Video PK are completely separate.');
+      }
+
+      // 2. Validate Sender Room is also an Audio Room
+      final senderDoc = await _firestore.collection('audio_rooms_v2').doc(senderRoomId).get();
+      if (senderDoc.exists && (senderDoc.data()?['category'] == 'Live')) {
+        throw Exception('Live Video Rooms cannot send Audio Room PK invites.');
+      }
+
       final docRef = _firestore.collection(_invitesCollection).doc();
       final invite = RoomPKInvite(
         id: docRef.id,
@@ -36,7 +52,7 @@ class RoomPKRepository {
       debugPrint('Sent Room PK Invite to $targetRoomId');
     } catch (e) {
       debugPrint('Error sending PK invite: $e');
-      throw Exception('Failed to send PK invite');
+      rethrow;
     }
   }
 
@@ -61,7 +77,17 @@ class RoomPKRepository {
     required String targetRoomImageUrl,
   }) async {
     try {
-      // 1. Update invite status
+      // 1. Verify both rooms are not Live rooms
+      final targetDoc = await _firestore.collection('audio_rooms_v2').doc(invite.targetRoomId).get();
+      if (targetDoc.exists && (targetDoc.data()?['category'] == 'Live')) {
+        throw Exception('Live Video Rooms cannot participate in Audio Room PK.');
+      }
+      final senderDoc = await _firestore.collection('audio_rooms_v2').doc(invite.senderRoomId).get();
+      if (senderDoc.exists && (senderDoc.data()?['category'] == 'Live')) {
+        throw Exception('Live Video Rooms cannot participate in Audio Room PK.');
+      }
+
+      // 2. Update invite status
       await _firestore.collection(_invitesCollection).doc(invite.id).update({
         'status': RoomPKInviteStatus.accepted.name,
       });
@@ -163,7 +189,7 @@ class RoomPKRepository {
     }); // NOTE: This only checks if we are the left room. Full implementation needs RxDart or saving matchId in room doc.
   }
 
-  // Auto Match Logic
+  // Auto Match Logic (Audio Rooms only)
   Future<void> enterAutoMatchQueue({
     required String roomId,
     required String roomName,
@@ -171,6 +197,11 @@ class RoomPKRepository {
     required int durationMinutes,
   }) async {
     try {
+      final senderDoc = await _firestore.collection('audio_rooms_v2').doc(roomId).get();
+      if (senderDoc.exists && (senderDoc.data()?['category'] == 'Live')) {
+        throw Exception('Live Video Rooms cannot enter Audio Room PK Auto Match.');
+      }
+
       // Check if someone else is in the queue
       final queueSnapshot = await _firestore
           .collection(_autoMatchCollection)
@@ -184,6 +215,13 @@ class RoomPKRepository {
         
         // Prevent matching with self
         if (opponentId != roomId) {
+          final oppDoc = await _firestore.collection('audio_rooms_v2').doc(opponentId).get();
+          if (oppDoc.exists && (oppDoc.data()?['category'] == 'Live')) {
+            // Drop invalid item from queue
+            await _firestore.collection(_autoMatchCollection).doc(queueSnapshot.docs.first.id).delete();
+            return;
+          }
+
           // Remove opponent from queue
           await _firestore.collection(_autoMatchCollection).doc(queueSnapshot.docs.first.id).delete();
           

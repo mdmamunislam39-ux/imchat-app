@@ -8,6 +8,7 @@ class AppRoles {
   static const String admin = 'admin';
   static const String bd = 'bd'; // Legacy
   static const String agency = 'agency';
+  static const String directSeller = 'direct_seller';
   static const String seller = 'seller';
   static const String host = 'host';
   static const String regular = 'regular';
@@ -37,6 +38,11 @@ class AppRoles {
     ],
     agency: [
       'manage_hosts',
+      'view_analytics',
+    ],
+    directSeller: [
+      'manage_sellers',
+      'transfer_seller_diamonds',
       'view_analytics',
     ],
     seller: [
@@ -81,6 +87,8 @@ class RoleService extends GetxController {
 
   // Real-time Seller state
   final RxBool isSellerActive = false.obs;
+  final RxBool isSellerCandidate = false.obs;
+  final RxString sellerKycStatus = ''.obs;
 
   StreamSubscription<DocumentSnapshot>? _roleSubscription;
   StreamSubscription<QuerySnapshot>? _superAdminSubscription;
@@ -134,6 +142,12 @@ class RoleService extends GetxController {
       if ((data['isHost'] == true || rawRole == AppRoles.host || (data['agencyId'] != null && data['agencyId'].toString().isNotEmpty && rawRole != AppRoles.agency && data['isAgency'] != true)) && !rawRoles.contains(AppRoles.host)) {
         rawRoles.add(AppRoles.host);
       }
+      if ((data['isBD'] == true || rawRole == AppRoles.bd) && !rawRoles.contains(AppRoles.bd)) {
+        rawRoles.add(AppRoles.bd);
+      }
+      if ((data['isDirectSeller'] == true || rawRole == AppRoles.directSeller || rawRole == 'direct_seller') && !rawRoles.contains(AppRoles.directSeller)) {
+        rawRoles.add(AppRoles.directSeller);
+      }
       
       // Fallback to rawRole if roles list is empty
       if (rawRoles.isEmpty) {
@@ -150,6 +164,14 @@ class RoleService extends GetxController {
         combinedPermissions.addAll(AppRoles.permissionsForRole(role));
       }
       userPermissions.value = combinedPermissions.toList();
+
+      // Check seller candidate flags from user doc
+      if (data['isSeller'] == true || data['sellerAssigned'] == true || data['sellerKycStatus'] != null || rawRoles.contains(AppRoles.seller)) {
+        isSellerCandidate.value = true;
+      }
+      if (data['sellerActive'] == true) {
+        isSellerActive.value = true;
+      }
 
       isLoading.value = false;
 
@@ -222,15 +244,21 @@ class RoleService extends GetxController {
         .listen((snapshot) {
       if (snapshot.docs.isNotEmpty) {
         final data = snapshot.docs.first.data();
-        final isActive = data['isActive'] ?? true;
-        isSellerActive.value = (isActive == true);
-        debugPrint('🛒 [RoleService] Realtime seller status updated: isActive=${isSellerActive.value} for userId: $userId');
+        final isActive = data['isActive'] == true;
+        isSellerActive.value = isActive;
+        isSellerCandidate.value = true;
+        sellerKycStatus.value = (data['kycStatus'] ?? (isActive ? 'approved' : 'not_submitted')).toString();
+        debugPrint('🛒 [RoleService] Realtime seller status updated: isActive=${isSellerActive.value}, kycStatus=${sellerKycStatus.value} for userId: $userId');
       } else {
         isSellerActive.value = false;
+        isSellerCandidate.value = false;
+        sellerKycStatus.value = '';
       }
     }, onError: (e) {
       debugPrint('❌ [RoleService] Error listening to seller status: $e');
       isSellerActive.value = false;
+      isSellerCandidate.value = false;
+      sellerKycStatus.value = '';
     });
   }
 
@@ -239,6 +267,8 @@ class RoleService extends GetxController {
     _sellerSubscription = null;
     _currentSellerUserId = null;
     isSellerActive.value = false;
+    isSellerCandidate.value = false;
+    sellerKycStatus.value = '';
   }
 
   /// Stop listening
@@ -268,6 +298,7 @@ class RoleService extends GetxController {
   bool get canAccessBdTools => hasSuperAdminPermission('Verification Requests') || hasPermission('access_bd_tools');
   bool get isAdmin => userRoles.contains(AppRoles.admin);
   bool get isBD => userRoles.contains(AppRoles.bd);
+  bool get isDirectSeller => userRoles.contains(AppRoles.directSeller);
   bool get isHost => userRoles.contains(AppRoles.host);
   bool get isRegular => userRoles.contains(AppRoles.regular) && userRoles.length == 1;
   bool get isAgency => userRoles.contains(AppRoles.agency);
@@ -303,6 +334,8 @@ class RoleService extends GetxController {
         'roleAssignedAt': FieldValue.serverTimestamp(),
         'isAgency': newRoles.contains(AppRoles.agency),
         'isHost': newRoles.contains(AppRoles.host),
+        'isBD': newRoles.contains(AppRoles.bd),
+        'isDirectSeller': newRoles.contains(AppRoles.directSeller),
       });
 
       // Log role assignment

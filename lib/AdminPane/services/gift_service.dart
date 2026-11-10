@@ -377,6 +377,8 @@ class GiftService {
     if (roomId.isNotEmpty && roomId != '0') {
       final Map<String, dynamic> roomUpdates = {
         'totalRevenue': FieldValue.increment(totalCredits),
+        'liveSessionDiamonds': FieldValue.increment(totalCredits),
+        'liveSessionGifts': FieldValue.increment(quantity * receivers.length),
         'dailyRevenue_${RankingHelper.dailySuffix}': FieldValue.increment(totalCredits),
         'weeklyRevenue_${RankingHelper.weeklySuffix}': FieldValue.increment(totalCredits),
         'weeklyRevenue_${RankingHelper.mondayWeeklySuffix}': FieldValue.increment(totalCredits),

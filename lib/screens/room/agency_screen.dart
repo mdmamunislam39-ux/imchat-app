@@ -19,11 +19,15 @@ enum _AgencyRole { owner, host, invited, none }
 class AgencyScreen extends StatefulWidget {
   final User currentUser;
   final bool isHostCentre;
+  final String? targetAgencyId;
+  final bool isBdView;
 
   const AgencyScreen({
     super.key, 
     required this.currentUser,
     this.isHostCentre = false,
+    this.targetAgencyId,
+    this.isBdView = false,
   });
 
   @override
@@ -194,7 +198,7 @@ class _AgencyScreenState extends State<AgencyScreen> {
           _agencyUsers = users;
         });
 
-        if (!_checkedAutoClaim) {
+        if (!_checkedAutoClaim && !widget.isBdView) {
           _checkedAutoClaim = true;
           _checkAndAutoClaimPreviousWeek(agencyId, snapshot.docs);
         }
@@ -207,7 +211,7 @@ class _AgencyScreenState extends State<AgencyScreen> {
     List<QueryDocumentSnapshot<Map<String, dynamic>>>? userDocs,
   ]) async {
     try {
-      if (_agency == null || _agency!.owner.userId != widget.currentUser.userId) return;
+      if (widget.isBdView || _agency == null || _agency!.owner.userId != widget.currentUser.userId) return;
 
       final tiersSnap = await FirebaseFirestore.instance
           .collection('settings')
@@ -343,6 +347,27 @@ class _AgencyScreenState extends State<AgencyScreen> {
     }
 
     try {
+      // BD View mode priority
+      if (widget.isBdView && widget.targetAgencyId != null && widget.targetAgencyId!.isNotEmpty) {
+        final agency = await _agencyService.getAgency(widget.targetAgencyId!);
+        if (agency != null) {
+          _setupOwnerListeners(agency.agencyId);
+          final hosts = await _agencyService.getAgencyHosts(agency.agencyId);
+          final pendingInv =
+              await _agencyService.getAgencyPendingInvitations(agency.agencyId);
+          if (mounted) {
+            setState(() {
+              _role = _AgencyRole.owner;
+              _agency = agency;
+              _hosts = hosts;
+              _pendingInvitations = pendingInv;
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+      }
+
       if (widget.isHostCentre) {
         // Priority to Host role when opening as Host Centre
         final hostRecord =
@@ -485,7 +510,9 @@ class _AgencyScreenState extends State<AgencyScreen> {
           icon: const Icon(Icons.close_rounded, color: Colors.black87),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text(isStreamer ? 'Host Centre'.tr : 'Agency Manager'.tr),
+        title: Text(widget.isBdView
+            ? 'BD • Agency Portal'
+            : (isStreamer ? 'Host Centre'.tr : 'Agency Manager'.tr)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: false,
@@ -573,6 +600,10 @@ class _AgencyScreenState extends State<AgencyScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (widget.isBdView) ...[
+          _buildBdNoticeBanner(),
+          const SizedBox(height: 12),
+        ],
         _buildAgencyInfoCard(activeHostsCount, weeklyPointsSum),
         const SizedBox(height: 16),
         _buildDashboardStatsGrid(dailyPointsSum, weeklyPointsSum),
@@ -589,6 +620,46 @@ class _AgencyScreenState extends State<AgencyScreen> {
         ],
         _buildHostsSection(activeHostsCount),
       ],
+    );
+  }
+
+  Widget _buildBdNoticeBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF3C7),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFF59E0B), width: 1.2),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.admin_panel_settings_rounded, color: Color(0xFFD97706), size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'BD Portal View Mode',
+                  style: TextStyle(
+                    color: Color(0xFF92400E),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Viewing ${_agency?.agencyName ?? "Agency"}. You can monitor hosts and terminate hosts. Commission/salary claim is restricted to the Agency Owner.',
+                  style: const TextStyle(
+                    color: Color(0xFF78350F),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -787,8 +858,8 @@ class _AgencyScreenState extends State<AgencyScreen> {
     List<Map<String, dynamic>> tiers,
     int currentTierIndex,
   ) {
-    final bool isOwner = _role == _AgencyRole.owner ||
-        (_agency != null && _agency!.owner.userId == widget.currentUser.userId);
+    final bool isOwner = (_role == _AgencyRole.owner ||
+        (_agency != null && _agency!.owner.userId == widget.currentUser.userId)) && !widget.isBdView;
     final String currentCycleSuffix = RankingHelper.mondayWeeklySuffix;
 
     showModalBottomSheet(
@@ -856,6 +927,28 @@ class _AgencyScreenState extends State<AgencyScreen> {
                           borderRadius: BorderRadius.circular(2),
                         ),
                       ),
+                      if (widget.isBdView)
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.amber.shade400),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.lock_outline_rounded, color: Colors.amber, size: 18),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'BD View Mode: You can view targets and progress. Salary claim is reserved for the Agency Owner.',
+                                  style: TextStyle(color: Colors.black87, fontSize: 11, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                         child: Row(

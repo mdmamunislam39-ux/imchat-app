@@ -419,7 +419,7 @@ class _DecorationWallPageState extends State<DecorationWallPage> {
                                 key: ValueKey(imageUrl),
                                 url: imageUrl,
                                 fit: BoxFit.contain,
-                                isAlphaVideo: false,
+                                isAlphaVideo: true,
                               ))
                         : Icon(_typeIcon(itemType), size: 58, color: accentColor),
                   ),
@@ -882,7 +882,7 @@ class _DecorationWallPageState extends State<DecorationWallPage> {
                                       key: ValueKey(imageUrl),
                                       url: imageUrl,
                                       fit: BoxFit.contain,
-                                      isAlphaVideo: false,
+                                      isAlphaVideo: true,
                                     ))
                               : Icon(
                                   _typeIcon(itemType),

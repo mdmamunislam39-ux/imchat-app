@@ -35,8 +35,10 @@ SystemUiOverlayStyle getSystemOverlayStyle(bool isDarkMode) {
     statusBarBrightness: brightness,
     // Android only
     statusBarIconBrightness: isDarkMode ? Brightness.light : Brightness.dark,
-    // Android only
-    systemNavigationBarColor: Colors.transparent,
+    // Android only: use solid contrasting navigation bar color so Back, Home, and Recent buttons are ALWAYS visible
+    systemNavigationBarColor: isDarkMode ? Colors.black : Colors.white,
+    systemNavigationBarDividerColor:
+        isDarkMode ? Colors.black : const Color(0xFFEEEEEE),
     // Android only
     systemNavigationBarIconBrightness:
         isDarkMode ? Brightness.light : Brightness.dark,

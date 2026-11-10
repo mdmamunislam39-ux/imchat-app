@@ -1426,56 +1426,6 @@ app.delete('/api/moments/posts/:postId', authMiddleware, async (req, res) => {
   }
 });
 
-// 5.9 Send Push Notification via VPS Firebase Admin (Zero Cloud Function Cost)
-app.post('/api/notification/send', authMiddleware, async (req, res) => {
-  const { type, title, body, deviceToken, call, senderId, senderAvatar } = req.body;
-
-  if (!deviceToken) {
-    return res.status(400).json({ success: false, error: 'deviceToken is required' });
-  }
-
-  if (admin.apps.length === 0) {
-    return res.status(200).json({ success: false, fallback: true, error: 'Firebase Admin not initialized on VPS' });
-  }
-
-  try {
-    const messagePayload = {
-      token: deviceToken,
-      notification: {
-        title: title || 'New Notification',
-        body: body || '',
-      },
-      data: {
-        type: String(type || 'alert'),
-        senderId: String(senderId || req.user.uid),
-        senderAvatar: String(senderAvatar || ''),
-        call: JSON.stringify(call || {}),
-        click_action: 'FLUTTER_NOTIFICATION_CLICK',
-      },
-      android: {
-        priority: 'high',
-        notification: {
-          sound: 'default',
-          channelId: 'high_importance_channel',
-        },
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: 'default',
-            contentAvailable: true,
-          },
-        },
-      },
-    };
-
-    const response = await admin.messaging().send(messagePayload);
-    res.json({ success: true, messageId: response });
-  } catch (error) {
-    console.error('VPS Push Notification Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // ----------------------------------------------------------------------------
 // 6. REAL-TIME SOCKET.IO ENGINE

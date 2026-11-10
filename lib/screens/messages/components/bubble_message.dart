@@ -93,7 +93,14 @@ class BubbleMessage extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8.0, bottom: 4.0),
                   child: CachedCircleAvatar(
-                    imageUrl: senderUser.photoUrl,
+                    imageUrl: (senderUser.userId == 'official_team' ||
+                            message.senderId == 'official_team' ||
+                            senderUser.userId.startsWith('official_channel_'))
+                        ? (senderUser.photoUrl.isNotEmpty
+                            ? senderUser.photoUrl
+                            : 'assets/images/app_logo.png')
+                        : senderUser.photoUrl,
+                    userId: senderUser.userId.isNotEmpty ? senderUser.userId : message.senderId,
                     radius: 14,
                     iconSize: 16,
                   ),

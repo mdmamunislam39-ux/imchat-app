@@ -81,11 +81,31 @@ class CallHistoryApi {
   }
 
   static Stream<List<CallHistory>> getCallHistory() {
-    final User currentUser = AuthController.instance.currentUser;
+    String currentUserId = AuthController.instance.currentUser.userId;
+    if (currentUserId.isEmpty) {
+      currentUserId = AuthController.instance.firebaseUser?.uid ?? '';
+    }
+
+    if (currentUserId.isEmpty) {
+      return AuthController.instance.currentUserStream.asyncExpand((user) {
+        if (user != null && user.userId.isNotEmpty) {
+          return _getCallHistoryStream(user.userId);
+        }
+        return Stream.value(<CallHistory>[]);
+      });
+    }
+
+    return _getCallHistoryStream(currentUserId);
+  }
+
+  static Stream<List<CallHistory>> _getCallHistoryStream(String userId) {
+    if (userId.trim().isEmpty) return Stream.value(<CallHistory>[]);
 
     // Build query
     return _firestore
-        .collection('Users/${currentUser.userId}/CallHistory')
+        .collection('Users')
+        .doc(userId)
+        .collection('CallHistory')
         .orderBy('ceatedAt', descending: true)
         .snapshots()
         .asyncMap((event) async {

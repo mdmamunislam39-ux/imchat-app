@@ -59,18 +59,16 @@ class RoomList extends StatelessWidget {
         physics: physics,
         shrinkWrap: shrinkWrap,
         slivers: [
-          if (headerWidget != null)
-            SliverToBoxAdapter(child: headerWidget!),
-          if (showTitle)
-            SliverToBoxAdapter(child: _buildTitle()),
+          if (headerWidget != null) SliverToBoxAdapter(child: headerWidget!),
+          if (showTitle) SliverToBoxAdapter(child: _buildTitle()),
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
             sliver: SliverGrid(
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
                 crossAxisSpacing: 10,
-                mainAxisSpacing: 6,
-                childAspectRatio: 0.88,
+                mainAxisSpacing: 10,
+                childAspectRatio: 1.0,
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
@@ -95,7 +93,7 @@ class RoomList extends StatelessWidget {
       children: [
         // Title
         if (showTitle) _buildTitle(),
-        
+
         // Room list
         Expanded(
           child: ListView.builder(
@@ -169,18 +167,16 @@ class RoomList extends StatelessWidget {
         shrinkWrap: shrinkWrap,
         physics: const NeverScrollableScrollPhysics(),
         slivers: [
-          if (headerWidget != null)
-            SliverToBoxAdapter(child: headerWidget!),
-          if (showTitle)
-            SliverToBoxAdapter(child: _buildTitle()),
+          if (headerWidget != null) SliverToBoxAdapter(child: headerWidget!),
+          if (showTitle) SliverToBoxAdapter(child: _buildTitle()),
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
             sliver: SliverGrid(
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
                 crossAxisSpacing: 10,
-                mainAxisSpacing: 6,
-                childAspectRatio: 0.88,
+                mainAxisSpacing: 10,
+                childAspectRatio: 1.0,
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) => _buildGridSkeletonCard(),
@@ -216,17 +212,17 @@ class RoomList extends StatelessWidget {
       children: [
         if (showTitle) _buildTitle(),
         Expanded(
-          child: headerWidget != null 
-            ? ListView(
-                children: [
-                  headerWidget!,
-                  SizedBox(
-                    height: 400,
-                    child: emptyWidget ?? _buildDefaultEmptyWidget(),
-                  ),
-                ],
-              )
-            : (emptyWidget ?? _buildDefaultEmptyWidget()),
+          child: headerWidget != null
+              ? ListView(
+                  children: [
+                    headerWidget!,
+                    SizedBox(
+                      height: 400,
+                      child: emptyWidget ?? _buildDefaultEmptyWidget(),
+                    ),
+                  ],
+                )
+              : (emptyWidget ?? _buildDefaultEmptyWidget()),
         ),
       ],
     );
@@ -391,8 +387,7 @@ class RoomList extends StatelessWidget {
                   ),
                 ),
               ),
-              Container(
-              ),
+              Container(),
             ],
           ),
         ],
@@ -409,32 +404,16 @@ class RoomList extends StatelessWidget {
     final bool isLightBg =
         screenBgColor != null && screenBgColor.computeLuminance() > 0.5;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AspectRatio(
-          aspectRatio: 1.0,
-          child: Container(
-            decoration: BoxDecoration(
-              color: isLightBg
-                  ? Colors.black.withValues(alpha: 0.05)
-                  : Colors.white.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(16),
-            ),
-          ),
+    return AspectRatio(
+      aspectRatio: 1.0,
+      child: Container(
+        decoration: BoxDecoration(
+          color: isLightBg
+              ? Colors.black.withValues(alpha: 0.05)
+              : Colors.white.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(16),
         ),
-        const SizedBox(height: 6),
-        Container(
-          height: 14,
-          width: 90,
-          decoration: BoxDecoration(
-            color: isLightBg
-                ? Colors.black.withValues(alpha: 0.05)
-                : Colors.white.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(4),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -648,11 +627,13 @@ class HorizontalRoomList extends StatelessWidget {
                       builder: (context, userSnap) {
                         String creatorDisplayName = room.creatorName;
                         if (userSnap.hasData && userSnap.data!.exists) {
-                          final uData = userSnap.data!.data() as Map<String, dynamic>?;
+                          final uData =
+                              userSnap.data!.data() as Map<String, dynamic>?;
                           if (uData != null &&
                               uData['fullname'] != null &&
                               uData['fullname'].toString().trim().isNotEmpty) {
-                            creatorDisplayName = uData['fullname'].toString().trim();
+                            creatorDisplayName =
+                                uData['fullname'].toString().trim();
                           }
                         }
                         return Text(
@@ -670,7 +651,8 @@ class HorizontalRoomList extends StatelessWidget {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: room.isFull ? null : () => onJoinRoom?.call(room),
+                        onPressed:
+                            room.isFull ? null : () => onJoinRoom?.call(room),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: primaryColor,
                           foregroundColor: Colors.white,

@@ -19,6 +19,10 @@ import 'screens/admin_database_settings_screen.dart';
 import 'screens/admin_agency_transfers_screen.dart';
 import 'screens/admin_seller_requests_screen.dart';
 import 'screens/admin_withdrawals_screen.dart';
+import 'screens/admin_bd_management_screen.dart';
+import 'screens/admin_direct_sellers_screen.dart';
+import 'screens/admin_pk_effects_screen.dart';
+import 'screens/admin_seller_processing_screen.dart';
 
 
 /// Main AdminPane entry point — access gated by RoleService
@@ -222,6 +226,30 @@ class _AdminPaneState extends State<AdminPane> {
         icon: Icons.price_check_rounded,
         screen: const AdminWithdrawalsScreen(),
       ));
+
+      tabs.add(_AdminTab(
+        label: 'BDs',
+        icon: Icons.business_center_rounded,
+        screen: const AdminBdManagementScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Direct Sellers',
+        icon: Icons.store_mall_directory_rounded,
+        screen: const AdminDirectSellersScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'PK Effects',
+        icon: Icons.sports_kabaddi_rounded,
+        screen: const AdminPkEffectsScreen(),
+      ));
+
+      tabs.add(_AdminTab(
+        label: 'Seller Processing'.tr,
+        icon: Icons.assignment_ind_rounded,
+        screen: const AdminSellerProcessingScreen(),
+      ));
     }
 
     return tabs;
@@ -256,6 +284,8 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
   final List<String> _allRoles = [
     AppRoles.agency,
     AppRoles.seller,
+    AppRoles.directSeller,
+    AppRoles.bd,
     AppRoles.regular,
   ];
 
@@ -593,6 +623,10 @@ class _RoleManagementScreenState extends State<RoleManagementScreen> {
                             roleColor = Colors.blueAccent;
                           } else if (role == AppRoles.seller) {
                             roleColor = Colors.orange;
+                          } else if (role == AppRoles.directSeller) {
+                            roleColor = Colors.cyanAccent;
+                          } else if (role == AppRoles.bd) {
+                            roleColor = Colors.tealAccent;
                           }
 
                           return GestureDetector(
@@ -672,6 +706,8 @@ class AdminPaneRoutes {
   static const String roles = '/admin/roles';
   static const String grabTheTop = '/admin/grab_the_top';
   static const String databaseSettings = '/admin/database_settings';
+  static const String bds = '/admin/bds';
+  static const String directSellers = '/admin/direct_sellers';
 
   static Map<String, WidgetBuilder> get routes => {
         assets: (context) => const AdminAssetsScreen(),
@@ -681,5 +717,7 @@ class AdminPaneRoutes {
         roles: (context) => const RoleManagementScreen(),
         grabTheTop: (context) => const AdminGrabTheTopScreen(),
         databaseSettings: (context) => const AdminDatabaseSettingsScreen(),
+        bds: (context) => const AdminBdManagementScreen(),
+        directSellers: (context) => const AdminDirectSellersScreen(),
       };
 }

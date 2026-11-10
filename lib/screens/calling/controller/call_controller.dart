@@ -261,12 +261,12 @@ class CallController extends GetxController {
         debugPrint('🚀 [LiveKit Call] Successfully joined call room $roomName');
       } else {
         debugPrint('⚠️ [LiveKit Call] Failed to join LiveKit room');
-        AppStyle().failedSnackBar(message: 'Failed to connect to LiveKit WebRTC server');
+        AppStyle().failedSnackBar(message: 'Connection failed. Please check your internet.');
         onEndCall(endReason: 'failed');
       }
     } catch (e) {
       debugPrint('❌ [LiveKit Call] Error: $e');
-      AppStyle().failedSnackBar(message: 'LiveKit Call Error: $e');
+      AppStyle().failedSnackBar(message: 'Call connection error. Please try again.');
       onEndCall(endReason: 'failed');
     }
   }
@@ -474,7 +474,9 @@ class CallController extends GetxController {
   // Toggle phone speaker
   void onToggleSpeaker() {
     final bool newValue = speaker.value = !speaker.value;
-    if (!isLiveKit) {
+    if (isLiveKit) {
+      livekitService.setSpeakerphoneEnabled(newValue);
+    } else {
       try {
         engine.setEnableSpeakerphone(newValue);
       } catch (e) {

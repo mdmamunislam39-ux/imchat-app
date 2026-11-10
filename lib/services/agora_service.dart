@@ -743,7 +743,7 @@ class AgoraService with WidgetsBindingObserver {
         RtcEngineContext(
           appId: resolvedAppId,
           channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
-          audioScenario: AudioScenarioType.audioScenarioDefault,
+          audioScenario: AudioScenarioType.audioScenarioGameStreaming,
         ),
       );
 
@@ -783,7 +783,7 @@ class AgoraService with WidgetsBindingObserver {
     try {
       await engine.setAudioProfile(
         profile: AudioProfileType.audioProfileMusicStandard,
-        scenario: AudioScenarioType.audioScenarioDefault,
+        scenario: AudioScenarioType.audioScenarioGameStreaming,
       );
     } catch (e) {
       _warning('setAudioProfile failed: $e');
@@ -792,6 +792,8 @@ class AgoraService with WidgetsBindingObserver {
     try {
       await engine.setParameters('{"che.audio.enable_bg_voice": true}');
       await engine.setParameters('{"che.audio.keep.audiosession": true}');
+      // Native OpenSL ES hardware audio path on Android: drastically reduces CPU load and heating
+      await engine.setParameters('{"che.audio.opensl": true}');
     } catch (e) {
       _warning('Agora audio parameters failed: $e');
     }
@@ -1739,6 +1741,72 @@ class AgoraService with WidgetsBindingObserver {
       return true;
     } catch (e) {
       _error('Failed to set beauty effect', e);
+      return false;
+    }
+  }
+
+  Future<bool> setColorEnhance({
+    required bool enabled,
+    double strength = 0.5,
+    double skinProtect = 0.6,
+  }) async {
+    try {
+      final engine = _engine;
+      if (engine == null) return false;
+      await engine.setColorEnhanceOptions(
+        enabled: enabled,
+        options: ColorEnhanceOptions(
+          strengthLevel: strength,
+          skinProtectLevel: skinProtect,
+        ),
+      );
+      return true;
+    } catch (e) {
+      _error('Failed to set color enhance', e);
+      return false;
+    }
+  }
+
+  Future<bool> enableVirtualBackground({
+    required bool enabled,
+    int blurDegree = 2,
+    int? hexColor,
+    String? imagePath,
+  }) async {
+    try {
+      final engine = _engine;
+      if (engine == null) return false;
+
+      VirtualBackgroundSource source;
+      if (imagePath != null && imagePath.isNotEmpty) {
+        source = VirtualBackgroundSource(
+          backgroundSourceType: BackgroundSourceType.backgroundImg,
+          source: imagePath,
+        );
+      } else if (hexColor != null) {
+        source = VirtualBackgroundSource(
+          backgroundSourceType: BackgroundSourceType.backgroundColor,
+          color: hexColor,
+        );
+      } else {
+        source = VirtualBackgroundSource(
+          backgroundSourceType: BackgroundSourceType.backgroundBlur,
+          blurDegree: blurDegree == 1
+              ? BackgroundBlurDegree.blurDegreeLow
+              : blurDegree == 3
+                  ? BackgroundBlurDegree.blurDegreeHigh
+                  : BackgroundBlurDegree.blurDegreeMedium,
+        );
+      }
+
+      await engine.enableVirtualBackground(
+        enabled: enabled,
+        backgroundSource: source,
+        segproperty: const SegmentationProperty(),
+      );
+      return true;
+    } catch (e) {
+      _error('Failed to set virtual background', e);
       return false;
     }
   }

@@ -2,11 +2,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:flutter_svga/flutter_svga.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-import '../vap/vap_widget.dart';
 
 /// A custom MultiChildRenderObjectWidget that composites two children
 /// using an offscreen Canvas layer and a custom BlendMode.
@@ -87,10 +87,9 @@ class RenderBlendWidget extends RenderBox
   }
 }
 
-/// A high-performance player for side-by-side or top-and-bottom MP4 Alpha transparent videos,
-/// as well as standard full-frame MP4 videos.
-/// For Alpha videos, it displays the color half masked by the alpha mask half
-/// via a luminance-to-alpha ColorFilter and canvas blend mode.
+/// A high-performance player for side-by-side or top-and-bottom MP4 / VAP / VAR Alpha transparent videos.
+/// It renders the Color half and Alpha Mask half simultaneously from a SINGLE VideoPlayerController
+/// using hardware texture compositing (BlendMode.dstIn) with zero lag, zero sync drift, and buttery smooth 60fps.
 class AlphaVideoPlayer extends StatefulWidget {
   final VideoPlayerController controller;
   final BoxFit fit;
@@ -114,31 +113,24 @@ class AlphaVideoPlayer extends StatefulWidget {
 }
 
 class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
-  VideoPlayerController? _maskController;
-  bool _isMaskInitialized = false;
-
   @override
   void initState() {
     super.initState();
-    _initializeMask();
     _attachCompletionListener();
   }
 
   @override
   void didUpdateWidget(AlphaVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.controller.dataSource != oldWidget.controller.dataSource) {
-      _cleanupMask();
-      _initializeMask();
+    if (widget.controller != oldWidget.controller) {
+      oldWidget.controller.removeListener(_checkCompletion);
       _attachCompletionListener();
     }
   }
 
   @override
   void dispose() {
-    widget.controller.removeListener(_syncControllers);
     widget.controller.removeListener(_checkCompletion);
-    _cleanupMask();
     super.dispose();
   }
 
@@ -157,82 +149,6 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
     }
   }
 
-  void _cleanupMask() {
-    _maskController?.removeListener(_syncMaskPlayback);
-    _maskController?.dispose();
-    _maskController = null;
-    _isMaskInitialized = false;
-  }
-
-  void _initializeMask() {
-    final String url = widget.controller.dataSource;
-    if (url.isEmpty) return;
-
-    try {
-      if (widget.controller.dataSourceType == DataSourceType.file) {
-        final file = File(url);
-        _maskController = VideoPlayerController.file(file);
-      } else if (widget.controller.dataSourceType == DataSourceType.asset) {
-        _maskController = VideoPlayerController.asset(url);
-      } else {
-        _maskController = VideoPlayerController.networkUrl(
-          Uri.parse(url),
-          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-        );
-      }
-
-      _maskController!.initialize().then((_) {
-        if (mounted) {
-          setState(() {
-            _isMaskInitialized = true;
-          });
-          _maskController!.setLooping(widget.controller.value.isLooping);
-          _maskController!.setVolume(0.0); // Mute mask player to prevent audio echo
-          
-          // Sync initial play state
-          if (widget.controller.value.isPlaying) {
-            _maskController!.play();
-            _maskController!.seekTo(widget.controller.value.position);
-          }
-          
-          _maskController!.addListener(_syncMaskPlayback);
-        }
-      }).catchError((e) {
-        debugPrint('❌ [AlphaVideoPlayer] Mask controller init failed: $e');
-      });
-    } catch (e) {
-      debugPrint('❌ [AlphaVideoPlayer] Mask controller exception: $e');
-    }
-
-    widget.controller.addListener(_syncControllers);
-  }
-
-  void _syncControllers() {
-    if (_maskController == null || !_isMaskInitialized || !mounted) return;
-
-    // Sync play/pause state
-    if (widget.controller.value.isPlaying && !_maskController!.value.isPlaying) {
-      _maskController!.play();
-    } else if (!widget.controller.value.isPlaying && _maskController!.value.isPlaying) {
-      _maskController!.pause();
-    }
-
-    // Sync position if it drifts by more than 150ms
-    final diff = (widget.controller.value.position - _maskController!.value.position).inMilliseconds.abs();
-    if (diff > 150) {
-      _maskController!.seekTo(widget.controller.value.position);
-    }
-  }
-
-  void _syncMaskPlayback() {
-    if (_maskController == null || !_isMaskInitialized || !mounted) return;
-
-    // In case the mask player pauses itself or finishes early, keep in sync
-    if (widget.controller.value.isPlaying && !_maskController!.value.isPlaying) {
-      _maskController!.play();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     if (!widget.controller.value.isInitialized) {
@@ -245,127 +161,104 @@ class _AlphaVideoPlayerState extends State<AlphaVideoPlayer> {
       return const SizedBox.shrink();
     }
 
-    final double aspect = fullWidth / fullHeight;
-    // Determine whether video is side-by-side (~2:1), top-bottom (~1:2), or standard
-    final bool isSideBySide = !widget.isVerticalLayout && (aspect >= 1.45 || (widget.isAlphaOverride == true && aspect >= 1.0));
-    final bool isTopBottom = widget.isVerticalLayout || (aspect <= 0.7 && widget.isAlphaOverride == true);
-    final bool isAlpha = widget.isAlphaOverride ?? (isSideBySide || isTopBottom);
+    // Determine layout format:
+    // 1. Vertical layout if explicitly set or if height is significantly greater than width (e.g. 1000x2000)
+    final bool isVertical = widget.isVerticalLayout || (fullHeight >= fullWidth * 1.3);
 
-    if (!isAlpha) {
-      // Standard regular MP4 video playback (full frame)
-      return SizedBox.expand(
-        child: FittedBox(
-          fit: widget.fit,
-          child: SizedBox(
-            width: fullWidth,
-            height: fullHeight,
+    // Alpha transparent video display dimensions
+    final double displayWidth = isVertical ? fullWidth : (fullWidth / 2);
+    final double displayHeight = isVertical ? (fullHeight / 2) : fullHeight;
+
+    // Color filter converting grayscale luminance of the mask to Alpha channel
+    // Cleans up MPEG/H.264 compression artifacts on black background (noise floor reduction)
+    const ColorFilter alphaMaskFilter = ColorFilter.matrix(<double>[
+      0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0,
+      1.18, 0, 0, 0, -0.06,
+    ]);
+
+    Widget colorChild;
+    Widget maskChild;
+
+    if (isVertical) {
+      // Top-and-Bottom Vertical Stack
+      // Default: Top is Color, Bottom is Mask (unless isMaskLeft/isMaskTop is true)
+      colorChild = ClipRect(
+        child: Align(
+          alignment: widget.isMaskLeft ? Alignment.bottomCenter : Alignment.topCenter,
+          heightFactor: 0.5,
+          child: OverflowBox(
+            minWidth: fullWidth,
+            maxWidth: fullWidth,
+            minHeight: fullHeight,
+            maxHeight: fullHeight,
             child: VideoPlayer(widget.controller),
           ),
         ),
       );
-    }
 
-    if (isTopBottom) {
-      // Top-and-bottom stacked Alpha video
-      final double displayHeight = fullHeight / 2;
-      return SizedBox.expand(
-        child: FittedBox(
-          fit: widget.fit,
-          child: SizedBox(
-            width: fullWidth,
-            height: displayHeight,
-            child: RepaintBoundary(
-              child: BlendWidget(
-                colorChild: ClipRect(
-                  child: Align(
-                    alignment: widget.isMaskLeft ? Alignment.bottomCenter : Alignment.topCenter,
-                    heightFactor: 0.5,
-                    child: OverflowBox(
-                      minWidth: fullWidth,
-                      maxWidth: fullWidth,
-                      minHeight: fullHeight,
-                      maxHeight: fullHeight,
-                      child: VideoPlayer(widget.controller),
-                    ),
-                  ),
-                ),
-                maskChild: _isMaskInitialized
-                    ? ColorFiltered(
-                        colorFilter: const ColorFilter.matrix(<double>[
-                          0, 0, 0, 0, 0,
-                          0, 0, 0, 0, 0,
-                          0, 0, 0, 0, 0,
-                          1.4, 0, 0, 0, -0.15,
-                        ]),
-                        child: ClipRect(
-                          child: Align(
-                            alignment: widget.isMaskLeft ? Alignment.topCenter : Alignment.bottomCenter,
-                            heightFactor: 0.5,
-                            child: OverflowBox(
-                              minWidth: fullWidth,
-                              maxWidth: fullWidth,
-                              minHeight: fullHeight,
-                              maxHeight: fullHeight,
-                              child: VideoPlayer(_maskController!),
-                            ),
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-                blendMode: BlendMode.dstIn,
-              ),
+      maskChild = ColorFiltered(
+        colorFilter: alphaMaskFilter,
+        child: ClipRect(
+          child: Align(
+            alignment: widget.isMaskLeft ? Alignment.topCenter : Alignment.bottomCenter,
+            heightFactor: 0.5,
+            child: OverflowBox(
+              minWidth: fullWidth,
+              maxWidth: fullWidth,
+              minHeight: fullHeight,
+              maxHeight: fullHeight,
+              child: VideoPlayer(widget.controller),
+            ),
+          ),
+        ),
+      );
+    } else {
+      // Side-by-Side Horizontal Stack
+      // Default: Left is Color, Right is Mask (unless isMaskLeft is true)
+      colorChild = ClipRect(
+        child: Align(
+          alignment: widget.isMaskLeft ? Alignment.centerRight : Alignment.centerLeft,
+          widthFactor: 0.5,
+          child: OverflowBox(
+            minWidth: fullWidth,
+            maxWidth: fullWidth,
+            minHeight: fullHeight,
+            maxHeight: fullHeight,
+            child: VideoPlayer(widget.controller),
+          ),
+        ),
+      );
+
+      maskChild = ColorFiltered(
+        colorFilter: alphaMaskFilter,
+        child: ClipRect(
+          child: Align(
+            alignment: widget.isMaskLeft ? Alignment.centerLeft : Alignment.centerRight,
+            widthFactor: 0.5,
+            child: OverflowBox(
+              minWidth: fullWidth,
+              maxWidth: fullWidth,
+              minHeight: fullHeight,
+              maxHeight: fullHeight,
+              child: VideoPlayer(widget.controller),
             ),
           ),
         ),
       );
     }
 
-    // Side-by-side horizontal Alpha video
-    final double displayWidth = fullWidth / 2;
     return SizedBox.expand(
       child: FittedBox(
         fit: widget.fit,
         child: SizedBox(
           width: displayWidth,
-          height: fullHeight,
+          height: displayHeight,
           child: RepaintBoundary(
             child: BlendWidget(
-              colorChild: ClipRect(
-                child: Align(
-                  alignment: widget.isMaskLeft ? Alignment.centerRight : Alignment.centerLeft,
-                  widthFactor: 0.5,
-                  child: OverflowBox(
-                    minWidth: fullWidth,
-                    maxWidth: fullWidth,
-                    minHeight: fullHeight,
-                    maxHeight: fullHeight,
-                    child: VideoPlayer(widget.controller),
-                  ),
-                ),
-              ),
-              maskChild: _isMaskInitialized
-                  ? ColorFiltered(
-                      colorFilter: const ColorFilter.matrix(<double>[
-                        0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0,
-                        1.4, 0, 0, 0, -0.15, // Map Red channel of grayscale mask to Alpha with a linear threshold to clean up compression artifacts
-                      ]),
-                      child: ClipRect(
-                        child: Align(
-                          alignment: widget.isMaskLeft ? Alignment.centerLeft : Alignment.centerRight,
-                          widthFactor: 0.5,
-                          child: OverflowBox(
-                            minWidth: fullWidth,
-                            maxWidth: fullWidth,
-                            minHeight: fullHeight,
-                            maxHeight: fullHeight,
-                            child: VideoPlayer(_maskController!),
-                          ),
-                        ),
-                      ),
-                    )
-                  : const SizedBox.shrink(),
+              colorChild: colorChild,
+              maskChild: maskChild,
               blendMode: BlendMode.dstIn,
             ),
           ),
@@ -395,7 +288,7 @@ class FastAssetCache {
     try {
       if (lower.contains('.svga')) {
         await decodeSvga(cleanUrl);
-      } else if (lower.contains('.mp4') || lower.contains('.vap')) {
+      } else if (lower.contains('.mp4') || lower.contains('.vap') || lower.contains('.var') || lower.contains('.mov') || lower.contains('.webm')) {
         await getVideoFile(cleanUrl);
       } else {
         await DefaultCacheManager().getSingleFile(cleanUrl);
@@ -560,7 +453,7 @@ class FastAssetCache {
 }
 
 /// A unified widget that can display SVGA, MP4 (with transparent Alpha video support),
-/// and standard PNG/JPEG images. It accepts either remote URLs or local Files
+/// VAP, VAR, and standard PNG/JPEG/WebP images. It accepts either remote URLs or local Files
 /// and handles initialization and rendering seamlessly.
 class UniversalAssetWidget extends StatefulWidget {
   final String? url;
@@ -609,6 +502,7 @@ class UniversalAssetWidget extends StatefulWidget {
 
 class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
   VideoPlayerController? _videoController;
+  String? _localVideoPath;
   bool _isVideoInitialized = false;
   bool _hasVideoError = false;
   final List<File> _tempFiles = [];
@@ -643,8 +537,43 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
     super.dispose();
   }
 
+  bool _isFormat(String extension) {
+    if (widget.file != null) {
+      return widget.file!.path.toLowerCase().endsWith('.$extension');
+    }
+    if (widget.url != null) {
+      final cleanUrl = widget.url!.split('?').first.toLowerCase();
+      return cleanUrl.endsWith('.$extension') || cleanUrl.contains('.$extension');
+    }
+    return false;
+  }
+
+  bool get _isVideoType {
+    if (widget.file != null) {
+      final p = widget.file!.path.toLowerCase();
+      return p.endsWith('.mp4') || p.endsWith('.vap') || p.endsWith('.var') || p.endsWith('.mov') || p.endsWith('.webm');
+    }
+    if (widget.url != null) {
+      final clean = widget.url!.split('?').first.toLowerCase();
+      return clean.endsWith('.mp4') || clean.endsWith('.vap') || clean.endsWith('.var') || clean.endsWith('.mov') || clean.endsWith('.webm') ||
+             clean.contains('.mp4') || clean.contains('.vap') || clean.contains('.var');
+    }
+    return false;
+  }
+
+  bool get _isSvgaType {
+    if (widget.file != null) {
+      return widget.file!.path.toLowerCase().endsWith('.svga');
+    }
+    if (widget.url != null) {
+      final clean = widget.url!.split('?').first.toLowerCase();
+      return clean.endsWith('.svga') || clean.contains('.svga');
+    }
+    return false;
+  }
+
   void _loadSvgaIfNeeded() async {
-    if (!_isFormat('svga')) return;
+    if (!_isSvgaType) return;
 
     final sourceKey = widget.url ?? widget.file?.path;
     if (sourceKey == null || sourceKey.isEmpty) return;
@@ -683,6 +612,7 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
   void _cleanupVideo() {
     _videoController?.dispose();
     _videoController = null;
+    _localVideoPath = null;
     _isVideoInitialized = false;
     _hasVideoError = false;
 
@@ -701,18 +631,15 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
 
   void _initializeIfNeeded() async {
     final int loadId = ++_currentLoadId;
-    if (_isFormat('vap') && Platform.isAndroid) {
-      return;
-    }
-    final bool isMp4 = _isFormat('mp4') || _isFormat('vap');
 
-    if (isMp4) {
+    if (_isVideoType) {
       try {
         File? videoFile;
 
         if (widget.file != null) {
           File fileToUse = widget.file!;
-          if (fileToUse.path.toLowerCase().endsWith('.vap')) {
+          final pathLower = fileToUse.path.toLowerCase();
+          if (pathLower.endsWith('.vap') || pathLower.endsWith('.var')) {
             try {
               final tempDir = Directory.systemTemp;
               final tempPath = '${tempDir.path}/temp_preview_${DateTime.now().microsecondsSinceEpoch}.mp4';
@@ -721,7 +648,7 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
               fileToUse = tempFile;
               _tempFiles.add(tempFile);
             } catch (e) {
-              debugPrint('⚠️ [UniversalAssetWidget] Failed to copy local VAP to temporary MP4: $e');
+              debugPrint('⚠️ [UniversalAssetWidget] Failed to copy local VAP/VAR to temporary MP4: $e');
             }
           }
           videoFile = fileToUse;
@@ -730,6 +657,20 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
         }
 
         if (loadId != _currentLoadId) return;
+
+        if (videoFile != null) {
+          _localVideoPath = videoFile.path;
+        }
+
+        // On Android, alpha transparent videos use native Tencent VAP OpenGL ES engine
+        if (defaultTargetPlatform == TargetPlatform.android && widget.isAlphaVideo) {
+          if (mounted && _localVideoPath != null) {
+            setState(() {
+              _isVideoInitialized = true;
+            });
+          }
+          return;
+        }
 
         if (videoFile != null) {
           _videoController = VideoPlayerController.file(videoFile);
@@ -767,23 +708,13 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
     }
   }
 
-  bool _isFormat(String extension) {
-    if (widget.file != null) {
-      return widget.file!.path.toLowerCase().endsWith('.$extension');
-    }
-    if (widget.url != null) {
-      // Strips query parameters from the url to check extension
-      final cleanUrl = widget.url!.split('?').first.toLowerCase();
-      return cleanUrl.endsWith('.$extension') || cleanUrl.contains('.$extension');
-    }
-    return false;
-  }
-
   bool get _effectiveIsMaskLeft {
     if (widget.isMaskLeft != null) return widget.isMaskLeft!;
     final source = (widget.file?.path ?? widget.url ?? '').toLowerCase();
     return source.contains('mask_left') ||
         source.contains('left_mask') ||
+        source.contains('maskleft') ||
+        source.contains('leftmask') ||
         source.contains('drive_file') ||
         source.contains('temp.mp4');
   }
@@ -792,14 +723,7 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
   Widget build(BuildContext context) {
     Widget result;
 
-    if (_isFormat('vap') && Theme.of(context).platform == TargetPlatform.android) {
-      final vapSource = widget.file != null ? widget.file!.path : (widget.url ?? '');
-      result = VapWidget(
-        url: vapSource,
-        fit: widget.fit,
-        isMaskLeft: _effectiveIsMaskLeft,
-      );
-    } else if (_isFormat('mp4') || _isFormat('vap')) {
+    if (_isVideoType) {
       if (_hasVideoError) {
         result = widget.errorWidget ??
             (widget.isAlphaVideo
@@ -807,14 +731,28 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
                 : const Center(
                     child: Icon(Icons.image, color: Colors.red, size: 36),
                   ));
-      } else if (!_isVideoInitialized || _videoController == null) {
+      } else if (!_isVideoInitialized || (_localVideoPath == null && _videoController == null)) {
         result = widget.placeholder ??
             (widget.isAlphaVideo
                 ? const SizedBox.shrink()
                 : const Center(
                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pinkAccent),
                   ));
-      } else if (widget.isAlphaVideo) {
+      } else if (widget.isAlphaVideo && defaultTargetPlatform == TargetPlatform.android && _localVideoPath != null) {
+        // Native Hardware OpenGL ES VAP Renderer with 100% true Alpha Transparency
+        result = AndroidView(
+          key: ValueKey('vap_view_${_localVideoPath}_${widget.looping}'),
+          viewType: 'imchat/vap_view',
+          creationParams: {
+            'path': _localVideoPath,
+            'isMaskLeft': _effectiveIsMaskLeft,
+            'isVertical': widget.isVerticalLayout,
+            'loop': widget.looping,
+            'fit': widget.fit == BoxFit.cover ? 'cover' : (widget.fit == BoxFit.fill ? 'fill' : 'contain'),
+          },
+          creationParamsCodec: const StandardMessageCodec(),
+        );
+      } else if (widget.isAlphaVideo && _videoController != null) {
         result = AlphaVideoPlayer(
           controller: _videoController!,
           fit: widget.fit,
@@ -822,7 +760,7 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
           isVerticalLayout: widget.isVerticalLayout,
           onComplete: widget.onComplete,
         );
-      } else {
+      } else if (_videoController != null) {
         result = SizedBox.expand(
           child: FittedBox(
             fit: widget.fit,
@@ -833,8 +771,10 @@ class _UniversalAssetWidgetState extends State<UniversalAssetWidget> {
             ),
           ),
         );
+      } else {
+        result = widget.placeholder ?? const SizedBox.shrink();
       }
-    } else if (_isFormat('svga')) {
+    } else if (_isSvgaType) {
       if (_svgaMovie != null) {
         result = _LocalSvgaPlayer(
           key: ValueKey(_svgaLoadedSource),

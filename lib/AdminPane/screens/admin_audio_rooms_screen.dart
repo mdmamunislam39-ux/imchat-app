@@ -213,7 +213,7 @@ class _AdminAudioRoomsScreenState extends State<AdminAudioRoomsScreen> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: isFrame ? ['png', 'gif', 'svga'] : ['png', 'jpg', 'jpeg'],
+        allowedExtensions: isFrame ? ['png', 'gif', 'svga', 'mp4', 'vap', 'var', 'webp'] : ['png', 'jpg', 'jpeg', 'webp'],
       );
 
       if (result != null && result.files.single.path != null) {

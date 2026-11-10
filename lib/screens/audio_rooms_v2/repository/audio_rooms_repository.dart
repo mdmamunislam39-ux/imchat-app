@@ -255,6 +255,9 @@ class AudioRoomsRepository {
       final List<AudioRoomV2> joinedRoomsList = [];
 
       for (final room in allUniqueRooms) {
+        // Video rooms must NOT appear or be saved in the Mine tab
+        if (room.category == 'Live') continue;
+
         if (room.creatorId == userId) {
           ownerRoomsList.add(room);
         } else if (room.settings.adminIds.contains(userId)) {
@@ -330,21 +333,37 @@ class AudioRoomsRepository {
         phone: effectivePhone,
       );
 
-      // Generate unique 7-8 digit numeric Room ID
+      // For Live Video Rooms, room ID is strictly the creator's user ID with no random ID generated.
+      // For Audio Rooms, generate a unique 7-8 digit numeric Room ID.
       String roomId = '';
-      bool exists = true;
-      final random = Random();
+      Map<String, dynamic>? existingLiveDocData;
 
-      while (exists) {
-        // Generate random number between 1,000,000 and 99,999,999
-        final number = 1000000 + random.nextInt(99000000);
-        roomId = number.toString();
+      if (category == 'Live') {
+        roomId = creatorId;
+        try {
+          final doc = await _roomsCollection.doc(roomId).get();
+          if (doc.exists && doc.data() != null) {
+            existingLiveDocData = doc.data() as Map<String, dynamic>?;
+            debugPrint('🏠 [AudioRooms] Found existing Live room data for user $creatorId. Historical stats will be preserved.');
+          }
+        } catch (e) {
+          debugPrint('🏠 [AudioRooms] Error checking existing live room doc: $e');
+        }
+      } else {
+        bool exists = true;
+        final random = Random();
 
-        final doc = await _roomsCollection.doc(roomId).get();
-        exists = doc.exists;
+        while (exists) {
+          // Generate random number between 1,000,000 and 99,999,999
+          final number = 1000000 + random.nextInt(99000000);
+          roomId = number.toString();
+
+          final doc = await _roomsCollection.doc(roomId).get();
+          exists = doc.exists;
+        }
       }
 
-      debugPrint('🏠 [AudioRooms] Generated numeric Room ID: $roomId (Country: $effectiveCountry - $effectiveCountryCode)');
+      debugPrint('🏠 [AudioRooms] Room ID: $roomId (Category: $category, Country: $effectiveCountry - $effectiveCountryCode)');
 
       // Create initial seat configuration based on room mode
       final roomSettings = settings ?? const AudioRoomSettings();
@@ -421,6 +440,47 @@ class AudioRoomsRepository {
         seatColorMode: effectiveSeatColorMode,
       );
 
+      // Extract historical earnings & contributor stats if reactivating an existing Live Room
+      int totalRevenue = 0;
+      int dailyRevenue = 0;
+      int weeklyRevenue = 0;
+      int monthlyRevenue = 0;
+      int recentGiftsDiamonds = 0;
+      DateTime createdAt = DateTime.now();
+      Map<String, RoomContributor> contributors = {};
+      Map<String, int> dailyUserReceivedBeans = {};
+
+      if (existingLiveDocData != null) {
+        totalRevenue = (existingLiveDocData['totalRevenue'] as num?)?.toInt() ?? 0;
+        dailyRevenue = (existingLiveDocData['dailyRevenue_${RankingHelper.dailySuffix}'] as num?)?.toInt() ??
+            (existingLiveDocData['dailyRevenue'] as num?)?.toInt() ??
+            0;
+        weeklyRevenue = (existingLiveDocData['weeklyRevenue_${RankingHelper.weeklySuffix}'] as num?)?.toInt() ??
+            (existingLiveDocData['weeklyRevenue'] as num?)?.toInt() ??
+            0;
+        monthlyRevenue = (existingLiveDocData['monthlyRevenue_${RankingHelper.monthlySuffix}'] as num?)?.toInt() ??
+            (existingLiveDocData['monthlyRevenue'] as num?)?.toInt() ??
+            0;
+        recentGiftsDiamonds = (existingLiveDocData['recentGiftsDiamonds'] as num?)?.toInt() ?? 0;
+        // For Live rooms, createdAt must always be the start time of the current live session
+        if (existingLiveDocData['createdAt'] is Timestamp && category != 'Live') {
+          createdAt = (existingLiveDocData['createdAt'] as Timestamp).toDate();
+        }
+        if (existingLiveDocData['contributors'] is Map) {
+          contributors = (existingLiveDocData['contributors'] as Map).map(
+            (key, value) => MapEntry(
+              key.toString(),
+              RoomContributor.fromJson(Map<String, dynamic>.from(value as Map)),
+            ),
+          );
+        }
+        if (existingLiveDocData['userReceivedBeans_${RankingHelper.daily22CycleSuffix}'] is Map) {
+          dailyUserReceivedBeans = (existingLiveDocData['userReceivedBeans_${RankingHelper.daily22CycleSuffix}'] as Map).map(
+            (key, value) => MapEntry(key.toString(), (value as num?)?.toInt() ?? 0),
+          );
+        }
+      }
+
       // Create room immediately without waiting for image upload
       final room = AudioRoomV2(
         id: roomId,
@@ -446,16 +506,49 @@ class AudioRoomsRepository {
             isSeated: true, // Host is seated
           ),
         ],
-        createdAt: DateTime.now(),
+        createdAt: createdAt,
         updatedAt: DateTime.now(),
+        isActive: true,
         settings: effectiveSettings,
         joinedUserIds: [creatorId],
         category: category ?? 'Game',
         roomLink: 'https://invite.imchatapp.com/room/$roomId',
+        totalRevenue: totalRevenue,
+        dailyRevenue: dailyRevenue,
+        weeklyRevenue: weeklyRevenue,
+        monthlyRevenue: monthlyRevenue,
+        contributors: contributors,
+        dailyUserReceivedBeans: dailyUserReceivedBeans,
+        recentGiftsDiamonds: recentGiftsDiamonds,
       );
 
-      debugPrint('🏠 [AudioRooms] Saving room to Firestore...');
-      await _roomsCollection.doc(roomId).set(room.toFirestore());
+      debugPrint('🏠 [AudioRooms] Saving room to Firestore (merging historical stats if applicable)...');
+      final roomData = room.toFirestore();
+      if (category == 'Live') {
+        roomData['createdAt'] = Timestamp.now();
+        roomData['liveStartedAt'] = Timestamp.now();
+        roomData['liveSessionDiamonds'] = 0;
+        roomData['liveSessionGifts'] = 0;
+        roomData['joinedUserIds'] = [creatorId];
+        roomData['isActive'] = true;
+        roomData['participants'] = [
+          {
+            'userId': creatorId,
+            'userName': creatorName,
+            'userImageUrl': creatorImageUrl,
+            'frameId': creatorFrameId,
+            'joinedAt': Timestamp.now(),
+            'isHost': true,
+            'isSpeaker': true,
+            'seatNumber': 1,
+            'isSeated': true,
+          }
+        ];
+        if (currentUser.searchId.isNotEmpty) {
+          roomData['creatorSearchId'] = currentUser.searchId;
+        }
+      }
+      await _roomsCollection.doc(roomId).set(roomData, SetOptions(merge: true));
 
       final roomCreationTime =
           DateTime.now().difference(startTime).inMilliseconds;
@@ -798,8 +891,9 @@ class AudioRoomsRepository {
       // If creator leaves, the live room ends (since deletion is disabled, we set isActive = false)
       if (room.isCreator(userId) && room.category == 'Live') {
         shouldEndRoom = true;
+        updatedParticipants.clear();
         debugPrint(
-            '🗑️ [RoomCleanup] Admin leaving Live room, ending the room by setting isActive = false.');
+            '🗑️ [RoomCleanup] Host leaving Live room, ending the room by setting isActive = false and clearing participants.');
       } else if (room.isCreator(userId)) {
         debugPrint(
             '🚪 [RoomCleanup] Admin leaving Audio room, room remains active.');
@@ -821,11 +915,20 @@ class AudioRoomsRepository {
         participants: updatedParticipants,
         settings: room.settings.copyWith(seatConfiguration: updatedSeats),
         membersLastActive: updatedLastActive,
+        joinedUserIds: shouldEndRoom ? [] : room.joinedUserIds,
         isActive: !shouldEndRoom,
         updatedAt: DateTime.now(),
       );
 
-      await _roomsCollection.doc(roomId).update(updatedRoom.toFirestore());
+      final firestoreData = updatedRoom.toFirestore();
+      if (shouldEndRoom) {
+        firestoreData['joinedUserIds'] = [];
+        firestoreData['participants'] = [];
+        firestoreData['liveSessionDiamonds'] = 0;
+        firestoreData['liveSessionGifts'] = 0;
+      }
+
+      await _roomsCollection.doc(roomId).update(firestoreData);
 
       // Clear Realtime Database presence since user left cleanly
       try {
@@ -846,11 +949,25 @@ class AudioRoomsRepository {
   /// Resume a hidden Live room by setting isActive = true
   Future<void> resumeRoom(String roomId) async {
     try {
-      await _roomsCollection.doc(roomId).update({
+      final doc = await _roomsCollection.doc(roomId).get();
+      final data = doc.data() as Map<String, dynamic>?;
+      final isLive = data?['category'] == 'Live';
+      final creatorId = (data?['creatorId'] ?? '').toString();
+
+      final updates = <String, dynamic>{
         'isActive': true,
         'updatedAt': DateTime.now(),
-      });
-      debugPrint('▶️ [AudioRooms] Resumed Live Room $roomId (isActive = true)');
+      };
+      if (isLive) {
+        updates['createdAt'] = Timestamp.now();
+        updates['liveStartedAt'] = Timestamp.now();
+        updates['joinedUserIds'] = creatorId.isNotEmpty ? [creatorId] : [];
+        updates['liveSessionDiamonds'] = 0;
+        updates['liveSessionGifts'] = 0;
+      }
+
+      await _roomsCollection.doc(roomId).update(updates);
+      debugPrint('▶️ [AudioRooms] Resumed Live Room $roomId (isActive = true, fresh session started)');
     } catch (e) {
       debugPrint('⚠️ [AudioRooms] Failed to resume room: $e');
       throw Exception('Failed to resume room: $e');

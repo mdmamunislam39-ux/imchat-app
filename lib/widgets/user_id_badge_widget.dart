@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter_svga/flutter_svga.dart';
 import 'package:flutter/services.dart';
+import 'package:chat_messenger/components/universal_asset_widget.dart';
 
 /// User ID Badge Widget that renders the custom graphic PNG/SVGA/GIF/WebP banner
 /// and superimposes the numeric ID perfectly in the empty space of the capsule banner.
@@ -203,28 +202,17 @@ class UserIdBadgeWidget extends StatelessWidget {
   }
 
   Widget _buildMediaBadge(String url, double width, double height) {
-    final lower = url.toLowerCase();
-
-    // SVGA Animation support
-    if (lower.contains('.svga')) {
-      return SizedBox(
-        width: width,
-        height: height,
-        child: SVGAEasyPlayer(
-          resUrl: url,
-          fit: BoxFit.fill,
-        ),
-      );
-    }
-
-    // WebP, GIF, PNG support
-    return CachedNetworkImage(
-      imageUrl: url,
+    return SizedBox(
       width: width,
       height: height,
-      fit: BoxFit.fill,
-      placeholder: (context, url) => SizedBox(width: width, height: height),
-      errorWidget: (context, url, error) => const SizedBox.shrink(),
+      child: UniversalAssetWidget(
+        key: ValueKey(url),
+        url: url,
+        width: width,
+        height: height,
+        fit: BoxFit.fill,
+        isAlphaVideo: true,
+      ),
     );
   }
 }

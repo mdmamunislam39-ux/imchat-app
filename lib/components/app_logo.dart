@@ -17,8 +17,11 @@ class AppLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!Get.isRegistered<AppThemeService>()) {
+      return _buildAssetLogo();
+    }
+    final themeService = Get.find<AppThemeService>();
     return Obx(() {
-      final themeService = Get.find<AppThemeService>();
       if (themeService.appLogoUrl.value.isNotEmpty) {
         return CachedNetworkImage(
           imageUrl: themeService.appLogoUrl.value,

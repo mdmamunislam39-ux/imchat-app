@@ -83,7 +83,13 @@ class MessageBadge extends StatelessWidget {
         rowInfo(icon: IconlyBold.document, title: 'document'.tr),
       MessageType.location =>
         rowInfo(icon: IconlyBold.location, title: 'location'.tr),
-      _ => const SizedBox.shrink(),
+      MessageType.hostInvitation =>
+        rowInfo(icon: Icons.business_center, title: textMsg.isNotEmpty ? textMsg : '🏆 Agency Invitation'),
+      MessageType.relationshipInvitation =>
+        rowInfo(icon: Icons.favorite, title: textMsg.isNotEmpty ? textMsg : '❤️ Intimacy Invitation'),
+      MessageType.roomShare =>
+        rowInfo(icon: Icons.mic, title: textMsg.isNotEmpty ? textMsg : '🎙️ Voice Room Shared'),
+      _ => rowInfo(title: textMsg),
     };
   }
 

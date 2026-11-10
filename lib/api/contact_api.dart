@@ -151,11 +151,17 @@ abstract class ContactApi {
   }) async {
     try {
       final User currentUser = AuthController.instance.currentUser;
+      final String myId = currentUser.userId.isNotEmpty
+          ? currentUser.userId
+          : (AuthController.instance.firebaseUser?.uid ?? '');
+      if (myId.isEmpty || userId.isEmpty) return;
 
       await Future.wait([
         // Save for current user
         _firestore
-            .collection('Users/${currentUser.userId}/Contacts')
+            .collection('Users')
+            .doc(myId)
+            .collection('Contacts')
             .doc(userId)
             .set({
           'userId': userId,
@@ -163,10 +169,12 @@ abstract class ContactApi {
         }),
         // Save for onother user
         _firestore
-            .collection('Users/$userId/Contacts')
-            .doc(currentUser.userId)
+            .collection('Users')
+            .doc(userId)
+            .collection('Contacts')
+            .doc(myId)
             .set({
-          'userId': currentUser.userId,
+          'userId': myId,
           'createdAt': FieldValue.serverTimestamp()
         }),
       ]);
@@ -292,15 +300,35 @@ abstract class ContactApi {
 
   // Get contacts list
   static Stream<List<User>> getContacts() {
-    final User currentUser = AuthController.instance.currentUser;
+    String currentUserId = AuthController.instance.currentUser.userId;
+    if (currentUserId.isEmpty) {
+      currentUserId = AuthController.instance.firebaseUser?.uid ?? '';
+    }
+
+    if (currentUserId.isEmpty) {
+      return AuthController.instance.currentUserStream.asyncExpand((user) {
+        if (user != null && user.userId.isNotEmpty) {
+          return _getContactsStream(user.userId);
+        }
+        return Stream.value(<User>[]);
+      });
+    }
+
+    return _getContactsStream(currentUserId);
+  }
+
+  static Stream<List<User>> _getContactsStream(String userId) {
+    if (userId.trim().isEmpty) return Stream.value(<User>[]);
 
     return _firestore
-        .collection('Users/${currentUser.userId}/Contacts')
+        .collection('Users')
+        .doc(userId)
+        .collection('Contacts')
         .orderBy('createdAt', descending: true)
         .snapshots()
         .asyncMap((event) async {
       List<User> users = [];
-      debugPrint('--- [Diagnostic] getContacts(): Fetched ${event.docs.length} docs from Users/${currentUser.userId}/Contacts ---');
+      debugPrint('--- [Diagnostic] getContacts(): Fetched ${event.docs.length} docs from Users/$userId/Contacts ---');
       for (var doc in event.docs) {
         try {
           final User? user = await UserApi.getUser(doc.id);
@@ -320,9 +348,16 @@ abstract class ContactApi {
   static Future<bool> isContact(String targetUserId) async {
     try {
       final User currentUser = AuthController.instance.currentUser;
-      if (currentUser.userId == targetUserId) return true;
+      final String myId = currentUser.userId.isNotEmpty
+          ? currentUser.userId
+          : (AuthController.instance.firebaseUser?.uid ?? '');
+      if (myId.isEmpty || targetUserId.isEmpty) return false;
+      if (myId == targetUserId) return true;
+
       final doc = await _firestore
-          .collection('Users/${currentUser.userId}/Contacts')
+          .collection('Users')
+          .doc(myId)
+          .collection('Contacts')
           .doc(targetUserId)
           .get();
       return doc.exists;
@@ -335,9 +370,15 @@ abstract class ContactApi {
   static Future<void> deleteContact(String userId) async {
     try {
       final User currentUser = AuthController.instance.currentUser;
+      final String myId = currentUser.userId.isNotEmpty
+          ? currentUser.userId
+          : (AuthController.instance.firebaseUser?.uid ?? '');
+      if (myId.isEmpty || userId.isEmpty) return;
 
       await _firestore
-          .collection('Users/${currentUser.userId}/Contacts')
+          .collection('Users')
+          .doc(myId)
+          .collection('Contacts')
           .doc(userId)
           .delete();
       DialogHelper.showSnackbarMessage(

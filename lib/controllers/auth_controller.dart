@@ -228,72 +228,114 @@ class AuthController extends GetxController {
   }
 
   // Handle user auth
-  Future<void> checkUserAccount() async {
-    // Check logged in firebase user
-    if (firebaseUser == null) {
-      Future(() => Get.offAllNamed(AppRoutes.phoneSignIn));
-      return;
+  Future<void> checkUserAccount({Duration minDelay = Duration.zero}) async {
+    final stopwatch = Stopwatch()..start();
+
+    Future<void> safeNavigate(VoidCallback navAction) async {
+      if (minDelay > Duration.zero) {
+        final remaining = minDelay - stopwatch.elapsed;
+        if (remaining > Duration.zero) {
+          await Future.delayed(remaining);
+        }
+      }
+      navAction();
     }
 
-    // Init app controller
-    Get.put(AppController(), permanent: true);
+    try {
+      // Check logged in firebase user
+      if (firebaseUser == null) {
+        await safeNavigate(() => Get.offAllNamed(AppRoutes.phoneSignIn));
+        return;
+      }
 
-    // Parallelize user fetching and device ban check
-    final results = await Future.wait([
-      UserApi.getUser(firebaseUser!.uid),
-      BanService.isDeviceBanned(),
-    ]);
+      // Init app controller
+      if (!Get.isRegistered<AppController>()) {
+        Get.put(AppController(), permanent: true);
+      }
 
-    User? user = results[0] as User?;
-    final isDeviceBanned = results[1] as bool;
+      // Parallelize user fetching and device ban check with safe timeout
+      final results = await Future.wait([
+        UserApi.getUser(firebaseUser!.uid).timeout(const Duration(seconds: 8)),
+        BanService.isDeviceBanned().timeout(const Duration(seconds: 8)),
+      ]);
 
-    // Check device ban
-    if (isDeviceBanned) {
-      await _firebaseAuth.signOut();
-      Future(() => Get.offAllNamed(AppRoutes.phoneSignIn));
-      Get.snackbar('Device Banned', 'This device has been temporarily banned from logging in.', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 4));
-      return;
+      User? user = results[0] as User?;
+      final isDeviceBanned = results[1] as bool;
+
+      // Check device ban
+      if (isDeviceBanned) {
+        try {
+          await _firebaseAuth.signOut();
+        } catch (_) {}
+        await safeNavigate(() => Get.offAllNamed(AppRoutes.phoneSignIn));
+        Get.snackbar(
+          'Device Banned',
+          'This device has been temporarily banned from logging in.',
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 4),
+        );
+        return;
+      }
+
+      // Check if account exists with this email (e.g. bound account)
+      if (user == null && firebaseUser!.email != null && firebaseUser!.email!.isNotEmpty) {
+        try {
+          user = await UserApi.getUserByEmail(firebaseUser!.email!).timeout(const Duration(seconds: 8));
+        } catch (e) {
+          debugPrint('⚠️ [AuthController] getUserByEmail error: $e');
+        }
+      }
+
+      // Check user
+      if (user == null) {
+        final phone = firebaseUser!.phoneNumber ?? '';
+        await safeNavigate(() => Get.offAllNamed(AppRoutes.signUp, arguments: {'number': phone}));
+        return;
+      }
+
+      // Check blocked account status
+      if (user.status == 'blocked') {
+        await safeNavigate(() => Get.offAllNamed(AppRoutes.blockedAccount));
+        return;
+      }
+
+      // Check login ban
+      if (BanService.isAccountLoginBanned(user)) {
+        final message = BanService.getLoginBanMessage(user);
+        try {
+          await _firebaseAuth.signOut();
+        } catch (_) {}
+        await safeNavigate(() => Get.offAllNamed(AppRoutes.phoneSignIn));
+        Get.snackbar(
+          'Account Banned',
+          message,
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 5),
+        );
+        return;
+      }
+
+      // Update the current user model
+      _updateCurrentUser(user);
+
+      // Update current user info & device session in background without delaying navigation
+      unawaited(UserApi.updateUserInfo(user));
+      unawaited(DeviceSessionService.registerSession(firebaseUser!.uid));
+
+      // Go to home page smoothly
+      await safeNavigate(() => Get.offAllNamed(AppRoutes.home));
+      Future.delayed(const Duration(milliseconds: 300), () {
+        DeepLinkService.checkPendingDeepLinks();
+      });
+    } catch (e) {
+      debugPrint('⚠️ [AuthController] Error in checkUserAccount: $e');
+      // If an error occurs, do not get stuck on splash screen forever!
+      if (_currentUser.value != null && _currentUser.value!.userId.isNotEmpty) {
+        await safeNavigate(() => Get.offAllNamed(AppRoutes.home));
+      } else {
+        await safeNavigate(() => Get.offAllNamed(AppRoutes.phoneSignIn));
+      }
     }
-
-    // Check if account exists with this email (e.g. bound account)
-    if (user == null && firebaseUser!.email != null && firebaseUser!.email!.isNotEmpty) {
-      user = await UserApi.getUserByEmail(firebaseUser!.email!);
-    }
-
-    // Check user
-    if (user == null) {
-      final phone = firebaseUser!.phoneNumber ?? '';
-      Future(() => Get.offAllNamed(AppRoutes.signUp, arguments: {'number': phone}));
-      return;
-    }
-
-    // Check blocked account status
-    if (user.status == 'blocked') {
-      Future(() => Get.offAllNamed(AppRoutes.blockedAccount));
-      return;
-    }
-
-    // Check login ban
-    if (BanService.isAccountLoginBanned(user)) {
-      final message = BanService.getLoginBanMessage(user);
-      await _firebaseAuth.signOut();
-      Future(() => Get.offAllNamed(AppRoutes.phoneSignIn));
-      Get.snackbar('Account Banned', message, snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 5));
-      return;
-    }
-
-    // Update the current user model
-    _updateCurrentUser(user);
-
-    // Update current user info & device session in background without delaying navigation
-    unawaited(UserApi.updateUserInfo(user));
-    unawaited(DeviceSessionService.registerSession(firebaseUser!.uid));
-
-    // Go to home page immediately
-    Get.offAllNamed(AppRoutes.home);
-    Future.delayed(const Duration(milliseconds: 300), () {
-      DeepLinkService.checkPendingDeepLinks();
-    });
   }
 
   Future<void> getCurrentUserAndLoadData() async {

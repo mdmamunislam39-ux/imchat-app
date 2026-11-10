@@ -7,6 +7,8 @@ import 'package:chat_messenger/models/user.dart';
 import 'package:chat_messenger/services/gift_economy_service.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
 import 'package:chat_messenger/components/dynamic_bean_icon.dart';
+import 'package:chat_messenger/config/theme_config.dart';
+import 'package:chat_messenger/screens/room/user_withdrawal_history_screen.dart';
 
 class WithdrawPackage {
   final int usdAmount;
@@ -1124,7 +1126,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           '• Withdrawals are processed within 7 working days.\n'
           '• Only Beans balance can be withdrawn.\n'
           '• Ensure your selected coin dealer and withdrawal account are correct.\n'
-          '• If you have any inquiries, contact support at cs@yoho.media.',
+          '• If you have any inquiries, please contact Official Support in the app.',
           style: TextStyle(fontSize: 14, color: Colors.black87, height: 1.5),
         ),
         actions: [
@@ -1179,96 +1181,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   }
 
   void _showWithdrawalRecords() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserWithdrawalHistoryScreen(
+          currentUser: _currentUser,
+        ),
       ),
-      builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Withdrawal Records',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              FutureBuilder<List<Map<String, dynamic>>>(
-                future: _giftEconomyService.getUserWithdrawals(_currentUser.userId),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24.0),
-                        child: CircularProgressIndicator(),
-                      ),
-                    );
-                  }
-                  final records = snapshot.data ?? [];
-                  if (records.isEmpty) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24.0),
-                        child: Text(
-                          'No withdrawal records found.',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ),
-                    );
-                  }
-                  return Expanded(
-                    child: ListView.separated(
-                      itemCount: records.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final rec = records[index];
-                        final amount = rec['beanAmount'] ?? rec['amount'] ?? 0;
-                        final usd = rec['usdAmount'];
-                        final status = rec['status'] ?? 'pending';
-
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const DynamicBeanIcon(width: 24, height: 24),
-                          title: Text(
-                            usd != null ? '\$ $usd ($amount Beans)' : '$amount Beans',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text('Account: ${rec['accountNumber'] ?? ''}'),
-                          trailing: Text(
-                            status.toString().toUpperCase(),
-                            style: TextStyle(
-                              color: status == 'approved'
-                                  ? Colors.green
-                                  : status == 'rejected'
-                                      ? Colors.red
-                                      : Colors.orange,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -1280,6 +1199,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF9FAFC),
       appBar: AppBar(
+        systemOverlayStyle: getSystemOverlayStyle(false),
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
@@ -1317,9 +1237,12 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Column(
+      body: SafeArea(
+        top: false,
+        bottom: true,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Balance Section (Showing Beans Balance)
@@ -1358,7 +1281,72 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+
+            // History & Records Fullscreen Link
+            GestureDetector(
+              onTap: _showWithdrawalRecords,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.02),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF8E44AD).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.receipt_long_rounded,
+                        color: Color(0xFF8E44AD),
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Withdrawal Records & Status',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          Text(
+                            'View pending, paid & completed history',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      color: Colors.grey,
+                      size: 14,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
 
             // "Withdraw to" Section
             Text(
@@ -1675,19 +1663,10 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Contact us if you have any question.:',
+                    'For inquiries, please contact imChat Official Support.',
                     style: TextStyle(
                       color: Colors.grey.shade500,
                       fontSize: 11,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'cs@yoho.media',
-                    style: TextStyle(
-                      color: Colors.grey.shade600,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -1697,8 +1676,9 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 // ==========================================
@@ -1810,6 +1790,7 @@ class _EditWithdrawalInfoScreenState extends State<EditWithdrawalInfoScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
+        systemOverlayStyle: getSystemOverlayStyle(false),
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
@@ -1826,9 +1807,12 @@ class _EditWithdrawalInfoScreenState extends State<EditWithdrawalInfoScreen> {
         ),
         centerTitle: false,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(
+      body: SafeArea(
+        top: false,
+        bottom: true,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Name* Label
@@ -2002,19 +1986,10 @@ class _EditWithdrawalInfoScreenState extends State<EditWithdrawalInfoScreen> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Contact us if you have any question.:',
+                    'For inquiries, please contact imChat Official Support.',
                     style: TextStyle(
                       color: Colors.grey.shade500,
                       fontSize: 11,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'cs@yoho.media',
-                    style: TextStyle(
-                      color: Colors.grey.shade600,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
@@ -2023,6 +1998,7 @@ class _EditWithdrawalInfoScreenState extends State<EditWithdrawalInfoScreen> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

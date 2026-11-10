@@ -2,6 +2,7 @@
 import 'package:chat_messenger/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chat_messenger/api/report_api.dart';
 import 'package:chat_messenger/api/user_api.dart';
 import 'package:chat_messenger/components/cached_circle_avatar.dart';
@@ -253,22 +254,37 @@ class AppBarTools extends StatelessWidget implements PreferredSizeWidget {
         child: Row(
           children: [
             // <--- Profile photo --->
-            if ((user!.userId == 'official_team' ||
-                    user!.userId.startsWith('official_channel_')) &&
-                user!.photoUrl.isEmpty)
+            if (user!.userId == 'official_team' ||
+                user!.userId.startsWith('official_channel_'))
               Container(
                 width: 40,
                 height: 40,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
                 ),
                 padding: const EdgeInsets.all(2),
                 child: ClipOval(
-                  child: Image.asset(
-                    "assets/images/app_logo.png",
-                    fit: BoxFit.cover,
-                  ),
+                  child: user!.photoUrl.isNotEmpty && user!.photoUrl.startsWith('http')
+                      ? CachedNetworkImage(
+                          imageUrl: user!.photoUrl,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) => Image.asset(
+                            "assets/images/app_logo.png",
+                            fit: BoxFit.cover,
+                          ),
+                        )
+                      : Image.asset(
+                          "assets/images/app_logo.png",
+                          fit: BoxFit.cover,
+                        ),
                 ),
               )
             else
